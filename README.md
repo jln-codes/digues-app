@@ -15,24 +15,6 @@ classes suivantes :
 `Observation` et `Photo` sont dans le périmètre futur, mais sont imbriquées dans
 les documents parents et ne sont donc pas comptées comme documents top-level.
 
-## Indépendance vis-à-vis de sirs-suite
-
-Le projet ne dépend pas de `sirs-suite`, ne modifie pas son `sys.path` et
-n'importe aucun de ses modules. Le petit socle HTTP CouchDB a été réimplémenté
-localement après inspection de `sirs-suite/sirs/config.py` et
-`sirs-suite/sirs/couchdb.py` : profils de configuration, lecture d'un document,
-requêtes Mango, pagination de `_all_docs` et traduction des erreurs HTTP.
-
-Les noms de variables `SIRS_PROFILE`, `SIRS_LOCAL_*` et `SIRS_SECURE_*` restent
-compatibles avec ceux de `sirs-suite`. Une même configuration de shell peut donc
-être réutilisée, sans créer de dépendance entre les projets. Contrairement au
-profil local historique de `sirs-suite`, aucun identifiant ni mot de passe n'a
-de valeur par défaut dans ce projet.
-
-L'accès aux pièces jointes est disponible via
-`CouchDBClient.get_attachment(document_id, attachment_name)`. Il est prévu pour
-la tranche Photo ultérieure et n'est pas appelé par la commande de diagnostic.
-
 ## Installation
 
 ```bash
@@ -119,11 +101,12 @@ et `pgcrypto` sont vérifiées avant validation de la transaction. Cette étape 
 donnée CouchDB et ne crée ni table de référence, ni prestation, végétation,
 ouvrage ou aménagement hydraulique.
 
-Les six tables possédant une PK UUID simple utilisent
+Les tables possédant une PK UUID simple utilisent
 `DEFAULT gen_random_uuid()`. PostgreSQL peut ainsi attribuer un identifiant aux
-objets créés directement depuis QGIS. La table `link_desordre_troncon` conserve
-sa PK composite sans valeur par défaut. Les migrations fournissent toujours
-explicitement les UUID CouchDB et ne déclenchent donc pas le DEFAULT.
+objets créés directement depuis QGIS. `link_desordre_troncon` possède un UUID
+technique généré de cette manière et conserve l'unicité métier du couple
+`(desordre_id, troncon_id)`. Les migrations fournissent toujours explicitement
+les UUID CouchDB des objets métier et ne déclenchent donc pas leur DEFAULT.
 
 Le contrôle suivant affiche ensuite chaque table comme `présente` ou `absente` :
 
@@ -157,7 +140,7 @@ Mapping établi après inspection de la source `cabbalr` :
 | `desordre.designation/commentaire` | champs homonymes | textes nullables inchangés |
 | `desordre.date_debut/date_fin` | champs homonymes | dates ISO vers `DATE` |
 | `desordre.geometry` | `positionDebut`, `positionFin` | Point si égales, LineString sinon, SRID 3950 |
-| liaison | `Desordre._id`, `linearId` | deux UUID vérifiés, une ligne N-N |
+| liaison | `Desordre._id`, `linearId` | deux UUID vérifiés, une ligne N-N avec `id` technique généré |
 | `observation` | `Desordre.observations[]` | `desordre_id` injecté depuis le parent |
 | `observation.designation` | `Observation.designation` | texte nullable, `NULL` si absent |
 | `observation.evolution` | `Observation.evolution` | texte nullable inchangé |
