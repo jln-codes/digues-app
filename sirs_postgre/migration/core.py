@@ -52,6 +52,7 @@ CORE_FIELD_MAPPINGS = {
         "geometry source → comptée dans le rapport, non utilisée pour la cible",
     ),
     "link_desordre_troncon": (
+        "aucune source → gen_random_uuid() PostgreSQL → id technique",
         "Desordre._id → UUID → desordre_id",
         "Desordre.linearId → UUID de TronconDigue vérifié → troncon_id",
     ),

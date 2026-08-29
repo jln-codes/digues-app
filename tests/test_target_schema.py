@@ -73,6 +73,7 @@ class TargetSchemaTest(unittest.TestCase):
             "digue",
             "troncon",
             "desordre",
+            "link_desordre_troncon",
             "observation",
             "photo",
         ):
@@ -87,6 +88,7 @@ class TargetSchemaTest(unittest.TestCase):
             "digue",
             "troncon",
             "desordre",
+            "link_desordre_troncon",
             "observation",
             "photo",
         ):
@@ -136,11 +138,18 @@ class TargetSchemaTest(unittest.TestCase):
                 with self.subTest(table=table, reference=reference):
                     self.assertIn(reference, statement)
 
-    def test_link_table_has_composite_primary_key(self):
+    def test_link_table_has_generated_primary_key_and_unique_business_pair(self):
         statement = normalized(TABLE_DEFINITIONS["link_desordre_troncon"])
-        self.assertIn("primary key (desordre_id, troncon_id)", statement)
-        self.assertNotIn("default", statement)
-        self.assertNotIn("gen_random_uuid", statement)
+        self.assertIn(
+            "id uuid primary key default gen_random_uuid()",
+            statement,
+        )
+        self.assertIn(
+            "constraint link_desordre_troncon_unique "
+            "unique (desordre_id, troncon_id)",
+            statement,
+        )
+        self.assertNotIn("primary key (desordre_id, troncon_id)", statement)
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):
         troncon = normalized(TABLE_DEFINITIONS["troncon"])

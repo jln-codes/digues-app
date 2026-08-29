@@ -113,13 +113,21 @@ def validate_core_migration(
         if not row or int(row[0]) != 0:
             raise MigrationValidationError(f"Identifiants dupliqués dans {table}")
     cursor.execute(
-        "SELECT COUNT(*) - COUNT(DISTINCT (desordre_id, troncon_id)) "
+        "SELECT COUNT(*), COUNT(id), COUNT(DISTINCT id), "
+        "COUNT(*) - COUNT(DISTINCT (desordre_id, troncon_id)) "
         "FROM public.link_desordre_troncon"
     )
     row = cursor.fetchone()
-    if not row or int(row[0]) != 0:
+    expected_links = expected_counts["link_desordre_troncon"]
+    if (
+        not row
+        or int(row[0]) != expected_links
+        or int(row[1]) != expected_links
+        or int(row[2]) != expected_links
+        or int(row[3]) != 0
+    ):
         raise MigrationValidationError(
-            "Liaisons desordre/troncon dupliquées"
+            "Identifiants techniques ou couples desordre/troncon invalides"
         )
 
     cursor.execute(

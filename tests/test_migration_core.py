@@ -136,6 +136,17 @@ class FakeMigrationConnection:
 
 
 class CoreTransformationTest(unittest.TestCase):
+    def test_link_insert_lets_postgresql_generate_technical_id(self):
+        statement = " ".join(
+            INSERT_STATEMENTS["link_desordre_troncon"].split()
+        ).lower()
+        self.assertIn(
+            "insert into public.link_desordre_troncon "
+            "(desordre_id, troncon_id)",
+            statement,
+        )
+        self.assertNotIn("(id,", statement)
+
     def test_migration_insert_statements_explicitly_supply_source_ids(self):
         for table in (
             "systeme_endiguement",

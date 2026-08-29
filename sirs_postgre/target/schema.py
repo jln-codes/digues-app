@@ -44,6 +44,7 @@ TABLE_DEFINITIONS = {
     """,
     "link_desordre_troncon": """
         CREATE TABLE IF NOT EXISTS public.link_desordre_troncon (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             desordre_id UUID NOT NULL,
             troncon_id UUID NOT NULL,
             CONSTRAINT link_desordre_troncon_desordre_fk
@@ -52,7 +53,8 @@ TABLE_DEFINITIONS = {
             CONSTRAINT link_desordre_troncon_troncon_fk
                 FOREIGN KEY (troncon_id)
                 REFERENCES public.troncon (id),
-            PRIMARY KEY (desordre_id, troncon_id)
+            CONSTRAINT link_desordre_troncon_unique
+                UNIQUE (desordre_id, troncon_id)
         )
     """,
     "observation": """
