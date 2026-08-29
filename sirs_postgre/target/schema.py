@@ -3,14 +3,14 @@
 TABLE_DEFINITIONS = {
     "systeme_endiguement": """
         CREATE TABLE IF NOT EXISTS public.systeme_endiguement (
-            id UUID PRIMARY KEY,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             libelle TEXT NOT NULL,
             valid BOOLEAN NOT NULL
         )
     """,
     "digue": """
         CREATE TABLE IF NOT EXISTS public.digue (
-            id UUID PRIMARY KEY,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             systeme_endiguement_id UUID NULL,
             libelle TEXT NOT NULL,
             valid BOOLEAN NOT NULL,
@@ -21,7 +21,7 @@ TABLE_DEFINITIONS = {
     """,
     "troncon": """
         CREATE TABLE IF NOT EXISTS public.troncon (
-            id UUID PRIMARY KEY,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             digue_id UUID NOT NULL,
             libelle TEXT NOT NULL,
             geometry geometry(LineString, 3950),
@@ -33,7 +33,7 @@ TABLE_DEFINITIONS = {
     """,
     "desordre": """
         CREATE TABLE IF NOT EXISTS public.desordre (
-            id UUID PRIMARY KEY,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             designation TEXT NULL,
             commentaire TEXT NULL,
             date_debut DATE NULL,
@@ -57,8 +57,9 @@ TABLE_DEFINITIONS = {
     """,
     "observation": """
         CREATE TABLE IF NOT EXISTS public.observation (
-            id UUID PRIMARY KEY,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             desordre_id UUID NOT NULL,
+            designation TEXT NULL,
             date DATE NULL,
             evolution TEXT NULL,
             valid BOOLEAN NOT NULL,
@@ -69,7 +70,7 @@ TABLE_DEFINITIONS = {
     """,
     "photo": """
         CREATE TABLE IF NOT EXISTS public.photo (
-            id UUID PRIMARY KEY,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             observation_id UUID NOT NULL,
             chemin_source TEXT NOT NULL,
             date DATE NULL,

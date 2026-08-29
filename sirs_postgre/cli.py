@@ -105,6 +105,8 @@ def _check_target() -> None:
         )
     postgis = status.postgis_version or "non installée dans cette base"
     print(f"     PostGIS: {postgis}")
+    pgcrypto = status.pgcrypto_version or "non installée dans cette base"
+    print(f"     pgcrypto: {pgcrypto}")
     print("Tables métier :")
     for table in EXPECTED_TABLES:
         presence = "présente" if table in status.schema_tables else "absente"
@@ -139,6 +141,7 @@ def run_recreate() -> int:
     print(f"[OK] Base supprimée : {status.database}")
     print(f"[OK] Base créée : {status.database}")
     print(f"[OK] PostGIS activée : {status.postgis_version}")
+    print(f"[OK] pgcrypto activée : {status.pgcrypto_version}")
     print("[OK] Base cible prête")
     return 0
 
@@ -152,6 +155,7 @@ def run_init_schema() -> int:
         return 1
     print(f"[OK] Schéma métier initialisé dans : {config.target_database}")
     print(f"[OK] PostGIS disponible : {status.postgis_version}")
+    print(f"[OK] pgcrypto disponible : {status.pgcrypto_version}")
     for table in status.tables:
         print(f"[OK] Table présente : {table}")
     return 0

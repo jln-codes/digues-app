@@ -23,7 +23,7 @@ class FakeSchemaCursor:
         self.executed.append((str(query), params))
 
     def fetchone(self):
-        return ("3.4.2",)
+        return ("3.4.2", "1.3")
 
     def fetchall(self):
         return [(table,) for table in EXPECTED_TABLES]
@@ -81,6 +81,21 @@ class TargetSchemaTest(unittest.TestCase):
         ddl = normalized(" ".join(SCHEMA_DDL))
         self.assertNotIn("serial", ddl)
 
+    def test_simple_uuid_primary_keys_default_to_generated_uuid(self):
+        for table in (
+            "systeme_endiguement",
+            "digue",
+            "troncon",
+            "desordre",
+            "observation",
+            "photo",
+        ):
+            with self.subTest(table=table):
+                self.assertIn(
+                    "id uuid primary key default gen_random_uuid()",
+                    normalized(TABLE_DEFINITIONS[table]),
+                )
+
     def test_foreign_key_columns_are_uuid(self):
         expected_uuid_columns = {
             "digue": ("systeme_endiguement_id",),
@@ -124,6 +139,8 @@ class TargetSchemaTest(unittest.TestCase):
     def test_link_table_has_composite_primary_key(self):
         statement = normalized(TABLE_DEFINITIONS["link_desordre_troncon"])
         self.assertIn("primary key (desordre_id, troncon_id)", statement)
+        self.assertNotIn("default", statement)
+        self.assertNotIn("gen_random_uuid", statement)
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):
         troncon = normalized(TABLE_DEFINITIONS["troncon"])
@@ -131,6 +148,17 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertIn("geometry geometry(linestring, 3950)", troncon)
         self.assertIn("geometry geometry(geometry, 3950)", desordre)
         self.assertNotIn("geometry geometry(linestring, 3950)", desordre)
+
+    def test_observation_designation_is_nullable_text(self):
+        observation = normalized(TABLE_DEFINITIONS["observation"])
+        self.assertIn("designation text null", observation)
+        for excluded_field in (
+            "urgenceid",
+            "observateurid",
+            "suiteapporterid",
+            "lastupdateauthor",
+        ):
+            self.assertNotIn(excluded_field, observation)
 
     def test_initialization_uses_one_non_autocommit_connection(self):
         connection = FakeSchemaConnection()
@@ -143,6 +171,7 @@ class TargetSchemaTest(unittest.TestCase):
         status = initialize_schema(PostgreSQLConfig(), connector=connector)
         self.assertIs(calls[0]["autocommit"], False)
         self.assertEqual(status.tables, EXPECTED_TABLES)
+        self.assertEqual(status.pgcrypto_version, "1.3")
         executed_ddl = [query for query, _params in connection.cursor_instance.executed]
         for statement in SCHEMA_DDL:
             self.assertIn(statement, executed_ddl)

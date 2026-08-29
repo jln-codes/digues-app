@@ -63,6 +63,7 @@ class CLITest(unittest.TestCase):
         initialize_schema.return_value = PostgreSQLSchemaStatus(
             tables=EXPECTED_TABLES,
             postgis_version="3.4.2",
+            pgcrypto_version="1.3",
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -71,6 +72,7 @@ class CLITest(unittest.TestCase):
         initialize_schema.assert_called_once_with(config)
         text = output.getvalue()
         self.assertIn("[OK] Schéma métier initialisé", text)
+        self.assertIn("[OK] pgcrypto disponible : 1.3", text)
         self.assertIn("[OK] Table présente : photo", text)
 
     @patch("sirs_postgre.cli.recreate_postgresql")
@@ -84,6 +86,7 @@ class CLITest(unittest.TestCase):
             database="sirs_postgre",
             terminated_connections=2,
             postgis_version="3.4.2",
+            pgcrypto_version="1.3",
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -95,6 +98,7 @@ class CLITest(unittest.TestCase):
         self.assertIn("[OK] Base supprimée : sirs_postgre", text)
         self.assertIn("[OK] Base créée : sirs_postgre", text)
         self.assertIn("[OK] PostGIS activée : 3.4.2", text)
+        self.assertIn("[OK] pgcrypto activée : 1.3", text)
         self.assertIn("[OK] Base cible prête", text)
 
     @patch("sirs_postgre.cli.run_check", return_value=0)
@@ -142,6 +146,7 @@ class CLITest(unittest.TestCase):
             "17.2",
             "3.5.2",
             frozenset(EXPECTED_TABLES),
+            "1.3",
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -153,6 +158,7 @@ class CLITest(unittest.TestCase):
         self.assertIn("Cible PostgreSQL", text)
         self.assertIn("systeme_endiguement: présente", text)
         self.assertIn("photo: présente", text)
+        self.assertIn("pgcrypto: 1.3", text)
         self.assertIn(
             "[INFO] CouchDB : authentification non configurée ; connexion réussie",
             text,

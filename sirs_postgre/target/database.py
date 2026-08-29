@@ -158,6 +158,7 @@ class PostgreSQLStatus:
     server_version: str
     postgis_version: str | None
     schema_tables: frozenset[str] = frozenset()
+    pgcrypto_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -165,12 +166,14 @@ class PostgreSQLRecreateStatus:
     database: str
     terminated_connections: int
     postgis_version: str
+    pgcrypto_version: str
 
 
 @dataclass(frozen=True)
 class PostgreSQLSchemaStatus:
     tables: tuple[str, ...]
     postgis_version: str
+    pgcrypto_version: str
 
 
 def validate_recreatable_database_name(
@@ -220,7 +223,8 @@ def check_connection(
                 cursor.execute(
                     "SELECT current_database(), current_user, "
                     "current_setting('server_version'), "
-                    "(SELECT extversion FROM pg_extension WHERE extname = 'postgis')"
+                    "(SELECT extversion FROM pg_extension WHERE extname = 'postgis'), "
+                    "(SELECT extversion FROM pg_extension WHERE extname = 'pgcrypto')"
                 )
                 row = cursor.fetchone()
                 cursor.execute(
@@ -244,6 +248,7 @@ def check_connection(
         server_version=str(row[2]),
         postgis_version=str(row[3]) if row[3] is not None else None,
         schema_tables=schema_tables,
+        pgcrypto_version=str(row[4]) if row[4] is not None else None,
     )
 
 
@@ -260,12 +265,18 @@ def initialize_schema(
         with connect(**selected.connect_kwargs(autocommit=False)) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT extversion FROM pg_extension WHERE extname = 'postgis'"
+                    "SELECT "
+                    "(SELECT extversion FROM pg_extension WHERE extname = 'postgis'), "
+                    "(SELECT extversion FROM pg_extension WHERE extname = 'pgcrypto')"
                 )
-                postgis_row = cursor.fetchone()
-                if not postgis_row or postgis_row[0] is None:
+                extensions_row = cursor.fetchone()
+                if not extensions_row or extensions_row[0] is None:
                     raise PostgreSQLSchemaError(
                         "PostGIS doit être activée avant l'initialisation du schéma"
+                    )
+                if extensions_row[1] is None:
+                    raise PostgreSQLSchemaError(
+                        "pgcrypto doit être activée avant l'initialisation du schéma"
                     )
                 for statement in SCHEMA_DDL:
                     cursor.execute(statement)
@@ -294,7 +305,8 @@ def initialize_schema(
 
     return PostgreSQLSchemaStatus(
         tables=EXPECTED_TABLES,
-        postgis_version=str(postgis_row[0]),
+        postgis_version=str(extensions_row[0]),
+        pgcrypto_version=str(extensions_row[1]),
     )
 
 
@@ -303,7 +315,7 @@ def recreate_database(
     *,
     connector: Callable[..., Any] | None = None,
 ) -> PostgreSQLRecreateStatus:
-    """Recrée uniquement la base cible et y active PostGIS."""
+    """Recrée la base cible et y active les extensions requises."""
 
     selected = config or PostgreSQLConfig.from_env()
     selected.validate()
@@ -351,9 +363,11 @@ def recreate_database(
         ) as target_connection:
             with target_connection.cursor() as cursor:
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
                 cursor.execute(
                     "SELECT current_database(), "
-                    "(SELECT extversion FROM pg_extension WHERE extname = 'postgis')"
+                    "(SELECT extversion FROM pg_extension WHERE extname = 'postgis'), "
+                    "(SELECT extversion FROM pg_extension WHERE extname = 'pgcrypto')"
                 )
                 target_status = cursor.fetchone()
     except Exception as exc:
@@ -371,8 +385,13 @@ def recreate_database(
         raise PostgreSQLConnectionError(
             f"PostGIS n'est pas disponible dans la base : {target_database}"
         )
+    if target_status[2] is None:
+        raise PostgreSQLConnectionError(
+            f"pgcrypto n'est pas disponible dans la base : {target_database}"
+        )
     return PostgreSQLRecreateStatus(
         database=target_database,
         terminated_connections=terminated_connections,
         postgis_version=str(target_status[1]),
+        pgcrypto_version=str(target_status[2]),
     )

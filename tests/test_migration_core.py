@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from sirs_postgre.migration.core import (
+    INSERT_STATEMENTS,
     CoreMigrationError,
     TargetNotEmptyError,
     couchdb_id_to_uuid,
@@ -67,6 +68,7 @@ def source_fixture():
                 "observations": [
                     {
                         "id": IDS["observation"],
+                        "designation": "Observation test",
                         "date": "2026-02-03",
                         "evolution": "Stable",
                         "valid": False,
@@ -134,6 +136,19 @@ class FakeMigrationConnection:
 
 
 class CoreTransformationTest(unittest.TestCase):
+    def test_migration_insert_statements_explicitly_supply_source_ids(self):
+        for table in (
+            "systeme_endiguement",
+            "digue",
+            "troncon",
+            "desordre",
+            "observation",
+            "photo",
+        ):
+            with self.subTest(table=table):
+                columns = " ".join(INSERT_STATEMENTS[table].split()).lower()
+                self.assertRegex(columns, rf"insert into public\.{table} \(id,")
+
     def test_couchdb_id_is_normalized_without_changing_bits(self):
         compact = couchdb_id_to_uuid("001771be560d42069f0e1b185830d2b7")
         canonical = couchdb_id_to_uuid("001771be-560d-4206-9f0e-1b185830d2b7")
@@ -176,6 +191,7 @@ class CoreTransformationTest(unittest.TestCase):
         self.assertEqual(prepared.links[0].desordre_id, prepared.desordres[0].id)
         self.assertEqual(prepared.links[0].troncon_id, prepared.troncons[0].id)
         self.assertEqual(len(prepared.observations), 1)
+        self.assertEqual(prepared.observations[0].designation, "Observation test")
         self.assertEqual(
             prepared.observations[0].desordre_id, prepared.desordres[0].id
         )
@@ -186,6 +202,12 @@ class CoreTransformationTest(unittest.TestCase):
             for photo in prepared.photos
         ))
         self.assertEqual(sum(not photo.valid for photo in prepared.photos), 1)
+
+    def test_missing_observation_designation_becomes_null(self):
+        documents = copy.deepcopy(source_fixture())
+        del documents["Desordre"][0]["observations"][0]["designation"]
+        prepared = prepare_core_migration(documents)
+        self.assertIsNone(prepared.observations[0].designation)
 
     def test_ignores_direct_troncon_photos(self):
         prepared = prepare_core_migration(source_fixture())

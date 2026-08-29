@@ -129,7 +129,7 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
 
     def test_connection_check_only_executes_a_select(self):
         calls = []
-        connection = FakeConnection(("sirs", "reader", "17.2", "3.5.2"))
+        connection = FakeConnection(("sirs", "reader", "17.2", "3.5.2", "1.3"))
 
         def connector(**kwargs):
             calls.append(kwargs)
@@ -138,6 +138,7 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
         status = check_connection(PostgreSQLConfig(), connector=connector)
         self.assertEqual(status.database, "sirs")
         self.assertEqual(status.postgis_version, "3.5.2")
+        self.assertEqual(status.pgcrypto_version, "1.3")
         self.assertTrue(connection.cursor_instance.query.startswith("SELECT"))
         self.assertTrue(calls[0]["autocommit"])
 

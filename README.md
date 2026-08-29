@@ -89,7 +89,7 @@ n'est jamais affiché.
 ## Recréation de la base cible
 
 La commande suivante supprime intégralement la base cible configurée, la recrée
-et active PostGIS :
+et active PostGIS ainsi que `pgcrypto` :
 
 ```bash
 source .venv/bin/activate
@@ -99,7 +99,7 @@ sirs-postgre recreate
 Cette commande est réservée à une base jetable. Elle ferme uniquement les
 connexions actives vers la base cible, exécute `DROP DATABASE` et
 `CREATE DATABASE` en autocommit, puis vérifie la connexion et la disponibilité
-de PostGIS. Elle ne crée aucune table métier et ne lance aucune migration
+de PostGIS et `pgcrypto`. Elle ne crée aucune table métier et ne lance aucune migration
 CouchDB. Par sécurité, les noms vides, non conventionnels et les bases protégées
 `postgres`, `template0`, `template1` ou la base d'administration configurée sont
 refusés avant toute opération destructive.
@@ -115,9 +115,15 @@ sirs-postgre init-schema
 
 Le DDL est exécuté dans une transaction unique dans le schéma `public`. Les
 tables sont créées avec `IF NOT EXISTS`, puis leur présence et celle de PostGIS
-sont vérifiées avant validation de la transaction. Cette étape ne migre aucune
+et `pgcrypto` sont vérifiées avant validation de la transaction. Cette étape ne migre aucune
 donnée CouchDB et ne crée ni table de référence, ni prestation, végétation,
 ouvrage ou aménagement hydraulique.
+
+Les six tables possédant une PK UUID simple utilisent
+`DEFAULT gen_random_uuid()`. PostgreSQL peut ainsi attribuer un identifiant aux
+objets créés directement depuis QGIS. La table `link_desordre_troncon` conserve
+sa PK composite sans valeur par défaut. Les migrations fournissent toujours
+explicitement les UUID CouchDB et ne déclenchent donc pas le DEFAULT.
 
 Le contrôle suivant affiche ensuite chaque table comme `présente` ou `absente` :
 
@@ -153,6 +159,7 @@ Mapping établi après inspection de la source `cabbalr` :
 | `desordre.geometry` | `positionDebut`, `positionFin` | Point si égales, LineString sinon, SRID 3950 |
 | liaison | `Desordre._id`, `linearId` | deux UUID vérifiés, une ligne N-N |
 | `observation` | `Desordre.observations[]` | `desordre_id` injecté depuis le parent |
+| `observation.designation` | `Observation.designation` | texte nullable, `NULL` si absent |
 | `observation.evolution` | `Observation.evolution` | texte nullable inchangé |
 | `photo` | `Observation.photos[]` | `observation_id` injecté depuis le parent |
 | `photo.chemin_source` | `Photo.chemin` | valeur inchangée, aucune déduplication |

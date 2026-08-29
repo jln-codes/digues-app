@@ -58,6 +58,7 @@ CORE_FIELD_MAPPINGS = {
     "observation": (
         "Desordre.observations[].id → UUID → id",
         "Desordre._id → UUID injecté → desordre_id",
+        "designation → texte inchangé ou absent → designation nullable",
         "date ISO → DATE → date",
         "evolution → texte inchangé → evolution",
         "valid → booléen inchangé → valid",
@@ -134,6 +135,7 @@ class LinkDesordreTronconRow:
 class ObservationRow:
     id: UUID
     desordre_id: UUID
+    designation: str | None
     date: date | None
     evolution: str | None
     valid: bool
@@ -451,6 +453,9 @@ def prepare_core_migration(
                 ObservationRow(
                     id=observation_id,
                     desordre_id=desordre_id,
+                    designation=_optional_text(
+                        observation, "designation", observation_context
+                    ),
                     date=_optional_date(observation, "date", observation_context),
                     evolution=_optional_text(
                         observation, "evolution", observation_context
@@ -541,8 +546,9 @@ INSERT_STATEMENTS = {
         VALUES (%s, %s)
     """,
     "observation": """
-        INSERT INTO public.observation (id, desordre_id, date, evolution, valid)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO public.observation
+            (id, desordre_id, designation, date, evolution, valid)
+        VALUES (%s, %s, %s, %s, %s, %s)
     """,
     "photo": """
         INSERT INTO public.photo
@@ -607,7 +613,14 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
         (
             "observation",
             [
-                (row.id, row.desordre_id, row.date, row.evolution, row.valid)
+                (
+                    row.id,
+                    row.desordre_id,
+                    row.designation,
+                    row.date,
+                    row.evolution,
+                    row.valid,
+                )
                 for row in prepared.observations
             ],
         ),
