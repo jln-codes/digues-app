@@ -11,8 +11,9 @@ from sirs_postgre.target.database import (
 
 
 class FakeCursor:
-    def __init__(self, row):
+    def __init__(self, row, rows=()):
         self.row = row
+        self.rows = rows
         self.query = None
 
     def __enter__(self):
@@ -21,16 +22,19 @@ class FakeCursor:
     def __exit__(self, *args):
         return False
 
-    def execute(self, query):
+    def execute(self, query, params=None):
         self.query = query
 
     def fetchone(self):
         return self.row
 
+    def fetchall(self):
+        return self.rows
+
 
 class FakeConnection:
-    def __init__(self, row):
-        self.cursor_instance = FakeCursor(row)
+    def __init__(self, row, rows=()):
+        self.cursor_instance = FakeCursor(row, rows)
 
     def __enter__(self):
         return self

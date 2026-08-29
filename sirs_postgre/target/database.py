@@ -8,6 +8,8 @@ import os
 import re
 from typing import Any
 
+from .schema import EXPECTED_TABLES, SCHEMA_DDL
+
 
 PROTECTED_DATABASE_NAMES = frozenset({"postgres", "template0", "template1"})
 SAFE_DATABASE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -19,6 +21,10 @@ class PostgreSQLConfigurationError(ValueError):
 
 class PostgreSQLConnectionError(RuntimeError):
     """La connexion ou le diagnostic PostgreSQL a échoué."""
+
+
+class PostgreSQLSchemaError(RuntimeError):
+    """L'initialisation ou le contrôle du schéma cible a échoué."""
 
 
 @dataclass(frozen=True)
@@ -63,10 +69,15 @@ class PostgreSQLConfig:
                 "Le délai de connexion PostgreSQL doit être positif"
             )
 
-    def connect_kwargs(self, *, database: str | None = None) -> dict[str, Any]:
+    def connect_kwargs(
+        self,
+        *,
+        database: str | None = None,
+        autocommit: bool = True,
+    ) -> dict[str, Any]:
         common: dict[str, Any] = {
             "connect_timeout": self.connect_timeout,
-            "autocommit": True,
+            "autocommit": autocommit,
         }
         if self.dsn:
             connection = {"conninfo": self.dsn, **common}
@@ -146,12 +157,19 @@ class PostgreSQLStatus:
     user: str
     server_version: str
     postgis_version: str | None
+    schema_tables: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
 class PostgreSQLRecreateStatus:
     database: str
     terminated_connections: int
+    postgis_version: str
+
+
+@dataclass(frozen=True)
+class PostgreSQLSchemaStatus:
+    tables: tuple[str, ...]
     postgis_version: str
 
 
@@ -192,7 +210,7 @@ def check_connection(
     *,
     connector: Callable[..., Any] | None = None,
 ) -> PostgreSQLStatus:
-    """Exécute un SELECT de diagnostic, sans créer ni modifier aucun objet."""
+    """Exécute des SELECT de diagnostic, sans créer ni modifier aucun objet."""
 
     selected = config or PostgreSQLConfig.from_env()
     connect = connector or _default_connector()
@@ -205,6 +223,12 @@ def check_connection(
                     "(SELECT extversion FROM pg_extension WHERE extname = 'postgis')"
                 )
                 row = cursor.fetchone()
+                cursor.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = %s AND table_name = ANY(%s)",
+                    ("public", list(EXPECTED_TABLES)),
+                )
+                schema_tables = frozenset(str(result[0]) for result in cursor.fetchall())
     except Exception as exc:
         if isinstance(exc, PostgreSQLConnectionError):
             raise
@@ -219,6 +243,58 @@ def check_connection(
         user=str(row[1]),
         server_version=str(row[2]),
         postgis_version=str(row[3]) if row[3] is not None else None,
+        schema_tables=schema_tables,
+    )
+
+
+def initialize_schema(
+    config: PostgreSQLConfig | None = None,
+    *,
+    connector: Callable[..., Any] | None = None,
+) -> PostgreSQLSchemaStatus:
+    """Crée transactionnellement le noyau métier dans le schéma public."""
+
+    selected = config or PostgreSQLConfig.from_env()
+    connect = connector or _default_connector()
+    try:
+        with connect(**selected.connect_kwargs(autocommit=False)) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT extversion FROM pg_extension WHERE extname = 'postgis'"
+                )
+                postgis_row = cursor.fetchone()
+                if not postgis_row or postgis_row[0] is None:
+                    raise PostgreSQLSchemaError(
+                        "PostGIS doit être activée avant l'initialisation du schéma"
+                    )
+                for statement in SCHEMA_DDL:
+                    cursor.execute(statement)
+                cursor.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = %s AND table_name = ANY(%s)",
+                    ("public", list(EXPECTED_TABLES)),
+                )
+                present_tables = frozenset(
+                    str(result[0]) for result in cursor.fetchall()
+                )
+                missing_tables = [
+                    table for table in EXPECTED_TABLES if table not in present_tables
+                ]
+                if missing_tables:
+                    raise PostgreSQLSchemaError(
+                        "Tables non créées : " + ", ".join(missing_tables)
+                    )
+    except Exception as exc:
+        if isinstance(exc, PostgreSQLSchemaError):
+            raise
+        error = selected.redact_secrets(str(exc))
+        raise PostgreSQLSchemaError(
+            f"Initialisation du schéma impossible ({selected.safe_location}) : {error}"
+        ) from exc
+
+    return PostgreSQLSchemaStatus(
+        tables=EXPECTED_TABLES,
+        postgis_version=str(postgis_row[0]),
     )
 
 

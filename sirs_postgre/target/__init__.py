@@ -5,8 +5,11 @@ from .database import (
     PostgreSQLConfigurationError,
     PostgreSQLConnectionError,
     PostgreSQLRecreateStatus,
+    PostgreSQLSchemaError,
+    PostgreSQLSchemaStatus,
     PostgreSQLStatus,
     check_connection,
+    initialize_schema,
     recreate_database,
     validate_recreatable_database_name,
 )
@@ -16,8 +19,11 @@ __all__ = [
     "PostgreSQLConfigurationError",
     "PostgreSQLConnectionError",
     "PostgreSQLRecreateStatus",
+    "PostgreSQLSchemaError",
+    "PostgreSQLSchemaStatus",
     "PostgreSQLStatus",
     "check_connection",
+    "initialize_schema",
     "recreate_database",
     "validate_recreatable_database_name",
 ]

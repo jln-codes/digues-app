@@ -12,8 +12,10 @@ from .source import connect_couchdb
 from .target import (
     PostgreSQLConfig,
     check_connection as check_postgresql,
+    initialize_schema as initialize_postgresql_schema,
     recreate_database as recreate_postgresql,
 )
+from .target.schema import EXPECTED_TABLES
 
 SOURCE_CLASSES = {
     "SystemeEndiguement": "fr.sirs.core.model.SystemeEndiguement",
@@ -42,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "recreate",
         description="Supprime et recrée la base PostgreSQL cible avec PostGIS.",
+    )
+    subparsers.add_parser(
+        "init-schema",
+        description="Crée le premier noyau métier PostgreSQL/PostGIS.",
     )
     return parser
 
@@ -94,6 +100,10 @@ def _check_target() -> None:
         )
     postgis = status.postgis_version or "non installée dans cette base"
     print(f"     PostGIS: {postgis}")
+    print("Tables métier :")
+    for table in EXPECTED_TABLES:
+        presence = "présente" if table in status.schema_tables else "absente"
+        print(f"  {table}: {presence}")
 
 
 def run_check(args: argparse.Namespace) -> int:
@@ -128,6 +138,20 @@ def run_recreate() -> int:
     return 0
 
 
+def run_init_schema() -> int:
+    config = PostgreSQLConfig.from_env()
+    try:
+        status = initialize_postgresql_schema(config)
+    except Exception as exc:
+        print(f"[ERREUR] Initialisation du schéma : {config.redact_secrets(str(exc))}")
+        return 1
+    print(f"[OK] Schéma métier initialisé dans : {config.target_database}")
+    print(f"[OK] PostGIS disponible : {status.postgis_version}")
+    for table in status.tables:
+        print(f"[OK] Table présente : {table}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv(dotenv_path=CONFIG_ENV_PATH, override=False)
     args = build_parser().parse_args(argv)
@@ -135,6 +159,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_check(args)
     if args.command == "recreate":
         return run_recreate()
+    if args.command == "init-schema":
+        return run_init_schema()
     raise AssertionError(f"Commande inconnue : {args.command}")
 
 

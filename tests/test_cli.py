@@ -11,8 +11,10 @@ from sirs_postgre.source import CouchDBConfig, CouchDBSourceStatus
 from sirs_postgre.target import (
     PostgreSQLConfig,
     PostgreSQLRecreateStatus,
+    PostgreSQLSchemaStatus,
     PostgreSQLStatus,
 )
+from sirs_postgre.target.schema import EXPECTED_TABLES
 
 
 class FakeSourceClient:
@@ -35,6 +37,26 @@ class FakeSourceClient:
 
 
 class CLITest(unittest.TestCase):
+    @patch("sirs_postgre.cli.initialize_postgresql_schema")
+    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    def test_init_schema_reports_tables_without_migrating_data(
+        self, target_config, initialize_schema
+    ):
+        config = PostgreSQLConfig()
+        target_config.return_value = config
+        initialize_schema.return_value = PostgreSQLSchemaStatus(
+            tables=EXPECTED_TABLES,
+            postgis_version="3.4.2",
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["init-schema"])
+        self.assertEqual(result, 0)
+        initialize_schema.assert_called_once_with(config)
+        text = output.getvalue()
+        self.assertIn("[OK] Schéma métier initialisé", text)
+        self.assertIn("[OK] Table présente : photo", text)
+
     @patch("sirs_postgre.cli.recreate_postgresql")
     @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
     def test_recreate_reports_success_without_real_database_changes(
@@ -99,7 +121,11 @@ class CLITest(unittest.TestCase):
         connect_source.return_value = FakeSourceClient()
         target_config.return_value = PostgreSQLConfig()
         check_target.return_value = PostgreSQLStatus(
-            "sirs_postgre", "postgres", "17.2", "3.5.2"
+            "sirs_postgre",
+            "postgres",
+            "17.2",
+            "3.5.2",
+            frozenset(EXPECTED_TABLES),
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -109,6 +135,8 @@ class CLITest(unittest.TestCase):
         self.assertIn("SystemeEndiguement: 9", text)
         self.assertIn("Desordre: 1598", text)
         self.assertIn("Cible PostgreSQL", text)
+        self.assertIn("systeme_endiguement: présente", text)
+        self.assertIn("photo: présente", text)
         self.assertIn(
             "[INFO] CouchDB : authentification non configurée ; connexion réussie",
             text,

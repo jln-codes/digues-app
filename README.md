@@ -3,8 +3,8 @@
 Prototype Python autonome pour préparer et tester progressivement la migration
 de SIRS Digues depuis CouchDB vers PostgreSQL/PostGIS.
 
-Cette première tranche ne migre aucune donnée et ne crée aucun schéma métier.
-Elle vérifie les deux connexions et compte les documents CouchDB top-level des
+Cette première tranche ne migre aucune donnée. Elle vérifie les deux connexions,
+initialise un premier noyau métier vide et compte les documents CouchDB top-level des
 classes suivantes :
 
 - `SystemeEndiguement` ;
@@ -78,8 +78,8 @@ Options utiles :
 
 La vérification source effectue exclusivement des requêtes `GET` et des requêtes
 Mango `POST /_find`, qui sont des lectures CouchDB. La vérification cible exécute
-uniquement un `SELECT` et indique la version de PostGIS si l'extension est déjà
-installée. Elle ne crée ni base, ni extension, ni table.
+uniquement des `SELECT`, indique la version de PostGIS et contrôle la présence
+des tables métier. Elle ne crée ni base, ni extension, ni table.
 
 Le diagnostic indique également si l'authentification CouchDB et PostgreSQL est
 configurée. L'absence de credentials reste informative lorsque la connexion
@@ -104,6 +104,27 @@ CouchDB. Par sécurité, les noms vides, non conventionnels et les bases protég
 `postgres`, `template0`, `template1` ou la base d'administration configurée sont
 refusés avant toute opération destructive.
 
+## Initialisation du schéma métier
+
+Après une recréation, initialiser les sept tables du noyau métier avec :
+
+```bash
+source .venv/bin/activate
+sirs-postgre init-schema
+```
+
+Le DDL est exécuté dans une transaction unique dans le schéma `public`. Les
+tables sont créées avec `IF NOT EXISTS`, puis leur présence et celle de PostGIS
+sont vérifiées avant validation de la transaction. Cette étape ne migre aucune
+donnée CouchDB et ne crée ni table de référence, ni prestation, végétation,
+ouvrage ou aménagement hydraulique.
+
+Le contrôle suivant affiche ensuite chaque table comme `présente` ou `absente` :
+
+```bash
+sirs-postgre check --target-only
+```
+
 ## Tests
 
 Les tests unitaires utilisent des doubles de connexion et ne nécessitent aucune
@@ -118,13 +139,12 @@ base réelle :
 ```text
 sirs_postgre/
 ├── source/couchdb.py       # configuration et client CouchDB autonomes
-├── target/database.py      # configuration et diagnostic PostgreSQL/PostGIS
-├── target/schema.py        # noms provisoires, aucun DDL
+├── target/database.py      # configuration, diagnostic et initialisation
+├── target/schema.py        # DDL du premier noyau métier
 ├── migration/core.py       # emplacement réservé à la migration
 ├── migration/validation.py # emplacement réservé aux contrôles
-└── cli.py                  # commandes `check` et `recreate`
+└── cli.py                  # commandes `check`, `recreate` et `init-schema`
 ```
 
-Les tables provisoirement envisagées restent `systeme_endiguement`, `digue`,
-`troncon`, `desordre`, `link_desordre_troncon`, `observation` et `photo`. Aucune
-décision de schéma n'est encodée à ce stade.
+Le noyau initial contient uniquement `systeme_endiguement`, `digue`, `troncon`,
+`desordre`, `link_desordre_troncon`, `observation` et `photo`.
