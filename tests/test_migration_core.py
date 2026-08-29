@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from sirs_postgre.migration.core import (
+    CORE_SOURCE_CLASSES,
     INSERT_STATEMENTS,
     CoreMigrationError,
     TargetNotEmptyError,
@@ -24,9 +25,43 @@ IDS = {
     "direct_photo": "00000000000000000000000000000008",
 }
 
+REFERENCE_IDS = {
+    "categorie": "RefCategorieDesordre:1",
+    "categorie_2": "RefCategorieDesordre:2",
+    "type": "RefTypeDesordre:1",
+    "urgence": "RefUrgence:1",
+}
+
 
 def source_fixture():
     return {
+        "RefCategorieDesordre": [
+            {
+                "_id": REFERENCE_IDS["categorie"],
+                "libelle": "Érosion externe",
+                "valid": False,
+            },
+            {
+                "_id": REFERENCE_IDS["categorie_2"],
+                "libelle": "Érosion interne",
+                "valid": True,
+            },
+        ],
+        "RefTypeDesordre": [
+            {
+                "_id": REFERENCE_IDS["type"],
+                "categorieId": REFERENCE_IDS["categorie"],
+                "libelle": "Érosion longitudinale",
+                "valid": True,
+            }
+        ],
+        "RefUrgence": [
+            {
+                "_id": REFERENCE_IDS["urgence"],
+                "libelle": "Urgent",
+                "valid": False,
+            }
+        ],
         "SystemeEndiguement": [
             {"_id": IDS["systeme"], "libelle": "Système test", "valid": True}
         ],
@@ -64,6 +99,8 @@ def source_fixture():
                 "positionFin": "POINT (10.0 20.0)",
                 "geometry": "LINESTRING (99 99, 99 99)",
                 "linearId": IDS["troncon"],
+                "typeDesordreId": REFERENCE_IDS["type"],
+                "categorieDesordreId": REFERENCE_IDS["categorie"],
                 "valid": False,
                 "observations": [
                     {
@@ -71,6 +108,7 @@ def source_fixture():
                         "designation": "Observation test",
                         "date": "2026-02-03",
                         "evolution": "Stable",
+                        "urgenceId": REFERENCE_IDS["urgence"],
                         "valid": False,
                         "photos": [
                             {
@@ -136,12 +174,18 @@ class FakeMigrationConnection:
 
 
 class CoreTransformationTest(unittest.TestCase):
+    def test_urgency_uses_the_observed_couchdb_class(self):
+        self.assertEqual(
+            CORE_SOURCE_CLASSES["RefUrgence"],
+            "fr.sirs.core.model.RefUrgence",
+        )
+
     def test_link_insert_lets_postgresql_generate_technical_id(self):
         statement = " ".join(
-            INSERT_STATEMENTS["link_desordre_troncon"].split()
+            INSERT_STATEMENTS["link_desordres_troncons"].split()
         ).lower()
         self.assertIn(
-            "insert into public.link_desordre_troncon "
+            "insert into public.link_desordres_troncons "
             "(desordre_id, troncon_id)",
             statement,
         )
@@ -149,12 +193,15 @@ class CoreTransformationTest(unittest.TestCase):
 
     def test_migration_insert_statements_explicitly_supply_source_ids(self):
         for table in (
-            "systeme_endiguement",
-            "digue",
-            "troncon",
-            "desordre",
-            "observation",
-            "photo",
+            "ref_categories_desordre",
+            "ref_types_desordre",
+            "ref_urgences",
+            "systemes",
+            "digues",
+            "troncons",
+            "desordres",
+            "observations",
+            "photos",
         ):
             with self.subTest(table=table):
                 columns = " ".join(INSERT_STATEMENTS[table].split()).lower()
@@ -198,6 +245,20 @@ class CoreTransformationTest(unittest.TestCase):
 
     def test_flattens_observations_photos_and_links_preserving_invalid_rows(self):
         prepared = prepare_core_migration(source_fixture())
+        self.assertEqual(
+            prepared.categories_desordre[0].id, REFERENCE_IDS["categorie"]
+        )
+        self.assertIs(prepared.categories_desordre[0].valid, False)
+        self.assertEqual(prepared.types_desordre[0].id, REFERENCE_IDS["type"])
+        self.assertEqual(
+            prepared.types_desordre[0].categorie_id,
+            REFERENCE_IDS["categorie"],
+        )
+        self.assertEqual(prepared.urgences[0].id, REFERENCE_IDS["urgence"])
+        self.assertIs(prepared.urgences[0].valid, False)
+        self.assertEqual(
+            prepared.desordres[0].type_desordre_id, REFERENCE_IDS["type"]
+        )
         self.assertEqual(len(prepared.links), 1)
         self.assertEqual(prepared.links[0].desordre_id, prepared.desordres[0].id)
         self.assertEqual(prepared.links[0].troncon_id, prepared.troncons[0].id)
@@ -207,6 +268,9 @@ class CoreTransformationTest(unittest.TestCase):
             prepared.observations[0].desordre_id, prepared.desordres[0].id
         )
         self.assertIs(prepared.observations[0].valid, False)
+        self.assertEqual(
+            prepared.observations[0].urgence_id, REFERENCE_IDS["urgence"]
+        )
         self.assertEqual(len(prepared.photos), 2)
         self.assertTrue(all(
             photo.observation_id == prepared.observations[0].id
@@ -219,6 +283,12 @@ class CoreTransformationTest(unittest.TestCase):
         del documents["Desordre"][0]["observations"][0]["designation"]
         prepared = prepare_core_migration(documents)
         self.assertIsNone(prepared.observations[0].designation)
+
+    def test_missing_observation_urgency_becomes_null(self):
+        documents = copy.deepcopy(source_fixture())
+        del documents["Desordre"][0]["observations"][0]["urgenceId"]
+        prepared = prepare_core_migration(documents)
+        self.assertIsNone(prepared.observations[0].urgence_id)
 
     def test_ignores_direct_troncon_photos(self):
         prepared = prepare_core_migration(source_fixture())
@@ -244,7 +314,7 @@ class CoreTransformationTest(unittest.TestCase):
 
     def test_target_non_empty_is_refused_before_insert(self):
         prepared = prepare_core_migration(source_fixture())
-        cursor = FakeMigrationCursor([1, 0, 0, 0, 0, 0, 0])
+        cursor = FakeMigrationCursor([1] + [0] * 9)
         connection = FakeMigrationConnection(cursor)
 
         with self.assertRaises(TargetNotEmptyError):
@@ -257,7 +327,7 @@ class CoreTransformationTest(unittest.TestCase):
 
     def test_target_transaction_rolls_back_on_insert_error(self):
         prepared = prepare_core_migration(source_fixture())
-        cursor = FakeMigrationCursor([0] * 7, fail_on_insert=True)
+        cursor = FakeMigrationCursor([0] * 10, fail_on_insert=True)
         connection = FakeMigrationConnection(cursor)
 
         with self.assertRaisesRegex(CoreMigrationError, "annulée"):
@@ -271,6 +341,53 @@ class CoreTransformationTest(unittest.TestCase):
         documents = copy.deepcopy(source_fixture())
         documents["Desordre"][0]["linearId"] = IDS["photo_2"]
         with self.assertRaisesRegex(CoreMigrationError, "tronçon absent"):
+            prepare_core_migration(documents)
+
+    def test_type_without_source_category_is_migrated_without_warning(self):
+        documents = copy.deepcopy(source_fixture())
+        del documents["Desordre"][0]["categorieDesordreId"]
+        prepared = prepare_core_migration(documents)
+        self.assertEqual(
+            prepared.desordres[0].type_desordre_id, REFERENCE_IDS["type"]
+        )
+        self.assertFalse(any("categorieDesordreId" in w for w in prepared.warnings))
+
+    def test_source_category_without_type_becomes_null_with_warning(self):
+        documents = copy.deepcopy(source_fixture())
+        del documents["Desordre"][0]["typeDesordreId"]
+        prepared = prepare_core_migration(documents)
+        self.assertIsNone(prepared.desordres[0].type_desordre_id)
+        self.assertTrue(any("sans typeDesordreId" in w for w in prepared.warnings))
+
+    def test_matching_source_type_and_category_do_not_warn(self):
+        prepared = prepare_core_migration(source_fixture())
+        self.assertFalse(any("incohérent" in w for w in prepared.warnings))
+
+    def test_mismatching_source_type_and_category_warns_without_changing_type(self):
+        documents = copy.deepcopy(source_fixture())
+        documents["Desordre"][0]["categorieDesordreId"] = REFERENCE_IDS["categorie_2"]
+        prepared = prepare_core_migration(documents)
+        self.assertEqual(
+            prepared.desordres[0].type_desordre_id, REFERENCE_IDS["type"]
+        )
+        self.assertTrue(any("incohérent" in w for w in prepared.warnings))
+
+    def test_invalid_type_category_reference_is_blocking(self):
+        documents = copy.deepcopy(source_fixture())
+        documents["RefTypeDesordre"][0]["categorieId"] = "RefCategorieDesordre:404"
+        with self.assertRaisesRegex(CoreMigrationError, "catégorie absente"):
+            prepare_core_migration(documents)
+
+    def test_invalid_desordre_type_reference_is_blocking(self):
+        documents = copy.deepcopy(source_fixture())
+        documents["Desordre"][0]["typeDesordreId"] = "RefTypeDesordre:404"
+        with self.assertRaisesRegex(CoreMigrationError, "type absent"):
+            prepare_core_migration(documents)
+
+    def test_invalid_observation_urgency_reference_is_blocking(self):
+        documents = copy.deepcopy(source_fixture())
+        documents["Desordre"][0]["observations"][0]["urgenceId"] = "RefUrgence:404"
+        with self.assertRaisesRegex(CoreMigrationError, "urgence absente"):
             prepare_core_migration(documents)
 
 

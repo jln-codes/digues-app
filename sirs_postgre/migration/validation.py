@@ -19,45 +19,70 @@ class CoreValidationResult:
 
 
 INTEGRITY_CHECKS = {
-    "digue → systeme_endiguement": """
+    "ref_types_desordre → ref_categories_desordre": """
         SELECT COUNT(*)
-        FROM public.digue AS d
-        LEFT JOIN public.systeme_endiguement AS s
+        FROM public.ref_types_desordre AS t
+        LEFT JOIN public.ref_categories_desordre AS c ON c.id = t.categorie_id
+        WHERE c.id IS NULL
+    """,
+    "digues → systemes": """
+        SELECT COUNT(*)
+        FROM public.digues AS d
+        LEFT JOIN public.systemes AS s
           ON s.id = d.systeme_endiguement_id
         WHERE d.systeme_endiguement_id IS NOT NULL AND s.id IS NULL
     """,
-    "troncon → digue": """
+    "troncons → digues": """
         SELECT COUNT(*)
-        FROM public.troncon AS t
-        LEFT JOIN public.digue AS d ON d.id = t.digue_id
+        FROM public.troncons AS t
+        LEFT JOIN public.digues AS d ON d.id = t.digue_id
         WHERE d.id IS NULL
     """,
-    "liaison → desordre/troncon": """
+    "liaison → desordres/troncons": """
         SELECT COUNT(*)
-        FROM public.link_desordre_troncon AS l
-        LEFT JOIN public.desordre AS d ON d.id = l.desordre_id
-        LEFT JOIN public.troncon AS t ON t.id = l.troncon_id
+        FROM public.link_desordres_troncons AS l
+        LEFT JOIN public.desordres AS d ON d.id = l.desordre_id
+        LEFT JOIN public.troncons AS t ON t.id = l.troncon_id
         WHERE d.id IS NULL OR t.id IS NULL
     """,
-    "observation → desordre": """
+    "observations → desordres": """
         SELECT COUNT(*)
-        FROM public.observation AS o
-        LEFT JOIN public.desordre AS d ON d.id = o.desordre_id
+        FROM public.observations AS o
+        LEFT JOIN public.desordres AS d ON d.id = o.desordre_id
         WHERE d.id IS NULL
     """,
-    "photo → observation": """
+    "desordres → ref_types_desordre": """
         SELECT COUNT(*)
-        FROM public.photo AS p
-        LEFT JOIN public.observation AS o ON o.id = p.observation_id
+        FROM public.desordres AS d
+        LEFT JOIN public.ref_types_desordre AS t ON t.id = d.type_desordre_id
+        WHERE d.type_desordre_id IS NOT NULL AND t.id IS NULL
+    """,
+    "observations → ref_urgences": """
+        SELECT COUNT(*)
+        FROM public.observations AS o
+        LEFT JOIN public.ref_urgences AS u ON u.id = o.urgence_id
+        WHERE o.urgence_id IS NOT NULL AND u.id IS NULL
+    """,
+    "photos → observations": """
+        SELECT COUNT(*)
+        FROM public.photos AS p
+        LEFT JOIN public.observations AS o ON o.id = p.observation_id
         WHERE o.id IS NULL
     """,
-    "SRID troncon": """
-        SELECT COUNT(*) FROM public.troncon
+    "SRID troncons": """
+        SELECT COUNT(*) FROM public.troncons
         WHERE geometry IS NULL OR ST_SRID(geometry) <> 3950
     """,
-    "SRID desordre": """
-        SELECT COUNT(*) FROM public.desordre
+    "SRID desordres": """
+        SELECT COUNT(*) FROM public.desordres
         WHERE geometry IS NOT NULL AND ST_SRID(geometry) <> 3950
+    """,
+    "absence categorie_desordre_id dans desordres": """
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'desordres'
+          AND column_name = 'categorie_desordre_id'
     """,
 }
 
@@ -99,12 +124,15 @@ def validate_core_migration(
         )
 
     for table in (
-        "systeme_endiguement",
-        "digue",
-        "troncon",
-        "desordre",
-        "observation",
-        "photo",
+        "ref_categories_desordre",
+        "ref_types_desordre",
+        "ref_urgences",
+        "systemes",
+        "digues",
+        "troncons",
+        "desordres",
+        "observations",
+        "photos",
     ):
         cursor.execute(
             f"SELECT COUNT(*) - COUNT(DISTINCT id) FROM public.{table}"
@@ -115,10 +143,10 @@ def validate_core_migration(
     cursor.execute(
         "SELECT COUNT(*), COUNT(id), COUNT(DISTINCT id), "
         "COUNT(*) - COUNT(DISTINCT (desordre_id, troncon_id)) "
-        "FROM public.link_desordre_troncon"
+        "FROM public.link_desordres_troncons"
     )
     row = cursor.fetchone()
-    expected_links = expected_counts["link_desordre_troncon"]
+    expected_links = expected_counts["link_desordres_troncons"]
     if (
         not row
         or int(row[0]) != expected_links
@@ -131,7 +159,7 @@ def validate_core_migration(
         )
 
     cursor.execute(
-        "SELECT GeometryType(geometry), COUNT(*) FROM public.desordre "
+        "SELECT GeometryType(geometry), COUNT(*) FROM public.desordres "
         "WHERE geometry IS NOT NULL GROUP BY GeometryType(geometry)"
     )
     actual_geometries = {

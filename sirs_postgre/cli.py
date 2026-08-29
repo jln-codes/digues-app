@@ -176,35 +176,55 @@ def run_migrate_core() -> int:
 
     prepared = report.prepared
     geometries = prepared.desordre_geometry_counts
+    print("RefCategorieDesordre :")
+    print(f"  source: {len(prepared.categories_desordre)}")
+    print(
+        "  migrées: "
+        f"{report.validation.table_counts['ref_categories_desordre']}"
+    )
+    print("RefTypeDesordre :")
+    print(f"  source: {len(prepared.types_desordre)}")
+    print(f"  migrés: {report.validation.table_counts['ref_types_desordre']}")
+    print("RefUrgence :")
+    print(f"  source: {len(prepared.urgences)}")
+    print(f"  migrées: {report.validation.table_counts['ref_urgences']}")
     print("SystemeEndiguement :")
     print(f"  source: {len(prepared.systemes)}")
-    print(f"  migrés: {report.validation.table_counts['systeme_endiguement']}")
+    print(f"  migrés: {report.validation.table_counts['systemes']}")
     print("Digue :")
     print(f"  source: {len(prepared.digues)}")
-    print(f"  migrées: {report.validation.table_counts['digue']}")
+    print(f"  migrées: {report.validation.table_counts['digues']}")
     print(f"  sans système d'endiguement: {prepared.digues_without_system}")
     print("TronconDigue :")
     print(f"  source: {len(prepared.troncons)}")
-    print(f"  migrés: {report.validation.table_counts['troncon']}")
+    print(f"  migrés: {report.validation.table_counts['troncons']}")
     print(f"  géométries: {len(prepared.troncons)}")
     print("Desordre :")
     print(f"  source: {len(prepared.desordres)}")
-    print(f"  migrés: {report.validation.table_counts['desordre']}")
+    print(f"  migrés: {report.validation.table_counts['desordres']}")
     print(f"  points: {geometries['point']}")
     print(f"  lignes: {geometries['linestring']}")
     print(f"  sans géométrie: {geometries['null']}")
+    print(
+        "  avec type de désordre: "
+        f"{sum(row.type_desordre_id is not None for row in prepared.desordres)}"
+    )
     print(
         "  geometry source présente/absente: "
         f"{prepared.desordre_source_geometry_present}/"
         f"{prepared.desordre_source_geometry_absent}"
     )
-    print("link_desordre_troncon :")
-    print(f"  créés: {report.validation.table_counts['link_desordre_troncon']}")
+    print("link_desordres_troncons :")
+    print(f"  créés: {report.validation.table_counts['link_desordres_troncons']}")
     print("Observation :")
-    print(f"  migrées: {report.validation.table_counts['observation']}")
+    print(f"  migrées: {report.validation.table_counts['observations']}")
     print(f"  valid=false: {sum(not row.valid for row in prepared.observations)}")
+    print(
+        "  avec urgence: "
+        f"{sum(row.urgence_id is not None for row in prepared.observations)}"
+    )
     print("Photo :")
-    print(f"  migrées: {report.validation.table_counts['photo']}")
+    print(f"  migrées: {report.validation.table_counts['photos']}")
     print(f"  valid=false: {sum(not row.valid for row in prepared.photos)}")
     print("Warnings :")
     if prepared.warnings:

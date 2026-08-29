@@ -88,7 +88,8 @@ refusés avant toute opération destructive.
 
 ## Initialisation du schéma métier
 
-Après une recréation, initialiser les sept tables du noyau métier avec :
+Après une recréation, initialiser les tables du noyau métier et ses trois
+premiers référentiels avec :
 
 ```bash
 source .venv/bin/activate
@@ -98,12 +99,12 @@ sirs-postgre init-schema
 Le DDL est exécuté dans une transaction unique dans le schéma `public`. Les
 tables sont créées avec `IF NOT EXISTS`, puis leur présence et celle de PostGIS
 et `pgcrypto` sont vérifiées avant validation de la transaction. Cette étape ne migre aucune
-donnée CouchDB et ne crée ni table de référence, ni prestation, végétation,
-ouvrage ou aménagement hydraulique.
+donnée CouchDB et ne crée ni prestation, végétation, ouvrage ou aménagement
+hydraulique.
 
 Les tables possédant une PK UUID simple utilisent
 `DEFAULT gen_random_uuid()`. PostgreSQL peut ainsi attribuer un identifiant aux
-objets créés directement depuis QGIS. `link_desordre_troncon` possède un UUID
+objets créés directement depuis QGIS. `link_desordres_troncons` possède un UUID
 technique généré de cette manière et conserve l'unicité métier du couple
 `(desordre_id, troncon_id)`. Les migrations fournissent toujours explicitement
 les UUID CouchDB des objets métier et ne déclenchent donc pas leur DEFAULT.
@@ -122,34 +123,46 @@ La première migration réelle se lance uniquement sur des tables métier vides 
 sirs-postgre migrate-core
 ```
 
-La commande lit les quatre classes top-level `SystemeEndiguement`, `Digue`,
-`TronconDigue` et `Desordre`, puis aplatit exclusivement les observations de
-désordre et leurs photos. Elle ignore volontairement les photos directement
+La commande lit les classes métier `SystemeEndiguement`, `Digue`,
+`TronconDigue` et `Desordre`, ainsi que `RefCategorieDesordre`,
+`RefTypeDesordre` et `RefUrgence`. Elle aplatit exclusivement les observations
+de désordre et leurs photos, ignore volontairement les photos directement
 rattachées aux tronçons et ne lit aucun attachment binaire.
 
 Mapping établi après inspection de la source `cabbalr` :
 
 | Cible | Source CouchDB | Transformation |
 |---|---|---|
-| `systeme_endiguement.id` | `SystemeEndiguement._id` | normalisation UUID, mêmes 128 bits |
-| `systeme_endiguement.libelle/valid` | `libelle`, `valid` | valeurs inchangées |
-| `digue.systeme_endiguement_id` | `systemeEndiguementId` | UUID vérifié ou `NULL` si absent |
-| `digue.libelle/valid` | `libelle`, `valid` | valeurs inchangées |
-| `troncon.digue_id` | `digueId` | UUID vérifié |
-| `troncon.geometry` | `geometry` | WKT `LINESTRING`, `ST_GeomFromText(..., 3950)` |
-| `desordre.designation/commentaire` | champs homonymes | textes nullables inchangés |
-| `desordre.date_debut/date_fin` | champs homonymes | dates ISO vers `DATE` |
-| `desordre.geometry` | `positionDebut`, `positionFin` | Point si égales, LineString sinon, SRID 3950 |
-| liaison | `Desordre._id`, `linearId` | deux UUID vérifiés, une ligne N-N avec `id` technique généré |
-| `observation` | `Desordre.observations[]` | `desordre_id` injecté depuis le parent |
-| `observation.designation` | `Observation.designation` | texte nullable, `NULL` si absent |
-| `observation.evolution` | `Observation.evolution` | texte nullable inchangé |
-| `photo` | `Observation.photos[]` | `observation_id` injecté depuis le parent |
-| `photo.chemin_source` | `Photo.chemin` | valeur inchangée, aucune déduplication |
+| `ref_categories_desordre` | `RefCategorieDesordre` | `_id` conservé littéralement comme PK `TEXT` |
+| `ref_types_desordre` | `RefTypeDesordre` | `_id` conservé ; `categorieId` vers `categorie_id` |
+| `ref_urgences` | `RefUrgence` | `_id` conservé littéralement comme PK `TEXT` |
+| `systemes.id` | `SystemeEndiguement._id` | normalisation UUID, mêmes 128 bits |
+| `systemes.libelle/valid` | `libelle`, `valid` | valeurs inchangées |
+| `digues.systeme_endiguement_id` | `systemeEndiguementId` | UUID vérifié ou `NULL` si absent |
+| `digues.libelle/valid` | `libelle`, `valid` | valeurs inchangées |
+| `troncons.digue_id` | `digueId` | UUID vérifié |
+| `troncons.geometry` | `geometry` | WKT `LINESTRING`, `ST_GeomFromText(..., 3950)` |
+| `desordres.type_desordre_id` | `Desordre.typeDesordreId` | référence `TEXT` vérifiée ou `NULL` |
+| `desordres.designation/commentaire` | champs homonymes | textes nullables inchangés |
+| `desordres.date_debut/date_fin` | champs homonymes | dates ISO vers `DATE` |
+| `desordres.geometry` | `positionDebut`, `positionFin` | Point si égales, LineString sinon, SRID 3950 |
+| `link_desordres_troncons` | `Desordre._id`, `linearId` | deux UUID vérifiés, une ligne N-N avec `id` technique généré |
+| `observations` | `Desordre.observations[]` | `desordre_id` injecté depuis le parent |
+| `observations.urgence_id` | `Observation.urgenceId` | référence `TEXT` vers `ref_urgences`, ou `NULL` |
+| `observations.designation` | `Observation.designation` | texte nullable, `NULL` si absent |
+| `observations.evolution` | `Observation.evolution` | texte nullable inchangé |
+| `photos` | `Observation.photos[]` | `observation_id` injecté depuis le parent |
+| `photos.chemin_source` | `Photo.chemin` | valeur inchangée, aucune déduplication |
 
 Le champ `Desordre.geometry` source n'est pas utilisé pour construire la
 géométrie cible dans cette itération ; sa présence est seulement comptabilisée
 dans le rapport. Tous les `valid=false` sont conservés.
+
+`Desordre.categorieDesordreId` sert uniquement à contrôler la cohérence avec la
+catégorie portée par `RefTypeDesordre.categorieId`. Il n'est jamais stocké dans
+`desordres` : lorsqu'un type existe, sa catégorie est déduite par la relation
+`ref_types_desordre.categorie_id`. Une catégorie source seule produit un warning
+et laisse `type_desordre_id` à `NULL`.
 
 La préparation est déterministe par UUID. Les insertions et les validations
 dynamiques sont exécutées dans une transaction PostgreSQL unique. Toute
@@ -178,5 +191,6 @@ sirs_postgre/
 └── cli.py                  # commandes de diagnostic, schéma et migration
 ```
 
-Le noyau initial contient uniquement `systeme_endiguement`, `digue`, `troncon`,
-`desordre`, `link_desordre_troncon`, `observation` et `photo`.
+Le noyau contient `systemes`, `digues`, `troncons`, `desordres`,
+`link_desordres_troncons`, `observations`, `photos`, ainsi que les référentiels
+`ref_categories_desordre`, `ref_types_desordre` et `ref_urgences`.

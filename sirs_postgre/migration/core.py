@@ -18,6 +18,9 @@ from .validation import CoreValidationResult, validate_core_migration
 
 
 CORE_SOURCE_CLASSES = {
+    "RefCategorieDesordre": "fr.sirs.core.model.RefCategorieDesordre",
+    "RefTypeDesordre": "fr.sirs.core.model.RefTypeDesordre",
+    "RefUrgence": "fr.sirs.core.model.RefUrgence",
     "SystemeEndiguement": "fr.sirs.core.model.SystemeEndiguement",
     "Digue": "fr.sirs.core.model.Digue",
     "TronconDigue": "fr.sirs.core.model.TronconDigue",
@@ -25,46 +28,65 @@ CORE_SOURCE_CLASSES = {
 }
 
 CORE_FIELD_MAPPINGS = {
-    "systeme_endiguement": (
+    "ref_categories_desordre": (
+        "_id → texte littéral → id",
+        "libelle → texte inchangé → libelle",
+        "valid → booléen inchangé → valid",
+    ),
+    "ref_types_desordre": (
+        "_id → texte littéral → id",
+        "categorieId → référence texte vérifiée → categorie_id",
+        "libelle → texte inchangé → libelle",
+        "valid → booléen inchangé → valid",
+    ),
+    "ref_urgences": (
+        "_id → texte littéral → id",
+        "libelle → texte inchangé → libelle",
+        "valid → booléen inchangé → valid",
+    ),
+    "systemes": (
         "_id → UUID → id",
         "libelle → texte inchangé → libelle",
         "valid → booléen inchangé → valid",
     ),
-    "digue": (
+    "digues": (
         "_id → UUID → id",
         "systemeEndiguementId absent ou UUID → systeme_endiguement_id nullable",
         "libelle → texte inchangé → libelle",
         "valid → booléen inchangé → valid",
     ),
-    "troncon": (
+    "troncons": (
         "_id → UUID → id",
         "digueId → UUID vérifié → digue_id",
         "libelle → texte inchangé → libelle",
         "geometry WKT LINESTRING → ST_GeomFromText(..., 3950) → geometry",
         "valid → booléen inchangé → valid",
     ),
-    "desordre": (
+    "desordres": (
         "_id → UUID → id",
+        "typeDesordreId absent ou référence texte vérifiée → type_desordre_id",
+        "categorieDesordreId → contrôle de cohérence uniquement, non stocké",
         "designation/commentaire → textes inchangés → colonnes homonymes",
         "date_debut/date_fin ISO → DATE → colonnes homonymes",
         "positionDebut/positionFin → POINT ou LINESTRING SRID 3950 → geometry",
         "valid → booléen inchangé → valid",
         "geometry source → comptée dans le rapport, non utilisée pour la cible",
     ),
-    "link_desordre_troncon": (
+    "link_desordres_troncons": (
         "aucune source → gen_random_uuid() PostgreSQL → id technique",
         "Desordre._id → UUID → desordre_id",
         "Desordre.linearId → UUID de TronconDigue vérifié → troncon_id",
     ),
-    "observation": (
+    "observations": (
         "Desordre.observations[].id → UUID → id",
         "Desordre._id → UUID injecté → desordre_id",
+        "urgenceId absent ou référence texte vérifiée → urgence_id",
         "designation → texte inchangé ou absent → designation nullable",
         "date ISO → DATE → date",
         "evolution → texte inchangé → evolution",
         "valid → booléen inchangé → valid",
     ),
-    "photo": (
+    "photos": (
         "Observation.photos[].id → UUID → id",
         "Observation.id → UUID injecté → observation_id",
         "chemin → texte inchangé sans déduplication → chemin_source",
@@ -88,6 +110,21 @@ class CoreMigrationError(RuntimeError):
 
 class TargetNotEmptyError(CoreMigrationError):
     """La cible contient déjà au moins une ligne métier."""
+
+
+@dataclass(frozen=True)
+class ReferenceRow:
+    id: str
+    libelle: str
+    valid: bool
+
+
+@dataclass(frozen=True)
+class TypeDesordreReferenceRow:
+    id: str
+    categorie_id: str
+    libelle: str
+    valid: bool
 
 
 @dataclass(frozen=True)
@@ -117,6 +154,7 @@ class TronconRow:
 @dataclass(frozen=True)
 class DesordreRow:
     id: UUID
+    type_desordre_id: str | None
     designation: str | None
     commentaire: str | None
     date_debut: date | None
@@ -136,6 +174,7 @@ class LinkDesordreTronconRow:
 class ObservationRow:
     id: UUID
     desordre_id: UUID
+    urgence_id: str | None
     designation: str | None
     date: date | None
     evolution: str | None
@@ -154,6 +193,9 @@ class PhotoRow:
 
 @dataclass(frozen=True)
 class PreparedCoreMigration:
+    categories_desordre: tuple[ReferenceRow, ...]
+    types_desordre: tuple[TypeDesordreReferenceRow, ...]
+    urgences: tuple[ReferenceRow, ...]
     systemes: tuple[SystemeEndiguementRow, ...]
     digues: tuple[DigueRow, ...]
     troncons: tuple[TronconRow, ...]
@@ -170,13 +212,16 @@ class PreparedCoreMigration:
     @property
     def expected_counts(self) -> dict[str, int]:
         return {
-            "systeme_endiguement": len(self.systemes),
-            "digue": len(self.digues),
-            "troncon": len(self.troncons),
-            "desordre": len(self.desordres),
-            "link_desordre_troncon": len(self.links),
-            "observation": len(self.observations),
-            "photo": len(self.photos),
+            "ref_categories_desordre": len(self.categories_desordre),
+            "ref_types_desordre": len(self.types_desordre),
+            "ref_urgences": len(self.urgences),
+            "systemes": len(self.systemes),
+            "digues": len(self.digues),
+            "troncons": len(self.troncons),
+            "desordres": len(self.desordres),
+            "link_desordres_troncons": len(self.links),
+            "observations": len(self.observations),
+            "photos": len(self.photos),
         }
 
     @property
@@ -269,6 +314,20 @@ def _required_bool(document: Mapping[str, Any], field: str, context: str) -> boo
     return value
 
 
+def _source_reference_id(value: Any, *, context: str) -> str:
+    """Conserve littéralement un identifiant CouchDB de référentiel."""
+
+    if not isinstance(value, str) or not value:
+        raise CoreMigrationError(f"{context}: identifiant texte absent ou invalide")
+    return value
+
+
+def _optional_source_reference_id(value: Any, *, context: str) -> str | None:
+    if value in (None, ""):
+        return None
+    return _source_reference_id(value, context=context)
+
+
 def _optional_date(document: Mapping[str, Any], field: str, context: str) -> date | None:
     value = document.get(field)
     if value in (None, ""):
@@ -311,12 +370,79 @@ def _sorted_documents(
     )
 
 
+def _sorted_reference_documents(
+    documents: Sequence[Mapping[str, Any]], *, context: str
+) -> list[Mapping[str, Any]]:
+    return sorted(
+        documents,
+        key=lambda document: _source_reference_id(
+            document.get("_id"), context=f"{context}._id"
+        ),
+    )
+
+
 def prepare_core_migration(
     source_documents: Mapping[str, Sequence[Mapping[str, Any]]],
 ) -> PreparedCoreMigration:
     """Transforme les documents live en lignes typées, sans accès PostgreSQL."""
 
     warnings: list[str] = []
+
+    categories_desordre = tuple(
+        ReferenceRow(
+            id=_source_reference_id(
+                doc.get("_id"), context="RefCategorieDesordre._id"
+            ),
+            libelle=_required_text(doc, "libelle", "RefCategorieDesordre"),
+            valid=_required_bool(doc, "valid", "RefCategorieDesordre"),
+        )
+        for doc in _sorted_reference_documents(
+            source_documents.get("RefCategorieDesordre", ()),
+            context="RefCategorieDesordre",
+        )
+    )
+    _ensure_unique_ids(categories_desordre, "ref_categories_desordre")
+    categorie_ids = {row.id for row in categories_desordre}
+
+    types_desordre_list: list[TypeDesordreReferenceRow] = []
+    for doc in _sorted_reference_documents(
+        source_documents.get("RefTypeDesordre", ()), context="RefTypeDesordre"
+    ):
+        type_id = _source_reference_id(
+            doc.get("_id"), context="RefTypeDesordre._id"
+        )
+        context = f"RefTypeDesordre {type_id}"
+        categorie_id = _source_reference_id(
+            doc.get("categorieId"), context=f"{context}.categorieId"
+        )
+        if categorie_id not in categorie_ids:
+            raise CoreMigrationError(
+                f"{context}: categorieId référence une catégorie absente"
+            )
+        types_desordre_list.append(
+            TypeDesordreReferenceRow(
+                id=type_id,
+                categorie_id=categorie_id,
+                libelle=_required_text(doc, "libelle", context),
+                valid=_required_bool(doc, "valid", context),
+            )
+        )
+    types_desordre = tuple(types_desordre_list)
+    _ensure_unique_ids(types_desordre, "ref_types_desordre")
+    type_categories = {row.id: row.categorie_id for row in types_desordre}
+
+    urgences = tuple(
+        ReferenceRow(
+            id=_source_reference_id(doc.get("_id"), context="RefUrgence._id"),
+            libelle=_required_text(doc, "libelle", "RefUrgence"),
+            valid=_required_bool(doc, "valid", "RefUrgence"),
+        )
+        for doc in _sorted_reference_documents(
+            source_documents.get("RefUrgence", ()), context="RefUrgence"
+        )
+    )
+    _ensure_unique_ids(urgences, "ref_urgences")
+    urgence_ids = {row.id for row in urgences}
 
     systemes = tuple(
         SystemeEndiguementRow(
@@ -330,7 +456,7 @@ def prepare_core_migration(
             context="SystemeEndiguement",
         )
     )
-    _ensure_unique_ids(systemes, "systeme_endiguement")
+    _ensure_unique_ids(systemes, "systemes")
     systeme_ids = {row.id for row in systemes}
 
     digues_list: list[DigueRow] = []
@@ -360,7 +486,7 @@ def prepare_core_migration(
             )
         )
     digues = tuple(digues_list)
-    _ensure_unique_ids(digues, "digue")
+    _ensure_unique_ids(digues, "digues")
     digue_ids = {row.id for row in digues}
 
     troncons_list: list[TronconRow] = []
@@ -388,7 +514,7 @@ def prepare_core_migration(
             )
         )
     troncons = tuple(troncons_list)
-    _ensure_unique_ids(troncons, "troncon")
+    _ensure_unique_ids(troncons, "troncons")
     troncon_ids = {row.id for row in troncons}
 
     desordres_list: list[DesordreRow] = []
@@ -417,9 +543,38 @@ def prepare_core_migration(
         if not isinstance(direct_desordre, list):
             raise CoreMigrationError(f"{context}: photos directes invalides")
         direct_desordre_photos += len(direct_desordre)
+        type_desordre_id = _optional_source_reference_id(
+            doc.get("typeDesordreId"), context=f"{context}.typeDesordreId"
+        )
+        source_categorie_id = _optional_source_reference_id(
+            doc.get("categorieDesordreId"),
+            context=f"{context}.categorieDesordreId",
+        )
+        if type_desordre_id is not None:
+            if type_desordre_id not in type_categories:
+                raise CoreMigrationError(
+                    f"{context}: typeDesordreId référence un type absent"
+                )
+            inferred_categorie_id = type_categories[type_desordre_id]
+            if (
+                source_categorie_id is not None
+                and source_categorie_id != inferred_categorie_id
+            ):
+                warnings.append(
+                    f"{context}: categorieDesordreId={source_categorie_id!r} "
+                    f"incohérent avec typeDesordreId={type_desordre_id!r} "
+                    f"(catégorie du type={inferred_categorie_id!r}) ; "
+                    "catégorie source non stockée"
+                )
+        elif source_categorie_id is not None:
+            warnings.append(
+                f"{context}: categorieDesordreId={source_categorie_id!r} "
+                "renseigné sans typeDesordreId ; type_desordre_id cible NULL"
+            )
         desordres_list.append(
             DesordreRow(
                 id=desordre_id,
+                type_desordre_id=type_desordre_id,
                 designation=_optional_text(doc, "designation", context),
                 commentaire=_optional_text(doc, "commentaire", context),
                 date_debut=_optional_date(doc, "date_debut", context),
@@ -450,10 +605,19 @@ def prepare_core_migration(
             observation_id = couchdb_id_to_uuid(
                 raw_observation_id, context=f"{observation_context}.id"
             )
+            urgence_id = _optional_source_reference_id(
+                observation.get("urgenceId"),
+                context=f"{observation_context}.urgenceId",
+            )
+            if urgence_id is not None and urgence_id not in urgence_ids:
+                raise CoreMigrationError(
+                    f"{observation_context}: urgenceId référence une urgence absente"
+                )
             observations_list.append(
                 ObservationRow(
                     id=observation_id,
                     desordre_id=desordre_id,
+                    urgence_id=urgence_id,
                     designation=_optional_text(
                         observation, "designation", observation_context
                     ),
@@ -491,9 +655,9 @@ def prepare_core_migration(
     links = tuple(links_list)
     observations = tuple(sorted(observations_list, key=lambda row: row.id.int))
     photos = tuple(sorted(photos_list, key=lambda row: row.id.int))
-    _ensure_unique_ids(desordres, "desordre")
-    _ensure_unique_ids(observations, "observation")
-    _ensure_unique_ids(photos, "photo")
+    _ensure_unique_ids(desordres, "desordres")
+    _ensure_unique_ids(observations, "observations")
+    _ensure_unique_ids(photos, "photos")
     if len(links) != len({(row.desordre_id, row.troncon_id) for row in links}):
         raise CoreMigrationError("Liaisons source desordre/troncon dupliquées")
 
@@ -509,6 +673,9 @@ def prepare_core_migration(
         )
 
     return PreparedCoreMigration(
+        categories_desordre=categories_desordre,
+        types_desordre=types_desordre,
+        urgences=urgences,
         systemes=systemes,
         digues=digues,
         troncons=troncons,
@@ -525,34 +692,48 @@ def prepare_core_migration(
 
 
 INSERT_STATEMENTS = {
-    "systeme_endiguement": """
-        INSERT INTO public.systeme_endiguement (id, libelle, valid)
+    "ref_categories_desordre": """
+        INSERT INTO public.ref_categories_desordre (id, libelle, valid)
         VALUES (%s, %s, %s)
     """,
-    "digue": """
-        INSERT INTO public.digue (id, systeme_endiguement_id, libelle, valid)
+    "ref_types_desordre": """
+        INSERT INTO public.ref_types_desordre
+            (id, categorie_id, libelle, valid)
         VALUES (%s, %s, %s, %s)
     """,
-    "troncon": """
-        INSERT INTO public.troncon (id, digue_id, libelle, geometry, valid)
+    "ref_urgences": """
+        INSERT INTO public.ref_urgences (id, libelle, valid)
+        VALUES (%s, %s, %s)
+    """,
+    "systemes": """
+        INSERT INTO public.systemes (id, libelle, valid)
+        VALUES (%s, %s, %s)
+    """,
+    "digues": """
+        INSERT INTO public.digues (id, systeme_endiguement_id, libelle, valid)
+        VALUES (%s, %s, %s, %s)
+    """,
+    "troncons": """
+        INSERT INTO public.troncons (id, digue_id, libelle, geometry, valid)
         VALUES (%s, %s, %s, ST_GeomFromText(%s, 3950), %s)
     """,
-    "desordre": """
-        INSERT INTO public.desordre
-            (id, designation, commentaire, date_debut, date_fin, geometry, valid)
-        VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s)
+    "desordres": """
+        INSERT INTO public.desordres
+            (id, type_desordre_id, designation, commentaire,
+             date_debut, date_fin, geometry, valid)
+        VALUES (%s, %s, %s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s)
     """,
-    "link_desordre_troncon": """
-        INSERT INTO public.link_desordre_troncon (desordre_id, troncon_id)
+    "link_desordres_troncons": """
+        INSERT INTO public.link_desordres_troncons (desordre_id, troncon_id)
         VALUES (%s, %s)
     """,
-    "observation": """
-        INSERT INTO public.observation
-            (id, desordre_id, designation, date, evolution, valid)
-        VALUES (%s, %s, %s, %s, %s, %s)
+    "observations": """
+        INSERT INTO public.observations
+            (id, desordre_id, urgence_id, designation, date, evolution, valid)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     """,
-    "photo": """
-        INSERT INTO public.photo
+    "photos": """
+        INSERT INTO public.photos
             (id, observation_id, chemin_source, date, designation, valid)
         VALUES (%s, %s, %s, %s, %s, %s)
     """,
@@ -575,28 +756,44 @@ def ensure_target_empty(cursor: Any) -> None:
 def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
     batches = (
         (
-            "systeme_endiguement",
+            "ref_categories_desordre",
+            [(row.id, row.libelle, row.valid) for row in prepared.categories_desordre],
+        ),
+        (
+            "ref_types_desordre",
+            [
+                (row.id, row.categorie_id, row.libelle, row.valid)
+                for row in prepared.types_desordre
+            ],
+        ),
+        (
+            "ref_urgences",
+            [(row.id, row.libelle, row.valid) for row in prepared.urgences],
+        ),
+        (
+            "systemes",
             [(row.id, row.libelle, row.valid) for row in prepared.systemes],
         ),
         (
-            "digue",
+            "digues",
             [
                 (row.id, row.systeme_endiguement_id, row.libelle, row.valid)
                 for row in prepared.digues
             ],
         ),
         (
-            "troncon",
+            "troncons",
             [
                 (row.id, row.digue_id, row.libelle, row.geometry_wkt, row.valid)
                 for row in prepared.troncons
             ],
         ),
         (
-            "desordre",
+            "desordres",
             [
                 (
                     row.id,
+                    row.type_desordre_id,
                     row.designation,
                     row.commentaire,
                     row.date_debut,
@@ -608,15 +805,16 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
             ],
         ),
         (
-            "link_desordre_troncon",
+            "link_desordres_troncons",
             [(row.desordre_id, row.troncon_id) for row in prepared.links],
         ),
         (
-            "observation",
+            "observations",
             [
                 (
                     row.id,
                     row.desordre_id,
+                    row.urgence_id,
                     row.designation,
                     row.date,
                     row.evolution,
@@ -626,7 +824,7 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
             ],
         ),
         (
-            "photo",
+            "photos",
             [
                 (
                     row.id,
@@ -681,7 +879,7 @@ def execute_core_migration(
 
 
 def fetch_core_documents(client: CouchDBClient) -> dict[str, list[dict[str, Any]]]:
-    """Lit uniquement les quatre classes top-level du noyau."""
+    """Lit uniquement les classes métier et de référence du noyau."""
 
     return {
         label: client.find_by_class(class_name)

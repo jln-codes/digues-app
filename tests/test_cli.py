@@ -73,7 +73,7 @@ class CLITest(unittest.TestCase):
         text = output.getvalue()
         self.assertIn("[OK] Schéma métier initialisé", text)
         self.assertIn("[OK] pgcrypto disponible : 1.3", text)
-        self.assertIn("[OK] Table présente : photo", text)
+        self.assertIn("[OK] Table présente : photos", text)
 
     @patch("sirs_postgre.cli.recreate_postgresql")
     @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
@@ -156,8 +156,8 @@ class CLITest(unittest.TestCase):
         self.assertIn("SystemeEndiguement: 9", text)
         self.assertIn("Desordre: 1598", text)
         self.assertIn("Cible PostgreSQL", text)
-        self.assertIn("systeme_endiguement: présente", text)
-        self.assertIn("photo: présente", text)
+        self.assertIn("systemes: présente", text)
+        self.assertIn("photos: présente", text)
         self.assertIn("pgcrypto: 1.3", text)
         self.assertIn(
             "[INFO] CouchDB : authentification non configurée ; connexion réussie",
