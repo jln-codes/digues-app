@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sirs-postgre"
+version = "0.1.0"
+description = "Prototype autonome de migration de SIRS Digues vers PostgreSQL/PostGIS"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "psycopg[binary]>=3.2,<4",
+    "python-dotenv>=1.0,<2",
+    "requests>=2.31,<3",
+]
+
+[project.scripts]
+sirs-postgre = "sirs_postgre.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sirs_postgre*"]
