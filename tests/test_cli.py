@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sirs_postgre.cli import SOURCE_CLASSES, main
+from sirs_postgre.migration import TargetNotEmptyError
 from sirs_postgre.source import CouchDBConfig, CouchDBSourceStatus
 from sirs_postgre.target import (
     PostgreSQLConfig,
@@ -37,6 +38,21 @@ class FakeSourceClient:
 
 
 class CLITest(unittest.TestCase):
+    @patch(
+        "sirs_postgre.cli.migrate_core",
+        side_effect=TargetNotEmptyError("cible non vide"),
+    )
+    def test_migrate_core_non_empty_target_prints_recovery_commands(self, _migrate):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["migrate-core"])
+        self.assertEqual(result, 1)
+        text = output.getvalue()
+        self.assertIn("La base cible contient déjà des données", text)
+        self.assertIn("sirs-postgre recreate", text)
+        self.assertIn("sirs-postgre init-schema", text)
+        self.assertIn("sirs-postgre migrate-core", text)
+
     @patch("sirs_postgre.cli.initialize_postgresql_schema")
     @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
     def test_init_schema_reports_tables_without_migrating_data(

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .migration import TargetNotEmptyError, migrate_core
 from .source import connect_couchdb
 from .target import (
     PostgreSQLConfig,
@@ -48,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "init-schema",
         description="Crée le premier noyau métier PostgreSQL/PostGIS.",
+    )
+    subparsers.add_parser(
+        "migrate-core",
+        description="Migre le noyau CouchDB vers PostgreSQL/PostGIS.",
     )
     return parser
 
@@ -152,6 +157,62 @@ def run_init_schema() -> int:
     return 0
 
 
+def run_migrate_core() -> int:
+    try:
+        report = migrate_core()
+    except TargetNotEmptyError:
+        print("[ERREUR] La base cible contient déjà des données. Utiliser :")
+        print("sirs-postgre recreate")
+        print("sirs-postgre init-schema")
+        print("sirs-postgre migrate-core")
+        return 1
+    except Exception as exc:
+        print(f"[ERREUR] Migration du noyau : {exc}")
+        return 1
+
+    prepared = report.prepared
+    geometries = prepared.desordre_geometry_counts
+    print("SystemeEndiguement :")
+    print(f"  source: {len(prepared.systemes)}")
+    print(f"  migrés: {report.validation.table_counts['systeme_endiguement']}")
+    print("Digue :")
+    print(f"  source: {len(prepared.digues)}")
+    print(f"  migrées: {report.validation.table_counts['digue']}")
+    print(f"  sans système d'endiguement: {prepared.digues_without_system}")
+    print("TronconDigue :")
+    print(f"  source: {len(prepared.troncons)}")
+    print(f"  migrés: {report.validation.table_counts['troncon']}")
+    print(f"  géométries: {len(prepared.troncons)}")
+    print("Desordre :")
+    print(f"  source: {len(prepared.desordres)}")
+    print(f"  migrés: {report.validation.table_counts['desordre']}")
+    print(f"  points: {geometries['point']}")
+    print(f"  lignes: {geometries['linestring']}")
+    print(f"  sans géométrie: {geometries['null']}")
+    print(
+        "  geometry source présente/absente: "
+        f"{prepared.desordre_source_geometry_present}/"
+        f"{prepared.desordre_source_geometry_absent}"
+    )
+    print("link_desordre_troncon :")
+    print(f"  créés: {report.validation.table_counts['link_desordre_troncon']}")
+    print("Observation :")
+    print(f"  migrées: {report.validation.table_counts['observation']}")
+    print(f"  valid=false: {sum(not row.valid for row in prepared.observations)}")
+    print("Photo :")
+    print(f"  migrées: {report.validation.table_counts['photo']}")
+    print(f"  valid=false: {sum(not row.valid for row in prepared.photos)}")
+    print("Warnings :")
+    if prepared.warnings:
+        for warning in prepared.warnings:
+            print(f"  - {warning}")
+    else:
+        print("  aucun")
+    print("Résultat final :")
+    print("[OK] Migration du noyau terminée")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv(dotenv_path=CONFIG_ENV_PATH, override=False)
     args = build_parser().parse_args(argv)
@@ -161,6 +222,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_recreate()
     if args.command == "init-schema":
         return run_init_schema()
+    if args.command == "migrate-core":
+        return run_migrate_core()
     raise AssertionError(f"Commande inconnue : {args.command}")
 
 

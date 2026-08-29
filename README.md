@@ -125,6 +125,48 @@ Le contrôle suivant affiche ensuite chaque table comme `présente` ou `absente`
 sirs-postgre check --target-only
 ```
 
+## Migration du noyau
+
+La première migration réelle se lance uniquement sur des tables métier vides :
+
+```bash
+sirs-postgre migrate-core
+```
+
+La commande lit les quatre classes top-level `SystemeEndiguement`, `Digue`,
+`TronconDigue` et `Desordre`, puis aplatit exclusivement les observations de
+désordre et leurs photos. Elle ignore volontairement les photos directement
+rattachées aux tronçons et ne lit aucun attachment binaire.
+
+Mapping établi après inspection de la source `cabbalr` :
+
+| Cible | Source CouchDB | Transformation |
+|---|---|---|
+| `systeme_endiguement.id` | `SystemeEndiguement._id` | normalisation UUID, mêmes 128 bits |
+| `systeme_endiguement.libelle/valid` | `libelle`, `valid` | valeurs inchangées |
+| `digue.systeme_endiguement_id` | `systemeEndiguementId` | UUID vérifié ou `NULL` si absent |
+| `digue.libelle/valid` | `libelle`, `valid` | valeurs inchangées |
+| `troncon.digue_id` | `digueId` | UUID vérifié |
+| `troncon.geometry` | `geometry` | WKT `LINESTRING`, `ST_GeomFromText(..., 3950)` |
+| `desordre.designation/commentaire` | champs homonymes | textes nullables inchangés |
+| `desordre.date_debut/date_fin` | champs homonymes | dates ISO vers `DATE` |
+| `desordre.geometry` | `positionDebut`, `positionFin` | Point si égales, LineString sinon, SRID 3950 |
+| liaison | `Desordre._id`, `linearId` | deux UUID vérifiés, une ligne N-N |
+| `observation` | `Desordre.observations[]` | `desordre_id` injecté depuis le parent |
+| `observation.evolution` | `Observation.evolution` | texte nullable inchangé |
+| `photo` | `Observation.photos[]` | `observation_id` injecté depuis le parent |
+| `photo.chemin_source` | `Photo.chemin` | valeur inchangée, aucune déduplication |
+
+Le champ `Desordre.geometry` source n'est pas utilisé pour construire la
+géométrie cible dans cette itération ; sa présence est seulement comptabilisée
+dans le rapport. Tous les `valid=false` sont conservés.
+
+La préparation est déterministe par UUID. Les insertions et les validations
+dynamiques sont exécutées dans une transaction PostgreSQL unique. Toute
+référence invalide, tout compte incohérent, SRID incorrect ou échec d'insertion
+annule intégralement la migration. Une cible non vide est refusée sans UPSERT et
+le message rappelle la séquence `recreate`, `init-schema`, `migrate-core`.
+
 ## Tests
 
 Les tests unitaires utilisent des doubles de connexion et ne nécessitent aucune
@@ -141,9 +183,9 @@ sirs_postgre/
 ├── source/couchdb.py       # configuration et client CouchDB autonomes
 ├── target/database.py      # configuration, diagnostic et initialisation
 ├── target/schema.py        # DDL du premier noyau métier
-├── migration/core.py       # emplacement réservé à la migration
-├── migration/validation.py # emplacement réservé aux contrôles
-└── cli.py                  # commandes `check`, `recreate` et `init-schema`
+├── migration/core.py       # mapping, transformation et insertion atomique
+├── migration/validation.py # contrôles avant commit
+└── cli.py                  # commandes de diagnostic, schéma et migration
 ```
 
 Le noyau initial contient uniquement `systeme_endiguement`, `digue`, `troncon`,
