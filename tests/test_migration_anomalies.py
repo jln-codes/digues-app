@@ -134,6 +134,27 @@ class AnomalyIdentityAndHistoryTest(unittest.TestCase):
             reappeared[0].first_detected_at, "2026-01-01T00:00:00Z"
         )
 
+    def test_media_reclassification_keeps_old_identity_in_inactive_history(self):
+        values = {
+            "source_database": DATABASE,
+            "source_class": "KnownDeferredFamily",
+            "source_id": "media-1",
+            "source_field": "photos",
+        }
+        previous = Anomaly.create(
+            category="UNMIGRATED_MEDIA", severity="ERROR", **values
+        )
+        current = Anomaly.create(
+            category="DEFERRED_MEDIA", severity="WARNING", **values
+        )
+        self.assertNotEqual(previous.anomaly_id, current.anomaly_id)
+        merged = merge_previous_status(
+            [current], [previous], detected_at="2026-04-01T00:00:00Z"
+        )
+        by_id = {anomaly.anomaly_id: anomaly for anomaly in merged}
+        self.assertFalse(by_id[previous.anomaly_id].active)
+        self.assertTrue(by_id[current.anomaly_id].active)
+
 
 class AnomalySerializationTest(unittest.TestCase):
     def test_json_and_csv_are_valid_and_complete(self):
@@ -548,12 +569,100 @@ class AnomalyCollectionTest(unittest.TestCase):
         )
         by_category = {item.category: item for item in anomalies}
         self.assertEqual(by_category["UNMIGRATED_MEDIA"].source_id, str(UUID(future_photo_id)))
+        self.assertEqual(by_category["UNMIGRATED_MEDIA"].severity, "ERROR")
+        self.assertEqual(
+            FAMILY_BY_CATEGORY[by_category["UNMIGRATED_MEDIA"].category],
+            "DATA",
+        )
+        self.assertTrue(is_actionable(by_category["UNMIGRATED_MEDIA"]))
         self.assertEqual(by_category["PHOTO_WITHOUT_DATE"].source_id, str(UUID(migrated_photo_id)))
         self.assertEqual(by_category["UNMIGRATED_MEDIA"].source_document_id, "future-1")
         self.assertEqual(
             by_category["PHOTO_WITHOUT_DATE"].source_document_id,
             UUID(int=2).hex,
         )
+
+    def test_media_of_any_known_deferred_parent_is_coverage_not_actionable(self):
+        parent_document_id = "parent-id-kept-exactly"
+        photo_id = UUID(int=12).hex
+        anomalies = self.collect(
+            [
+                source_doc(
+                    "KnownDeferredFamily",
+                    parent_document_id,
+                    photos=[
+                        {
+                            "id": photo_id,
+                            "chemin": "deferred.jpg",
+                            "valid": True,
+                        }
+                    ],
+                )
+            ],
+            [coverage_row("KnownDeferredFamily", "NON_MIGREE", known=True)],
+        )
+        deferred = next(
+            anomaly
+            for anomaly in anomalies
+            if anomaly.category == "DEFERRED_MEDIA"
+        )
+        self.assertEqual(deferred.severity, "WARNING")
+        self.assertEqual(FAMILY_BY_CATEGORY[deferred.category], "COVERAGE")
+        self.assertFalse(is_actionable(deferred))
+        self.assertEqual(deferred.correction_location, "MIGRATOR")
+        self.assertEqual(deferred.source_id, str(UUID(photo_id)))
+        self.assertEqual(deferred.source_document_id, parent_document_id)
+
+        with tempfile.TemporaryDirectory() as directory:
+            json_path = Path(directory) / "anomalies.json"
+            csv_path = Path(directory) / "anomalies.csv"
+            write_anomalies_json(json_path, anomalies)
+            write_anomalies_csv(csv_path, anomalies)
+            decoded = json.loads(json_path.read_text(encoding="utf-8"))
+            with csv_path.open(encoding="utf-8", newline="") as stream:
+                csv_rows = list(csv.DictReader(stream))
+        json_row = next(
+            row for row in decoded if row["category"] == "DEFERRED_MEDIA"
+        )
+        csv_row = next(
+            row for row in csv_rows if row["category"] == "DEFERRED_MEDIA"
+        )
+        self.assertEqual(json_row["source_document_id"], parent_document_id)
+        self.assertEqual(csv_row["family"], "COVERAGE")
+        self.assertEqual(csv_row["actionable"], "FALSE")
+
+    def test_missing_media_of_supported_parent_remains_data_error(self):
+        photo_id = UUID(int=13).hex
+        prepared = SimpleNamespace(
+            vegetation=SimpleNamespace(vegetation=[]),
+            photos=[],
+        )
+        anomalies = self.collect(
+            [
+                source_doc(
+                    "SupportedFamily",
+                    UUID(int=14).hex,
+                    photos=[
+                        {
+                            "id": photo_id,
+                            "chemin": "missing-from-prepared.jpg",
+                            "date": "2026-08-30",
+                            "valid": True,
+                        }
+                    ],
+                )
+            ],
+            [coverage_row("SupportedFamily", "MIGREE", known=True)],
+            prepared=prepared,
+        )
+        media = next(
+            anomaly
+            for anomaly in anomalies
+            if anomaly.category == "UNMIGRATED_MEDIA"
+        )
+        self.assertEqual(media.severity, "ERROR")
+        self.assertEqual(FAMILY_BY_CATEGORY[media.category], "DATA")
+        self.assertTrue(is_actionable(media))
 
     def test_detects_duplicate_and_missing_photo_identifiers(self):
         duplicate_id = UUID(int=30).hex
@@ -674,6 +783,7 @@ class AnomalyCliTest(unittest.TestCase):
         categories = (
             ("MANUAL_REVIEW", "WARNING"),
             ("UNMIGRATED_MEDIA", "ERROR"),
+            ("DEFERRED_MEDIA", "WARNING"),
             ("MISSING_REFERENCE_VALUE", "WARNING"),
             ("AMBIGUOUS_RELATION", "ERROR"),
             ("PARTIALLY_MIGRATED_CLASS", "INFO"),
@@ -757,6 +867,7 @@ class AnomalyCliTest(unittest.TestCase):
         for category in (
             "PARTIALLY_MIGRATED_CLASS",
             "DEFERRED_FEATURE",
+            "DEFERRED_MEDIA",
             "SOURCE_OVERRIDE",
         ):
             self.assertNotIn(category, text)

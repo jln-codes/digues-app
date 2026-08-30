@@ -44,6 +44,7 @@ CATEGORIES = frozenset(
         "UNKNOWN_REFERENCE_VALUE",
         "MISSING_REFERENCE_VALUE",
         "UNMIGRATED_MEDIA",
+        "DEFERRED_MEDIA",
         "PHOTO_WITHOUT_DATE",
         "MANUAL_REVIEW",
         "SOURCE_OVERRIDE",
@@ -91,6 +92,7 @@ FAMILY_BY_CATEGORY = {
     "UNKNOWN_FIELD": "COVERAGE",
     "UNMIGRATED_FIELD": "COVERAGE",
     "DEFERRED_FEATURE": "COVERAGE",
+    "DEFERRED_MEDIA": "COVERAGE",
     "SOURCE_OVERRIDE": "MIGRATION_DECISION",
 }
 ACTIONABLE_CATEGORIES = frozenset(
@@ -112,6 +114,7 @@ PREFIX_BY_CATEGORY = {
     "UNKNOWN_FIELD": "FIELD",
     "UNMIGRATED_FIELD": "FIELD",
     "UNMIGRATED_MEDIA": "MEDIA",
+    "DEFERRED_MEDIA": "MEDIA",
     "PHOTO_WITHOUT_DATE": "MEDIA",
     "SOURCE_OVERRIDE": "OVERRIDE",
     "DEFERRED_FEATURE": "DEFER",
@@ -800,16 +803,54 @@ def collect_anomalies(
             )
         )
 
+    prepared_photo_ids = (
+        {str(row.id) for row in getattr(prepared_core, "photos", ())}
+        if prepared_core is not None
+        else None
+    )
     for class_name, class_documents in grouped.items():
         coverage = coverage_by_class.get(class_name, {})
         parent_migrated = coverage.get("status") in {"MIGREE", "PARTIELLE"}
+        parent_deferred = (
+            coverage.get("status") == "NON_MIGREE"
+            and bool(coverage.get("known"))
+        )
         for document in class_documents:
             for photo in document.get("photos") or ():
                 if not isinstance(photo, Mapping):
                     continue
                 photo_id = _normal_uuid(photo.get("id") or photo.get("_id"))
                 owner_id = _normal_uuid(document.get("_id"))
-                if parent_migrated and photo.get("date") in (None, ""):
+                media_expected_but_missing = (
+                    parent_migrated
+                    and prepared_photo_ids is not None
+                    and photo_id is not None
+                    and photo_id not in prepared_photo_ids
+                )
+                if media_expected_but_missing:
+                    anomalies.append(
+                        Anomaly.create(
+                            category="UNMIGRATED_MEDIA",
+                            severity="ERROR",
+                            source_database=source_database,
+                            source_class=class_name,
+                            source_id=photo_id,
+                            source_document_id=_source_document_id(document),
+                            source_field="photos",
+                            message=(
+                                "La photo d'un objet pris en charge est absente "
+                                "de la migration préparée."
+                            ),
+                            details={"owner_source_id": owner_id},
+                            suggested_action=(
+                                "Corriger la prise en charge du média dans le migrateur."
+                            ),
+                            correction_location="MIGRATOR",
+                            detected_value=photo.get("chemin"),
+                            expected_value="photo rattachée à une observation cible",
+                        )
+                    )
+                elif parent_migrated and photo.get("date") in (None, ""):
                     anomalies.append(
                         Anomaly.create(
                             category="PHOTO_WITHOUT_DATE",
@@ -831,18 +872,36 @@ def collect_anomalies(
                         )
                     )
                 elif not parent_migrated:
+                    # La catégorie participe à anomaly_id : une ancienne entrée
+                    # UNMIGRATED_MEDIA reclassée reste donc dans l'historique
+                    # inactive, tandis que DEFERRED_MEDIA reçoit son ID stable.
+                    category = (
+                        "DEFERRED_MEDIA" if parent_deferred else "UNMIGRATED_MEDIA"
+                    )
                     anomalies.append(
                         Anomaly.create(
-                            category="UNMIGRATED_MEDIA",
-                            severity="ERROR",
+                            category=category,
+                            severity="WARNING" if parent_deferred else "ERROR",
                             source_database=source_database,
                             source_class=class_name,
                             source_id=photo_id,
                             source_document_id=_source_document_id(document),
                             source_field="photos",
-                            message="La photo n'est pas migrée car son objet parent n'est pas migré.",
+                            message=(
+                                "Le média est différé car son objet parent est "
+                                "volontairement différé par le migrateur."
+                                if parent_deferred
+                                else "La photo n'est pas migrée car son objet parent "
+                                "n'est pas migré."
+                            ),
                             details={"owner_source_id": owner_id},
-                            suggested_action="Migrer ou résoudre le parent avant de reconnecter ce média.",
+                            suggested_action=(
+                                "Migrer la famille parente ; le média sera reconnecté "
+                                "lors de cette migration."
+                                if parent_deferred
+                                else "Migrer ou résoudre le parent avant de reconnecter "
+                                "ce média."
+                            ),
                             correction_location="MIGRATOR",
                             detected_value=photo.get("chemin"),
                             expected_value="photo rattachée à une observation cible",
