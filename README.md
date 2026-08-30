@@ -255,8 +255,13 @@ Les trois livrables ont des usages distincts :
   outils d'analyse.
 
 Chaque entrée reçoit un `anomaly_id` déterministe calculé depuis la base source,
-la classe, l'identifiant source, la catégorie et le champ concernés. Le message
-n'entre pas dans cette identité : il peut évoluer sans casser le suivi. Une
+la classe, une clé de sujet interne stable, la catégorie et le champ concernés.
+Cette clé interne n'est pas exportée. `source_document_id` conserve exactement
+le `_id` du document CouchDB à ouvrir ; `source_object_id` conserve exactement
+l'identifiant d'un sous-objet uniquement lorsque celui-ci est le sujet réel du
+constat. Un constat portant directement sur le document laisse donc
+`source_object_id` à NULL. Le message n'entre pas dans l'identité : il peut
+évoluer sans casser le suivi. Une
 régénération préserve le statut, le commentaire de résolution et la première
 date de détection. Une anomalie disparue reste dans l'historique avec
 `active=false`; si elle réapparaît, elle retrouve le même ID et redevient active.
@@ -291,7 +296,8 @@ sirs-postgre anomalies
 sirs-postgre anomalies --open
 sirs-postgre anomalies --actionable
 sirs-postgre anomalies --category INVALID_GEOMETRY
-sirs-postgre anomalies --source-id <uuid>
+sirs-postgre anomalies --source-document-id <id-couchdb-exact>
+sirs-postgre anomalies --source-object-id <id-sous-objet-exact>
 ```
 
 La vue générale distingue les anomalies actives et inactives, puis les statuts

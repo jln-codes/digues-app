@@ -56,7 +56,7 @@ class AnomalyIdentityAndHistoryTest(unittest.TestCase):
         values = dict(
             source_database=DATABASE,
             source_class="Desordre",
-            source_id="id-1",
+            stable_subject_id="id-1",
             category="MISSING_REFERENCE_VALUE",
             source_field="typeDesordreId",
         )
@@ -138,7 +138,7 @@ class AnomalyIdentityAndHistoryTest(unittest.TestCase):
         values = {
             "source_database": DATABASE,
             "source_class": "KnownDeferredFamily",
-            "source_id": "media-1",
+            "stable_subject_id": "media-1",
             "source_field": "photos",
         }
         previous = Anomaly.create(
@@ -163,7 +163,7 @@ class AnomalySerializationTest(unittest.TestCase):
             severity="ERROR",
             source_database=DATABASE,
             source_class="AmenagementHydraulique",
-            source_id="id-1",
+            stable_subject_id="id-1",
             source_document_id="raw-id-1",
             source_field="geometry",
             details={"reason": "auto-intersection"},
@@ -180,6 +180,8 @@ class AnomalySerializationTest(unittest.TestCase):
                 rows = list(reader)
         self.assertEqual(decoded[0]["anomaly_id"], anomaly.anomaly_id)
         self.assertEqual(decoded[0]["source_document_id"], "raw-id-1")
+        self.assertIsNone(decoded[0]["source_object_id"])
+        self.assertNotIn("source_id", decoded[0])
         self.assertEqual(rows[0]["category"], "INVALID_GEOMETRY")
         self.assertEqual(rows[0]["source_document_id"], "raw-id-1")
         self.assertIn("auto-intersection", rows[0]["details"])
@@ -198,8 +200,8 @@ class AnomalySerializationTest(unittest.TestCase):
                 "family",
                 "category",
                 "source_class",
-                "source_id",
                 "source_document_id",
+                "source_object_id",
             ],
         )
 
@@ -209,7 +211,7 @@ class AnomalySerializationTest(unittest.TestCase):
             severity="WARNING",
             source_database=DATABASE,
             source_class="Vegetation",
-            source_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
+            stable_subject_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
             source_field="geometry",
         )
         without_document = Anomaly.create(**values)
@@ -219,18 +221,20 @@ class AnomalySerializationTest(unittest.TestCase):
         )
         self.assertEqual(without_document.anomaly_id, with_document.anomaly_id)
 
-    def test_old_register_without_source_document_id_keeps_resolution(self):
+    def test_old_register_with_source_id_keeps_resolution(self):
         current = Anomaly.create(
             category="MISSING_GEOMETRY",
             severity="WARNING",
             source_database=DATABASE,
             source_class="Vegetation",
-            source_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
+            stable_subject_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
             source_document_id="ca7792c06baa3f909d82ec3731153d53",
             source_field="geometry",
         )
         old_payload = current.to_dict()
         old_payload.pop("source_document_id")
+        old_payload.pop("source_object_id")
+        old_payload["source_id"] = "ca7792c0-6baa-3f90-9d82-ec3731153d53"
         old_payload.update(
             status="ACCEPTED_AS_IS",
             resolution_comment="Décision historique",
@@ -256,7 +260,8 @@ class AnomalySerializationTest(unittest.TestCase):
                 severity="WARNING",
                 source_database=DATABASE,
                 source_class="Geometry",
-                source_id="actionable",
+                stable_subject_id="actionable",
+                source_document_id="actionable",
             ),
             replace(
                 Anomaly.create(
@@ -264,7 +269,8 @@ class AnomalySerializationTest(unittest.TestCase):
                     severity="WARNING",
                     source_database=DATABASE,
                     source_class="Geometry",
-                    source_id="inactive",
+                    stable_subject_id="inactive",
+                    source_document_id="inactive",
                 ),
                 active=False,
             ),
@@ -274,7 +280,8 @@ class AnomalySerializationTest(unittest.TestCase):
                     severity="ERROR",
                     source_database=DATABASE,
                     source_class="Relation",
-                    source_id="accepted",
+                    stable_subject_id="accepted",
+                    source_document_id="accepted",
                 ),
                 status="ACCEPTED_AS_IS",
             ),
@@ -283,14 +290,14 @@ class AnomalySerializationTest(unittest.TestCase):
                 severity="WARNING",
                 source_database=DATABASE,
                 source_class="Coverage",
-                source_id="coverage",
+                stable_subject_id="coverage",
             ),
             Anomaly.create(
                 category="SOURCE_OVERRIDE",
                 severity="INFO",
                 source_database=DATABASE,
                 source_class="Decision",
-                source_id="decision",
+                stable_subject_id="decision",
             ),
         ]
         expected_ids = {
@@ -433,7 +440,8 @@ class AnomalyCollectionTest(unittest.TestCase):
             severity="WARNING",
             source_database="cabbalr",
             source_class="AmenagementHydraulique",
-            source_id=source_id,
+            stable_subject_id=source_id,
+            source_document_id=source_id,
             source_field="geometry",
         )
         merged = merge_previous_status(
@@ -478,15 +486,17 @@ class AnomalyCollectionTest(unittest.TestCase):
             ],
             [coverage_row("Desordre", "MIGREE")],
         )
-        by_source_id = {
-            item.source_id: item
+        by_document_id = {
+            item.source_document_id: item
             for item in anomalies
             if item.category == "MISSING_REFERENCE_VALUE"
         }
-        compact = by_source_id[str(UUID(compact_id))]
-        hyphenated = by_source_id[hyphenated_id]
+        compact = by_document_id[compact_id]
+        hyphenated = by_document_id[hyphenated_id]
         self.assertEqual(compact.source_document_id, compact_id)
         self.assertEqual(hyphenated.source_document_id, hyphenated_id)
+        self.assertIsNone(compact.source_object_id)
+        self.assertIsNone(hyphenated.source_object_id)
 
     def test_global_coverage_anomaly_has_no_source_document(self):
         anomalies = self.collect(
@@ -495,6 +505,7 @@ class AnomalyCollectionTest(unittest.TestCase):
         )
         unknown = next(item for item in anomalies if item.category == "UNKNOWN_CLASS")
         self.assertIsNone(unknown.source_document_id)
+        self.assertIsNone(unknown.source_object_id)
 
     def test_migrated_technical_access_needs_no_parent_or_spatial_inference(self):
         for database in ("cabbalr", "another_sirs_database"):
@@ -526,7 +537,7 @@ class AnomalyCollectionTest(unittest.TestCase):
             severity="ERROR",
             source_database=DATABASE,
             source_class="FutureRelationSource",
-            source_id="relation-1",
+            stable_subject_id="relation-1",
             source_field="parentIds",
         )
         self.assertEqual(anomaly.category, "AMBIGUOUS_RELATION")
@@ -568,14 +579,20 @@ class AnomalyCollectionTest(unittest.TestCase):
             ],
         )
         by_category = {item.category: item for item in anomalies}
-        self.assertEqual(by_category["UNMIGRATED_MEDIA"].source_id, str(UUID(future_photo_id)))
+        self.assertEqual(
+            by_category["UNMIGRATED_MEDIA"].source_object_id,
+            future_photo_id,
+        )
         self.assertEqual(by_category["UNMIGRATED_MEDIA"].severity, "ERROR")
         self.assertEqual(
             FAMILY_BY_CATEGORY[by_category["UNMIGRATED_MEDIA"].category],
             "DATA",
         )
         self.assertTrue(is_actionable(by_category["UNMIGRATED_MEDIA"]))
-        self.assertEqual(by_category["PHOTO_WITHOUT_DATE"].source_id, str(UUID(migrated_photo_id)))
+        self.assertEqual(
+            by_category["PHOTO_WITHOUT_DATE"].source_object_id,
+            migrated_photo_id,
+        )
         self.assertEqual(by_category["UNMIGRATED_MEDIA"].source_document_id, "future-1")
         self.assertEqual(
             by_category["PHOTO_WITHOUT_DATE"].source_document_id,
@@ -610,7 +627,7 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertEqual(FAMILY_BY_CATEGORY[deferred.category], "COVERAGE")
         self.assertFalse(is_actionable(deferred))
         self.assertEqual(deferred.correction_location, "MIGRATOR")
-        self.assertEqual(deferred.source_id, str(UUID(photo_id)))
+        self.assertEqual(deferred.source_object_id, photo_id)
         self.assertEqual(deferred.source_document_id, parent_document_id)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -663,6 +680,7 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertEqual(media.severity, "ERROR")
         self.assertEqual(FAMILY_BY_CATEGORY[media.category], "DATA")
         self.assertTrue(is_actionable(media))
+        self.assertEqual(media.source_object_id, photo_id)
 
     def test_detects_duplicate_and_missing_photo_identifiers(self):
         duplicate_id = UUID(int=30).hex
@@ -692,8 +710,8 @@ class AnomalyCollectionTest(unittest.TestCase):
         ]
         self.assertEqual(len(blocking_media), 2)
         self.assertIn(
-            str(UUID(duplicate_id)),
-            {anomaly.source_id for anomaly in blocking_media},
+            duplicate_id,
+            {anomaly.source_object_id for anomaly in blocking_media},
         )
 
     def test_nested_photo_points_to_exact_containing_document(self):
@@ -715,7 +733,7 @@ class AnomalyCollectionTest(unittest.TestCase):
             anomaly
             for anomaly in anomalies
             if anomaly.category == "UNMIGRATED_MEDIA"
-            and anomaly.source_id == str(UUID(photo_id))
+            and anomaly.source_object_id == photo_id
         )
         self.assertEqual(duplicate.source_document_id, parent_id)
 
@@ -764,14 +782,17 @@ class AnomalyCliTest(unittest.TestCase):
                 severity="WARNING",
                 source_database=DATABASE,
                 source_class="Vegetation",
-                source_id="id-geometry",
+                stable_subject_id="id-geometry",
+                source_document_id="id-geometry",
             ),
             Anomaly.create(
                 category="UNMIGRATED_MEDIA",
                 severity="ERROR",
                 source_database=DATABASE,
                 source_class="Photo",
-                source_id="id-photo",
+                stable_subject_id="id-photo",
+                source_document_id="parent-photo",
+                source_object_id="id-photo",
             ),
         ]
         update_anomaly_register(anomalies, json_path=json_path, csv_path=csv_path)
@@ -796,7 +817,8 @@ class AnomalyCliTest(unittest.TestCase):
                 severity=severity,
                 source_database=DATABASE,
                 source_class=f"Class{index}",
-                source_id=f"id-{index}",
+                stable_subject_id=f"id-{index}",
+                source_document_id=f"id-{index}",
             )
             for index, (category, severity) in enumerate(categories)
         ]
@@ -804,13 +826,22 @@ class AnomalyCliTest(unittest.TestCase):
         write_anomalies_csv(csv_path, anomalies)
         return json_path, csv_path, anomalies
 
-    def test_filters_open_category_and_source_id(self):
+    def test_filters_open_category_and_source_identifiers(self):
         with tempfile.TemporaryDirectory() as directory:
             json_path, csv_path, _ = self.make_register(directory)
             for arguments, expected, excluded in (
                 (["anomalies", "--open"], "INVALID_GEOMETRY", None),
                 (["anomalies", "--category", "UNMIGRATED_MEDIA"], "UNMIGRATED_MEDIA", "INVALID_GEOMETRY"),
-                (["anomalies", "--source-id", "id-photo"], "id-photo", "id-geometry"),
+                (
+                    ["anomalies", "--source-object-id", "id-photo"],
+                    "id-photo",
+                    "id-geometry",
+                ),
+                (
+                    ["anomalies", "--source-document-id", "parent-photo"],
+                    "id-photo",
+                    "id-geometry",
+                ),
             ):
                 output = io.StringIO()
                 with (

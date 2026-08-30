@@ -82,7 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Affiche les anomalies de données actives et encore ouvertes.",
     )
     anomalies.add_argument("--category")
-    anomalies.add_argument("--source-id")
+    anomalies.add_argument("--source-document-id")
+    anomalies.add_argument("--source-object-id")
     anomaly_commands = anomalies.add_subparsers(dest="anomalies_command")
     resolve = anomaly_commands.add_parser(
         "resolve",
@@ -423,9 +424,17 @@ def run_anomalies(args: argparse.Namespace) -> int:
         selected = [
             anomaly for anomaly in selected if anomaly.category == args.category
         ]
-    if args.source_id:
+    if args.source_document_id:
         selected = [
-            anomaly for anomaly in selected if anomaly.source_id == args.source_id
+            anomaly
+            for anomaly in selected
+            if anomaly.source_document_id == args.source_document_id
+        ]
+    if args.source_object_id:
+        selected = [
+            anomaly
+            for anomaly in selected
+            if anomaly.source_object_id == args.source_object_id
         ]
     active_selected = [anomaly for anomaly in selected if anomaly.active]
 
@@ -462,9 +471,20 @@ def run_anomalies(args: argparse.Namespace) -> int:
     }
     for family, count in family_counts.items():
         print(f"{family} : {count}")
-    if args.only_open or args.actionable or args.category or args.source_id:
+    if (
+        args.only_open
+        or args.actionable
+        or args.category
+        or args.source_document_id
+        or args.source_object_id
+    ):
         for anomaly in selected:
-            source = anomaly.source_id or anomaly.source_class or "—"
+            source = (
+                anomaly.source_object_id
+                or anomaly.source_document_id
+                or anomaly.source_class
+                or "—"
+            )
             activity = "ACTIVE" if anomaly.active else "INACTIVE"
             print(
                 f"{anomaly.anomaly_id} | {anomaly.severity} | "

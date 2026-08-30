@@ -137,7 +137,8 @@ class CRSResolutionTest(unittest.TestCase):
             if anomaly.category == "OBJECT_CRS_HINT_CONFLICT"
         ]
         self.assertEqual(len(conflicts), 1)
-        self.assertEqual(conflicts[0].source_id, "c")
+        self.assertEqual(conflicts[0].source_document_id, "c")
+        self.assertIsNone(conflicts[0].source_object_id)
 
     def test_diagnostic_writes_compact_crs_section(self):
         documents = [

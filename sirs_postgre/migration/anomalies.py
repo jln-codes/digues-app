@@ -132,8 +132,8 @@ REGISTER_FIELDS = (
     "active",
     "source_database",
     "source_class",
-    "source_id",
     "source_document_id",
+    "source_object_id",
     "source_field",
     "target_table",
     "target_id",
@@ -159,8 +159,8 @@ CSV_FIELDS = (
     "family",
     "category",
     "source_class",
-    "source_id",
     "source_document_id",
+    "source_object_id",
     *(
         field
         for field in REGISTER_FIELDS
@@ -172,8 +172,8 @@ CSV_FIELDS = (
             "severity",
             "category",
             "source_class",
-            "source_id",
             "source_document_id",
+            "source_object_id",
         }
     ),
 )
@@ -187,7 +187,7 @@ def make_anomaly_id(
     *,
     source_database: str | None,
     source_class: str | None,
-    source_id: str | None,
+    stable_subject_id: str | None,
     category: str,
     source_field: str | None,
 ) -> str:
@@ -197,7 +197,7 @@ def make_anomaly_id(
         (
             source_database or "",
             source_class or "",
-            source_id or "",
+            stable_subject_id or "",
             category,
             source_field or "",
         )
@@ -215,8 +215,8 @@ class Anomaly:
     active: bool = True
     source_database: str | None = None
     source_class: str | None = None
-    source_id: str | None = None
     source_document_id: str | None = None
+    source_object_id: str | None = None
     source_field: str | None = None
     target_table: str | None = None
     target_id: str | None = None
@@ -252,7 +252,7 @@ class Anomaly:
         severity: str,
         source_database: str | None,
         source_class: str | None,
-        source_id: str | None = None,
+        stable_subject_id: str | None = None,
         source_field: str | None = None,
         **values: Any,
     ) -> "Anomaly":
@@ -260,7 +260,7 @@ class Anomaly:
             anomaly_id=make_anomaly_id(
                 source_database=source_database,
                 source_class=source_class,
-                source_id=source_id,
+                stable_subject_id=stable_subject_id,
                 category=category,
                 source_field=source_field,
             ),
@@ -268,7 +268,6 @@ class Anomaly:
             severity=severity,
             source_database=source_database,
             source_class=source_class,
-            source_id=source_id,
             source_field=source_field,
             **values,
         )
@@ -349,6 +348,12 @@ def _source_document_id(document: Mapping[str, Any]) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _source_object_id(value: Any) -> str | None:
+    """Conserve l'identifiant exact d'un sous-objet JSON, sans normalisation."""
+
+    return str(value) if value not in (None, "") else None
+
+
 def _geometry_details(document: Mapping[str, Any]) -> dict[str, Any]:
     geometry = inspect_wkt(document.get("geometry"))
     if geometry is None:
@@ -385,7 +390,6 @@ def _embedded_photo_occurrences(
     missing_ids: list[dict[str, str | None]] = []
     for class_name, documents in grouped.items():
         for document in documents:
-            owner_id = _normal_uuid(document.get("_id"))
             source_document_id = _source_document_id(document)
             containers: list[tuple[str, Any]] = [("photos", document.get("photos"))]
             observations = document.get("observations") or ()
@@ -409,8 +413,10 @@ def _embedded_photo_occurrences(
                         continue
                     occurrence = {
                         "source_class": class_name,
-                        "owner_source_id": owner_id,
                         "source_document_id": source_document_id,
+                        "source_object_id": _source_object_id(
+                            photo.get("id") or photo.get("_id")
+                        ),
                         "source_field": f"{container}[{photo_index}].id",
                     }
                     photo_id = _normal_uuid(photo.get("id") or photo.get("_id"))
@@ -474,7 +480,7 @@ def collect_anomalies(
                 severity="BLOCKING",
                 source_database=source_database,
                 source_class="$sirs",
-                source_id="$sirs",
+                stable_subject_id="$sirs",
                 source_document_id=("$sirs" if any(
                     _source_document_id(document) == "$sirs" for document in documents
                 ) else None),
@@ -500,7 +506,7 @@ def collect_anomalies(
                         severity="WARNING",
                         source_database=source_database,
                         source_class=class_name,
-                        source_id=_normal_uuid(document.get("_id")) or str(document.get("_id") or ""),
+                        stable_subject_id=_normal_uuid(document.get("_id")) or str(document.get("_id") or ""),
                         source_document_id=_source_document_id(document),
                         source_field="crsName",
                         message="Le crsName objet contredit le CRS global sans le remplacer.",
@@ -594,7 +600,7 @@ def collect_anomalies(
                                 severity="BLOCKING",
                                 source_database=source_database,
                                 source_class=source_class,
-                                source_id=source_id,
+                                stable_subject_id=source_id,
                                 source_document_id=_source_document_id(document),
                                 source_field=field,
                                 message=f"La référence obligatoire {field} est absente.",
@@ -612,7 +618,7 @@ def collect_anomalies(
                             severity="BLOCKING",
                             source_database=source_database,
                             source_class=source_class,
-                            source_id=source_id,
+                            stable_subject_id=source_id,
                             source_document_id=_source_document_id(document),
                             source_field=field,
                             message=f"{field} référence un {target_class} absent.",
@@ -633,7 +639,7 @@ def collect_anomalies(
                     severity="WARNING",
                     source_database=source_database,
                     source_class="Desordre",
-                    source_id=source_id,
+                    stable_subject_id=source_id,
                     source_document_id=_source_document_id(document),
                     source_field="typeDesordreId",
                     target_table="desordres",
@@ -661,7 +667,7 @@ def collect_anomalies(
                         severity="WARNING",
                         source_database=source_database,
                         source_class=row.source_class,
-                        source_id=str(row.id),
+                        stable_subject_id=str(row.id),
                         source_document_id=_source_document_id(document),
                         source_field="geometry",
                         target_table="vegetation",
@@ -682,7 +688,7 @@ def collect_anomalies(
                         severity="WARNING",
                         source_database=source_database,
                         source_class=row.source_class,
-                        source_id=str(row.id),
+                        stable_subject_id=str(row.id),
                         source_document_id=_source_document_id(document),
                         source_field="geometry",
                         target_table="vegetation",
@@ -728,7 +734,7 @@ def collect_anomalies(
                         severity="WARNING",
                         source_database=source_database,
                         source_class=source_class,
-                        source_id=source_id,
+                        stable_subject_id=source_id,
                         source_document_id=_source_document_id(document),
                         source_field="geometry",
                         message="La géométrie source est invalide et ne doit pas être corrigée silencieusement.",
@@ -749,7 +755,7 @@ def collect_anomalies(
                 severity="INFO",
                 source_database=source_database,
                 source_class="AmenagementHydraulique",
-                source_id=source_id,
+                stable_subject_id=source_id,
                 source_document_id=_source_document_id(
                     index[("AmenagementHydraulique", source_id or "")]
                 ),
@@ -788,7 +794,7 @@ def collect_anomalies(
                 severity="WARNING",
                 source_database=source_database,
                 source_class=source_class,
-                source_id=source_id,
+                stable_subject_id=source_id,
                 source_document_id=_source_document_id(document),
                 source_field="geometry",
                 target_table="vegetation",
@@ -820,7 +826,10 @@ def collect_anomalies(
                 if not isinstance(photo, Mapping):
                     continue
                 photo_id = _normal_uuid(photo.get("id") or photo.get("_id"))
-                owner_id = _normal_uuid(document.get("_id"))
+                photo_source_object_id = _source_object_id(
+                    photo.get("id") or photo.get("_id")
+                )
+                owner_document_id = _source_document_id(document)
                 media_expected_but_missing = (
                     parent_migrated
                     and prepared_photo_ids is not None
@@ -834,14 +843,15 @@ def collect_anomalies(
                             severity="ERROR",
                             source_database=source_database,
                             source_class=class_name,
-                            source_id=photo_id,
+                            stable_subject_id=photo_id,
                             source_document_id=_source_document_id(document),
+                            source_object_id=photo_source_object_id,
                             source_field="photos",
                             message=(
                                 "La photo d'un objet pris en charge est absente "
                                 "de la migration préparée."
                             ),
-                            details={"owner_source_id": owner_id},
+                            details={"owner_document_id": owner_document_id},
                             suggested_action=(
                                 "Corriger la prise en charge du média dans le migrateur."
                             ),
@@ -857,14 +867,15 @@ def collect_anomalies(
                             severity="WARNING",
                             source_database=source_database,
                             source_class=class_name,
-                            source_id=photo_id,
+                            stable_subject_id=photo_id,
                             source_document_id=_source_document_id(document),
+                            source_object_id=photo_source_object_id,
                             source_field="photos.date",
                             target_table="photos",
                             target_id=photo_id,
                             target_field="date",
                             message="La photo directe est migrée avec une date NULL.",
-                            details={"owner_source_id": owner_id},
+                            details={"owner_document_id": owner_document_id},
                             suggested_action="Renseigner la date dans CouchDB si elle est connue.",
                             correction_location="COUCHDB",
                             detected_value=None,
@@ -884,8 +895,9 @@ def collect_anomalies(
                             severity="WARNING" if parent_deferred else "ERROR",
                             source_database=source_database,
                             source_class=class_name,
-                            source_id=photo_id,
+                            stable_subject_id=photo_id,
                             source_document_id=_source_document_id(document),
+                            source_object_id=photo_source_object_id,
                             source_field="photos",
                             message=(
                                 "Le média est différé car son objet parent est "
@@ -894,7 +906,7 @@ def collect_anomalies(
                                 else "La photo n'est pas migrée car son objet parent "
                                 "n'est pas migré."
                             ),
-                            details={"owner_source_id": owner_id},
+                            details={"owner_document_id": owner_document_id},
                             suggested_action=(
                                 "Migrer la famille parente ; le média sera reconnecté "
                                 "lors de cette migration."
@@ -910,7 +922,7 @@ def collect_anomalies(
 
     photo_occurrences, photos_without_id = _embedded_photo_occurrences(grouped)
     for occurrence in photos_without_id:
-        owner_id = occurrence["owner_source_id"]
+        owner_document_id = occurrence["source_document_id"]
         source_field = occurrence["source_field"]
         anomalies.append(
             Anomaly.create(
@@ -918,11 +930,11 @@ def collect_anomalies(
                 severity="BLOCKING",
                 source_database=source_database,
                 source_class=occurrence["source_class"],
-                source_id=owner_id,
+                stable_subject_id=_normal_uuid(owner_document_id),
                 source_document_id=occurrence["source_document_id"],
                 source_field=source_field,
                 message="La photo embarquée ne possède aucun identifiant source.",
-                details={"owner_source_id": owner_id},
+                details={"owner_document_id": owner_document_id},
                 suggested_action="Attribuer un UUID stable à la photo dans CouchDB.",
                 correction_location="COUCHDB",
                 detected_value=None,
@@ -937,16 +949,26 @@ def collect_anomalies(
             for occurrence in occurrences
             if occurrence["source_document_id"] is not None
         }
+        source_object_ids = {
+            occurrence["source_object_id"]
+            for occurrence in occurrences
+            if occurrence["source_object_id"] is not None
+        }
         anomalies.append(
             Anomaly.create(
                 category="UNMIGRATED_MEDIA",
                 severity="BLOCKING",
                 source_database=source_database,
                 source_class="Photo",
-                source_id=photo_id,
+                stable_subject_id=photo_id,
                 source_document_id=(
                     next(iter(source_document_ids))
                     if len(source_document_ids) == 1
+                    else None
+                ),
+                source_object_id=(
+                    next(iter(source_object_ids))
+                    if len(source_object_ids) == 1
                     else None
                 ),
                 source_field="id",
