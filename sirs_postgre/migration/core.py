@@ -14,6 +14,12 @@ from sirs_postgre.source import CouchDBClient, connect_couchdb
 from sirs_postgre.target import PostgreSQLConfig
 from sirs_postgre.target.schema import EXPECTED_TABLES
 
+from .ouvrages import (
+    OUVRAGE_SOURCE_CLASSES,
+    PreparedOuvragesMigration,
+    insert_prepared_ouvrages,
+    prepare_ouvrages_migration,
+)
 from .validation import CoreValidationResult, validate_core_migration
 
 
@@ -25,6 +31,7 @@ CORE_SOURCE_CLASSES = {
     "Digue": "fr.sirs.core.model.Digue",
     "TronconDigue": "fr.sirs.core.model.TronconDigue",
     "Desordre": "fr.sirs.core.model.Desordre",
+    **OUVRAGE_SOURCE_CLASSES,
 }
 
 CORE_FIELD_MAPPINGS = {
@@ -203,6 +210,7 @@ class PreparedCoreMigration:
     links: tuple[LinkDesordreTronconRow, ...]
     observations: tuple[ObservationRow, ...]
     photos: tuple[PhotoRow, ...]
+    ouvrages: PreparedOuvragesMigration
     digues_without_system: int
     desordre_source_geometry_present: int
     desordre_source_geometry_absent: int
@@ -211,7 +219,7 @@ class PreparedCoreMigration:
 
     @property
     def expected_counts(self) -> dict[str, int]:
-        return {
+        counts = {
             "ref_categories_desordre": len(self.categories_desordre),
             "ref_types_desordre": len(self.types_desordre),
             "ref_urgences": len(self.urgences),
@@ -223,6 +231,8 @@ class PreparedCoreMigration:
             "observations": len(self.observations),
             "photos": len(self.photos),
         }
+        counts.update(self.ouvrages.expected_counts)
+        return counts
 
     @property
     def desordre_geometry_counts(self) -> dict[str, int]:
@@ -672,6 +682,17 @@ def prepare_core_migration(
             "désordres ignorée(s) conformément au périmètre"
         )
 
+    if any(label in source_documents for label in OUVRAGE_SOURCE_CLASSES):
+        try:
+            ouvrages = prepare_ouvrages_migration(
+                source_documents,
+                troncon_ids=troncon_ids,
+            )
+        except Exception as exc:
+            raise CoreMigrationError(f"Bloc Ouvrages invalide : {exc}") from exc
+    else:
+        ouvrages = PreparedOuvragesMigration.empty()
+
     return PreparedCoreMigration(
         categories_desordre=categories_desordre,
         types_desordre=types_desordre,
@@ -683,6 +704,7 @@ def prepare_core_migration(
         links=links,
         observations=observations,
         photos=photos,
+        ouvrages=ouvrages,
         digues_without_system=digues_without_system,
         desordre_source_geometry_present=source_geometry_present,
         desordre_source_geometry_absent=source_geometry_absent,
@@ -841,6 +863,7 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
     for table, rows in batches:
         if rows:
             cursor.executemany(INSERT_STATEMENTS[table], rows)
+    insert_prepared_ouvrages(cursor, prepared.ouvrages)
 
 
 def _default_connector() -> Callable[..., Any]:
@@ -870,6 +893,9 @@ def execute_core_migration(
                     cursor,
                     expected_counts=prepared.expected_counts,
                     expected_desordre_geometries=prepared.desordre_geometry_counts,
+                    expected_ouvrage_geometries=prepared.ouvrages.geometry_counts,
+                    expected_ouvrage_invalid=prepared.ouvrages.invalid_counts,
+                    ouvrages_enabled=prepared.ouvrages.enabled,
                 )
     except (CoreMigrationError, TargetNotEmptyError):
         raise

@@ -56,6 +56,51 @@ TABLE_DEFINITIONS = {
             valid BOOLEAN NOT NULL
         )
     """,
+    "ref_types_ouvrage_hydraulique": """
+        CREATE TABLE IF NOT EXISTS public.ref_types_ouvrage_hydraulique (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "ref_types_equipement_mesure": """
+        CREATE TABLE IF NOT EXISTS public.ref_types_equipement_mesure (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "ref_types_ouvrage_franchissement": """
+        CREATE TABLE IF NOT EXISTS public.ref_types_ouvrage_franchissement (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "ref_types_mobilier": """
+        CREATE TABLE IF NOT EXISTS public.ref_types_mobilier (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "ref_types_reseau_technique": """
+        CREATE TABLE IF NOT EXISTS public.ref_types_reseau_technique (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
     "desordres": """
         CREATE TABLE IF NOT EXISTS public.desordres (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -114,6 +159,96 @@ TABLE_DEFINITIONS = {
             CONSTRAINT photos_observations_fk
                 FOREIGN KEY (observation_id)
                 REFERENCES public.observations (id)
+        )
+    """,
+    "ouvrages_hydrauliques": """
+        CREATE TABLE IF NOT EXISTS public.ouvrages_hydrauliques (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            type_id TEXT NOT NULL,
+            designation TEXT NULL,
+            commentaire TEXT NULL,
+            date_debut DATE NULL,
+            geometry geometry(Geometry, 3950) NULL,
+            troncon_id UUID NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT ouvrages_hydrauliques_type_fk
+                FOREIGN KEY (type_id)
+                REFERENCES public.ref_types_ouvrage_hydraulique (id),
+            CONSTRAINT ouvrages_hydrauliques_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id)
+        )
+    """,
+    "equipements_mesure": """
+        CREATE TABLE IF NOT EXISTS public.equipements_mesure (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            type_id TEXT NOT NULL,
+            designation TEXT NULL,
+            commentaire TEXT NULL,
+            date_debut DATE NULL,
+            geometry geometry(Point, 3950) NULL,
+            troncon_id UUID NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT equipements_mesure_type_fk
+                FOREIGN KEY (type_id)
+                REFERENCES public.ref_types_equipement_mesure (id),
+            CONSTRAINT equipements_mesure_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id)
+        )
+    """,
+    "ouvrages_franchissement": """
+        CREATE TABLE IF NOT EXISTS public.ouvrages_franchissement (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            type_id TEXT NOT NULL,
+            designation TEXT NULL,
+            commentaire TEXT NULL,
+            date_debut DATE NULL,
+            geometry geometry(Geometry, 3950) NULL,
+            troncon_id UUID NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT ouvrages_franchissement_type_fk
+                FOREIGN KEY (type_id)
+                REFERENCES public.ref_types_ouvrage_franchissement (id),
+            CONSTRAINT ouvrages_franchissement_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id)
+        )
+    """,
+    "mobilier": """
+        CREATE TABLE IF NOT EXISTS public.mobilier (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            type_id TEXT NOT NULL,
+            designation TEXT NULL,
+            commentaire TEXT NULL,
+            date_debut DATE NULL,
+            geometry geometry(Point, 3950) NULL,
+            troncon_id UUID NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT mobilier_type_fk
+                FOREIGN KEY (type_id)
+                REFERENCES public.ref_types_mobilier (id),
+            CONSTRAINT mobilier_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id)
+        )
+    """,
+    "reseaux_techniques": """
+        CREATE TABLE IF NOT EXISTS public.reseaux_techniques (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            type_id TEXT NOT NULL,
+            designation TEXT NULL,
+            commentaire TEXT NULL,
+            date_debut DATE NULL,
+            geometry geometry(Geometry, 3950) NULL,
+            troncon_id UUID NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT reseaux_techniques_type_fk
+                FOREIGN KEY (type_id)
+                REFERENCES public.ref_types_reseau_technique (id),
+            CONSTRAINT reseaux_techniques_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id)
         )
     """,
 }

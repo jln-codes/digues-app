@@ -226,6 +226,15 @@ def run_migrate_core() -> int:
     print("Photo :")
     print(f"  migrées: {report.validation.table_counts['photos']}")
     print(f"  valid=false: {sum(not row.valid for row in prepared.photos)}")
+    print("Ouvrages :")
+    for table, rows in prepared.ouvrages.rows.items():
+        print(f"  {table}: {len(rows)}")
+    print(f"  migrés: {prepared.ouvrages.migrated_count}")
+    print(f"  différés: {prepared.ouvrages.deferred_count}")
+    print(
+        "  valid=false: "
+        f"{sum(prepared.ouvrages.invalid_counts.values())}"
+    )
     print("Warnings :")
     if prepared.warnings:
         for warning in prepared.warnings:

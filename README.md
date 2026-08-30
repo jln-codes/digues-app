@@ -24,21 +24,27 @@ relancer la migration depuis la source.
 
 ## État actuel
 
-Le premier noyau métier est opérationnel. Il couvre :
+Le noyau métier et le premier lot Ouvrages sont opérationnels. Ils couvrent :
 
 - les tables métier `systemes`, `digues`, `troncons`, `desordres`,
   `observations` et `photos` ;
 - la relation N-N `link_desordres_troncons` ;
 - les référentiels `ref_categories_desordre`, `ref_types_desordre` et
-  `ref_urgences`.
+  `ref_urgences` ;
+- les tables `ouvrages_hydrauliques`, `equipements_mesure`,
+  `ouvrages_franchissement`, `mobilier` et `reseaux_techniques`, ainsi que leurs
+  cinq référentiels de types indépendants.
 
 Les objets métier provenant de CouchDB conservent leurs UUID historiques. Les
 insertions réalisées directement dans PostgreSQL ou QGIS peuvent omettre l'ID :
 les PK UUID simples, y compris l'ID technique de la table de liaison, utilisent
 `DEFAULT gen_random_uuid()`.
 
-Les référentiels conservent littéralement leurs identifiants CouchDB en PK
-`TEXT`, par exemple `RefTypeDesordre:57` ou `RefUrgence:1`.
+Les référentiels du noyau conservent littéralement leurs identifiants CouchDB en
+PK `TEXT`, par exemple `RefTypeDesordre:57` ou `RefUrgence:1`. Les cinq nouveaux
+référentiels Ouvrages utilisent au contraire une abréviation métier stable comme
+PK (`PIE`, `ECH`, `VAN`, etc.) ; les anciens IDs `RefOuvrage...` servent
+uniquement au mapping de migration.
 
 ## Installation
 
@@ -152,7 +158,10 @@ la lecture de CouchDB relève de `migrate-core`.
 sirs-postgre migrate-core
 ```
 
-La commande migre le noyau depuis CouchDB dans l'ordre imposé par les relations.
+La commande migre le noyau puis les 109 objets Ouvrages immédiatement migrables
+depuis CouchDB dans l'ordre imposé par les relations. Les huit
+`CheminAccesDependance` et l'`OuvrageAssocieAmenagementHydraulique` restent
+explicitement différés jusqu'au bloc Aménagements hydrauliques.
 Les insertions et validations s'exécutent dans une transaction PostgreSQL unique :
 une erreur bloquante entraîne un rollback complet.
 

@@ -54,10 +54,20 @@ class TargetSchemaTest(unittest.TestCase):
                 "ref_categories_desordre",
                 "ref_types_desordre",
                 "ref_urgences",
+                "ref_types_ouvrage_hydraulique",
+                "ref_types_equipement_mesure",
+                "ref_types_ouvrage_franchissement",
+                "ref_types_mobilier",
+                "ref_types_reseau_technique",
                 "desordres",
                 "link_desordres_troncons",
                 "observations",
                 "photos",
+                "ouvrages_hydrauliques",
+                "equipements_mesure",
+                "ouvrages_franchissement",
+                "mobilier",
+                "reseaux_techniques",
             ),
         )
         created = [
@@ -92,6 +102,11 @@ class TargetSchemaTest(unittest.TestCase):
             "link_desordres_troncons",
             "observations",
             "photos",
+            "ouvrages_hydrauliques",
+            "equipements_mesure",
+            "ouvrages_franchissement",
+            "mobilier",
+            "reseaux_techniques",
         ):
             with self.subTest(table=table):
                 self.assertIn("id uuid primary key", normalized(TABLE_DEFINITIONS[table]))
@@ -107,6 +122,11 @@ class TargetSchemaTest(unittest.TestCase):
             "link_desordres_troncons",
             "observations",
             "photos",
+            "ouvrages_hydrauliques",
+            "equipements_mesure",
+            "ouvrages_franchissement",
+            "mobilier",
+            "reseaux_techniques",
         ):
             with self.subTest(table=table):
                 self.assertIn(
@@ -121,6 +141,11 @@ class TargetSchemaTest(unittest.TestCase):
             "link_desordres_troncons": ("desordre_id", "troncon_id"),
             "observations": ("desordre_id",),
             "photos": ("observation_id",),
+            "ouvrages_hydrauliques": ("troncon_id",),
+            "equipements_mesure": ("troncon_id",),
+            "ouvrages_franchissement": ("troncon_id",),
+            "mobilier": ("troncon_id",),
+            "reseaux_techniques": ("troncon_id",),
         }
         for table, columns in expected_uuid_columns.items():
             statement = normalized(TABLE_DEFINITIONS[table])
@@ -133,6 +158,11 @@ class TargetSchemaTest(unittest.TestCase):
             "ref_categories_desordre",
             "ref_types_desordre",
             "ref_urgences",
+            "ref_types_ouvrage_hydraulique",
+            "ref_types_equipement_mesure",
+            "ref_types_ouvrage_franchissement",
+            "ref_types_mobilier",
+            "ref_types_reseau_technique",
         ):
             with self.subTest(table=table):
                 self.assertIn("id text primary key", normalized(TABLE_DEFINITIONS[table]))
@@ -149,6 +179,16 @@ class TargetSchemaTest(unittest.TestCase):
             "urgence_id text null",
             normalized(TABLE_DEFINITIONS["observations"]),
         )
+        for table in (
+            "ref_types_ouvrage_hydraulique",
+            "ref_types_equipement_mesure",
+            "ref_types_ouvrage_franchissement",
+            "ref_types_mobilier",
+            "ref_types_reseau_technique",
+        ):
+            statement = normalized(TABLE_DEFINITIONS[table])
+            self.assertIn("code text not null unique", statement)
+            self.assertIn("abrege text not null unique", statement)
 
     def test_foreign_keys_follow_the_requested_relationships(self):
         expected_references = {
@@ -175,6 +215,26 @@ class TargetSchemaTest(unittest.TestCase):
             ),
             "photos": (
                 "foreign key (observation_id) references public.observations (id)"
+            ),
+            "ouvrages_hydrauliques": (
+                "foreign key (type_id) references public.ref_types_ouvrage_hydraulique (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "equipements_mesure": (
+                "foreign key (type_id) references public.ref_types_equipement_mesure (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "ouvrages_franchissement": (
+                "foreign key (type_id) references public.ref_types_ouvrage_franchissement (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "mobilier": (
+                "foreign key (type_id) references public.ref_types_mobilier (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "reseaux_techniques": (
+                "foreign key (type_id) references public.ref_types_reseau_technique (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
             ),
         }
         for table, references in expected_references.items():
@@ -229,6 +289,23 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertIn("geometry geometry(linestring, 3950)", troncon)
         self.assertIn("geometry geometry(geometry, 3950)", desordre)
         self.assertNotIn("geometry geometry(linestring, 3950)", desordre)
+        self.assertIn(
+            "geometry geometry(point, 3950)",
+            normalized(TABLE_DEFINITIONS["equipements_mesure"]),
+        )
+        self.assertIn(
+            "geometry geometry(point, 3950)",
+            normalized(TABLE_DEFINITIONS["mobilier"]),
+        )
+        for table in (
+            "ouvrages_hydrauliques",
+            "ouvrages_franchissement",
+            "reseaux_techniques",
+        ):
+            self.assertIn(
+                "geometry geometry(geometry, 3950)",
+                normalized(TABLE_DEFINITIONS[table]),
+            )
 
     def test_observation_designation_is_nullable_text(self):
         observation = normalized(TABLE_DEFINITIONS["observations"])

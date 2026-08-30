@@ -92,6 +92,9 @@ def validate_core_migration(
     *,
     expected_counts: Mapping[str, int],
     expected_desordre_geometries: Mapping[str, int],
+    expected_ouvrage_geometries: Mapping[str, Mapping[str, int]],
+    expected_ouvrage_invalid: Mapping[str, int],
+    ouvrages_enabled: bool,
 ) -> CoreValidationResult:
     """Compare la cible à la source avant le commit de la transaction."""
 
@@ -123,7 +126,7 @@ def validate_core_migration(
             "Intégrité PostgreSQL invalide : " + "; ".join(integrity_errors)
         )
 
-    for table in (
+    id_tables = [
         "ref_categories_desordre",
         "ref_types_desordre",
         "ref_urgences",
@@ -133,7 +136,23 @@ def validate_core_migration(
         "desordres",
         "observations",
         "photos",
-    ):
+    ]
+    if ouvrages_enabled:
+        id_tables.extend(
+            (
+                "ref_types_ouvrage_hydraulique",
+                "ref_types_equipement_mesure",
+                "ref_types_ouvrage_franchissement",
+                "ref_types_mobilier",
+                "ref_types_reseau_technique",
+                "ouvrages_hydrauliques",
+                "equipements_mesure",
+                "ouvrages_franchissement",
+                "mobilier",
+                "reseaux_techniques",
+            )
+        )
+    for table in id_tables:
         cursor.execute(
             f"SELECT COUNT(*) - COUNT(DISTINCT id) FROM public.{table}"
         )
@@ -177,6 +196,140 @@ def validate_core_migration(
             "Types géométriques des désordres incohérents : "
             f"attendu {expected_non_null}, obtenu {actual_geometries}"
         )
+
+    if ouvrages_enabled:
+        ouvrage_ref_tables = {
+            "ouvrages_hydrauliques": "ref_types_ouvrage_hydraulique",
+            "equipements_mesure": "ref_types_equipement_mesure",
+            "ouvrages_franchissement": "ref_types_ouvrage_franchissement",
+            "mobilier": "ref_types_mobilier",
+            "reseaux_techniques": "ref_types_reseau_technique",
+        }
+        ouvrage_errors: list[str] = []
+        for reference_table in ouvrage_ref_tables.values():
+            cursor.execute(
+                f"SELECT COUNT(*) FROM public.{reference_table} "
+                "WHERE id <> abrege OR NOT valid"
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                ouvrage_errors.append(
+                    f"{reference_table}: id/abrege/valid non conforme"
+                )
+        for table, reference_table in ouvrage_ref_tables.items():
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM public.{table} AS o
+                LEFT JOIN public.{reference_table} AS r ON r.id = o.type_id
+                WHERE r.id IS NULL
+                """
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                ouvrage_errors.append(f"{table}: type_id invalide")
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM public.{table} AS o
+                LEFT JOIN public.troncons AS t ON t.id = o.troncon_id
+                WHERE o.troncon_id IS NOT NULL AND t.id IS NULL
+                """
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                ouvrage_errors.append(f"{table}: troncon_id invalide")
+            cursor.execute(
+                f"SELECT COUNT(*) FROM public.{table} "
+                "WHERE geometry IS NOT NULL AND ST_SRID(geometry) <> 3950"
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                ouvrage_errors.append(f"{table}: SRID différent de 3950")
+            cursor.execute(
+                f"SELECT GeometryType(geometry), COUNT(*) FROM public.{table} "
+                "WHERE geometry IS NOT NULL GROUP BY GeometryType(geometry)"
+            )
+            actual = {
+                str(geometry_type).lower(): int(count)
+                for geometry_type, count in cursor.fetchall()
+            }
+            expected = {
+                kind: count
+                for kind, count in expected_ouvrage_geometries[table].items()
+                if kind != "null" and count
+            }
+            if actual != expected:
+                ouvrage_errors.append(
+                    f"{table}: géométries attendues {expected}, obtenues {actual}"
+                )
+            cursor.execute(f"SELECT COUNT(*) FROM public.{table} WHERE NOT valid")
+            row = cursor.fetchone()
+            actual_invalid = int(row[0]) if row else -1
+            if actual_invalid != expected_ouvrage_invalid[table]:
+                ouvrage_errors.append(
+                    f"{table}: valid=false attendus "
+                    f"{expected_ouvrage_invalid[table]}, obtenus {actual_invalid}"
+                )
+
+        for table in ("equipements_mesure", "mobilier"):
+            cursor.execute(
+                f"SELECT COUNT(*) FROM public.{table} "
+                "WHERE geometry IS NOT NULL AND GeometryType(geometry) <> 'POINT'"
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                ouvrage_errors.append(f"{table}: géométrie autre que Point")
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM (
+                SELECT id FROM public.ouvrages_hydrauliques
+                UNION ALL SELECT id FROM public.equipements_mesure
+                UNION ALL SELECT id FROM public.ouvrages_franchissement
+                UNION ALL SELECT id FROM public.mobilier
+                UNION ALL SELECT id FROM public.reseaux_techniques
+            ) AS all_ouvrages
+            """
+        )
+        total_row = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT id)
+            FROM (
+                SELECT id FROM public.ouvrages_hydrauliques
+                UNION ALL SELECT id FROM public.equipements_mesure
+                UNION ALL SELECT id FROM public.ouvrages_franchissement
+                UNION ALL SELECT id FROM public.mobilier
+                UNION ALL SELECT id FROM public.reseaux_techniques
+            ) AS all_ouvrages
+            """
+        )
+        distinct_row = cursor.fetchone()
+        if (
+            not total_row
+            or not distinct_row
+            or int(total_row[0]) != 109
+            or int(distinct_row[0]) != 109
+        ):
+            ouvrage_errors.append("UUID Ouvrages non uniques ou total différent de 109")
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN ('borne_digue', 'bornes_digue')
+            """
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            ouvrage_errors.append("BorneDigue présent dans le schéma cible")
+        if ouvrage_errors:
+            raise MigrationValidationError(
+                "Validation du bloc Ouvrages invalide : " + "; ".join(ouvrage_errors)
+            )
 
     return CoreValidationResult(
         table_counts=actual_counts,

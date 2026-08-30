@@ -12,6 +12,7 @@ from sirs_postgre.migration.core import (
     prepare_core_migration,
     validate_troncon_wkt,
 )
+from sirs_postgre.target.schema import EXPECTED_TABLES
 
 
 IDS = {
@@ -314,7 +315,7 @@ class CoreTransformationTest(unittest.TestCase):
 
     def test_target_non_empty_is_refused_before_insert(self):
         prepared = prepare_core_migration(source_fixture())
-        cursor = FakeMigrationCursor([1] + [0] * 9)
+        cursor = FakeMigrationCursor([1] + [0] * (len(EXPECTED_TABLES) - 1))
         connection = FakeMigrationConnection(cursor)
 
         with self.assertRaises(TargetNotEmptyError):
@@ -327,7 +328,7 @@ class CoreTransformationTest(unittest.TestCase):
 
     def test_target_transaction_rolls_back_on_insert_error(self):
         prepared = prepare_core_migration(source_fixture())
-        cursor = FakeMigrationCursor([0] * 10, fail_on_insert=True)
+        cursor = FakeMigrationCursor([0] * len(EXPECTED_TABLES), fail_on_insert=True)
         connection = FakeMigrationConnection(cursor)
 
         with self.assertRaisesRegex(CoreMigrationError, "annulée"):
