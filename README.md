@@ -2,9 +2,8 @@
 
 ## Objectif
 
-`sirs-postgre` est un projet Python autonome qui organise la migration progressive
-de SIRS Digues V2 depuis CouchDB vers PostgreSQL/PostGIS. Il ne dépend pas de
-`sirs-suite` pour fonctionner.
+sirs-postgre est un projet Python autonome qui organise la migration progressive
+de SIRS Digues V2 depuis CouchDB vers PostgreSQL/PostGIS.
 
 PostgreSQL/PostGIS constitue le futur modèle métier. QGIS est l'interface
 principale prévue pour consulter et éditer les données. Le projet avance de façon
