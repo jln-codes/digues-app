@@ -83,6 +83,7 @@ class OuvrageRow:
     troncon_id: UUID | None
     valid: bool
     source_class: str
+    amenagement_hydraulique_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -537,6 +538,12 @@ INSERT_STATEMENTS.update(
         for table in EXPECTED_BUSINESS_COUNTS
     }
 )
+INSERT_STATEMENTS["ouvrages_hydrauliques"] = """
+    INSERT INTO public.ouvrages_hydrauliques
+        (id, type_id, designation, commentaire, date_debut,
+         geometry, troncon_id, amenagement_hydraulique_id, valid)
+    VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s, %s, %s)
+"""
 
 
 def insert_prepared_ouvrages(
@@ -553,9 +560,23 @@ def insert_prepared_ouvrages(
         )
     for table, rows in prepared.rows.items():
         if rows:
-            cursor.executemany(
-                INSERT_STATEMENTS[table],
-                [
+            if table == "ouvrages_hydrauliques":
+                values = [
+                    (
+                        row.id,
+                        row.type_id,
+                        row.designation,
+                        row.commentaire,
+                        row.date_debut,
+                        row.geometry_wkt,
+                        row.troncon_id,
+                        row.amenagement_hydraulique_id,
+                        row.valid,
+                    )
+                    for row in rows
+                ]
+            else:
+                values = [
                     (
                         row.id,
                         row.type_id,
@@ -567,5 +588,8 @@ def insert_prepared_ouvrages(
                         row.valid,
                     )
                     for row in rows
-                ],
+                ]
+            cursor.executemany(
+                INSERT_STATEMENTS[table],
+                values,
             )

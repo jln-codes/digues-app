@@ -24,7 +24,8 @@ relancer la migration depuis la source.
 
 ## État actuel
 
-Le noyau métier et le premier lot Ouvrages sont opérationnels. Ils couvrent :
+Le noyau métier, le premier lot Ouvrages et les aménagements hydrauliques sont
+opérationnels. Ils couvrent :
 
 - les tables métier `systemes`, `digues`, `troncons`, `desordres`,
   `observations` et `photos` ;
@@ -33,7 +34,9 @@ Le noyau métier et le premier lot Ouvrages sont opérationnels. Ils couvrent :
   `ref_urgences` ;
 - les tables `ouvrages_hydrauliques`, `equipements_mesure`,
   `ouvrages_franchissement`, `mobilier` et `reseaux_techniques`, ainsi que leurs
-  cinq référentiels de types indépendants.
+  cinq référentiels de types indépendants ;
+- `amenagements_hydrauliques`, son référentiel minimal et la relation explicite
+  N-N `link_amenagements_troncons`.
 
 Les objets métier provenant de CouchDB conservent leurs UUID historiques. Les
 insertions réalisées directement dans PostgreSQL ou QGIS peuvent omettre l'ID :
@@ -158,10 +161,14 @@ la lecture de CouchDB relève de `migrate-core`.
 sirs-postgre migrate-core
 ```
 
-La commande migre le noyau puis les 109 objets Ouvrages immédiatement migrables
-depuis CouchDB dans l'ordre imposé par les relations. Les huit
-`CheminAccesDependance` et l'`OuvrageAssocieAmenagementHydraulique` restent
-explicitement différés jusqu'au bloc Aménagements hydrauliques.
+La commande migre le noyau, 110 objets Ouvrages et les aménagements hydrauliques
+depuis CouchDB dans l'ordre imposé par les relations. L'unique
+`OuvrageAssocieAmenagementHydraulique` rejoint désormais
+`ouvrages_hydrauliques` avec son parent explicitement stocké. Les huit
+`CheminAccesDependance` restent différés : leur parent n'est actuellement connu
+que par analyse spatiale et par leur désignation. L'unique
+`PrestationAmenagementHydraulique` reste également différée jusqu'au modèle
+général des prestations.
 Les insertions et validations s'exécutent dans une transaction PostgreSQL unique :
 une erreur bloquante entraîne un rollback complet.
 
@@ -189,6 +196,13 @@ ref_categories_desordre
 
 ref_urgences
   └── 1-N → observations.urgence_id
+
+ref_types_amenagement_hydraulique
+  └── 1-N → amenagements_hydrauliques
+                  └── N-N ↔ link_amenagements_troncons ↔ troncons
+
+amenagements_hydrauliques
+  └── 1-N → ouvrages_hydrauliques.amenagement_hydraulique_id
 ```
 
 `categorie_desordre_id` n'est volontairement pas stocké dans `desordres`. Quand
@@ -200,6 +214,24 @@ Les relations 1-N utilisent des FK directes. La relation entre désordres et
 tronçons est réellement N-N : `link_desordres_troncons` possède un ID UUID
 technique pour QGIS et garantit l'unicité du couple
 `(desordre_id, troncon_id)`.
+
+Une ZEC représente conceptuellement un ensemble hydraulique pouvant associer
+une emprise de stockage et un ou plusieurs tronçons ; elle ne se réduit donc pas
+au seul polygone de `amenagements_hydrauliques`. Seules les relations présentes
+dans `tronconIds` sont migrées. Une intersection spatiale ne crée jamais de FK.
+
+### Règles génériques et overrides de source
+
+Le transformateur des aménagements ne dépend d'aucun nom, UUID ou nombre
+d'objets propre à une base. Un type source connu passe par un mapping explicite ;
+un type absent ou inconnu devient `IND` avec warning, sans perte de l'objet. Une
+géométrie autre que Polygon bloque la transaction au lieu d'être corrigée.
+
+Les décisions propres à une base sont regroupées dans
+`migration/source_overrides.py`, indexées par nom de base CouchDB. Pour la base
+auditée `cabbalr` seulement, les six UUID actuels sont provisoirement classés
+`ZEC`. Cette configuration n'est pas une règle SIRS universelle : une autre base,
+même avec les mêmes désignations, conserve `IND` en l'absence de mapping de type.
 
 ## Migration CouchDB → PostgreSQL
 

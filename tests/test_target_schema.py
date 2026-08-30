@@ -59,10 +59,13 @@ class TargetSchemaTest(unittest.TestCase):
                 "ref_types_ouvrage_franchissement",
                 "ref_types_mobilier",
                 "ref_types_reseau_technique",
+                "ref_types_amenagement_hydraulique",
                 "desordres",
                 "link_desordres_troncons",
                 "observations",
                 "photos",
+                "amenagements_hydrauliques",
+                "link_amenagements_troncons",
                 "ouvrages_hydrauliques",
                 "equipements_mesure",
                 "ouvrages_franchissement",
@@ -102,6 +105,8 @@ class TargetSchemaTest(unittest.TestCase):
             "link_desordres_troncons",
             "observations",
             "photos",
+            "amenagements_hydrauliques",
+            "link_amenagements_troncons",
             "ouvrages_hydrauliques",
             "equipements_mesure",
             "ouvrages_franchissement",
@@ -122,6 +127,8 @@ class TargetSchemaTest(unittest.TestCase):
             "link_desordres_troncons",
             "observations",
             "photos",
+            "amenagements_hydrauliques",
+            "link_amenagements_troncons",
             "ouvrages_hydrauliques",
             "equipements_mesure",
             "ouvrages_franchissement",
@@ -141,7 +148,14 @@ class TargetSchemaTest(unittest.TestCase):
             "link_desordres_troncons": ("desordre_id", "troncon_id"),
             "observations": ("desordre_id",),
             "photos": ("observation_id",),
-            "ouvrages_hydrauliques": ("troncon_id",),
+            "link_amenagements_troncons": (
+                "amenagement_hydraulique_id",
+                "troncon_id",
+            ),
+            "ouvrages_hydrauliques": (
+                "troncon_id",
+                "amenagement_hydraulique_id",
+            ),
             "equipements_mesure": ("troncon_id",),
             "ouvrages_franchissement": ("troncon_id",),
             "mobilier": ("troncon_id",),
@@ -163,6 +177,7 @@ class TargetSchemaTest(unittest.TestCase):
             "ref_types_ouvrage_franchissement",
             "ref_types_mobilier",
             "ref_types_reseau_technique",
+            "ref_types_amenagement_hydraulique",
         ):
             with self.subTest(table=table):
                 self.assertIn("id text primary key", normalized(TABLE_DEFINITIONS[table]))
@@ -185,6 +200,7 @@ class TargetSchemaTest(unittest.TestCase):
             "ref_types_ouvrage_franchissement",
             "ref_types_mobilier",
             "ref_types_reseau_technique",
+            "ref_types_amenagement_hydraulique",
         ):
             statement = normalized(TABLE_DEFINITIONS[table])
             self.assertIn("code text not null unique", statement)
@@ -218,6 +234,14 @@ class TargetSchemaTest(unittest.TestCase):
             ),
             "ouvrages_hydrauliques": (
                 "foreign key (type_id) references public.ref_types_ouvrage_hydraulique (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
+                "foreign key (amenagement_hydraulique_id) references public.amenagements_hydrauliques (id)",
+            ),
+            "amenagements_hydrauliques": (
+                "foreign key (type_id) references public.ref_types_amenagement_hydraulique (id)"
+            ),
+            "link_amenagements_troncons": (
+                "foreign key (amenagement_hydraulique_id) references public.amenagements_hydrauliques (id)",
                 "foreign key (troncon_id) references public.troncons (id)",
             ),
             "equipements_mesure": (
@@ -261,6 +285,13 @@ class TargetSchemaTest(unittest.TestCase):
                 "observations_urgence_fk",
             ),
             "photos": "photos_observations_fk",
+            "amenagements_hydrauliques": "amenagements_hydrauliques_type_fk",
+            "link_amenagements_troncons": (
+                "link_amenagements_troncons_amenagements_fk",
+                "link_amenagements_troncons_troncons_fk",
+                "link_amenagements_troncons_unique",
+            ),
+            "ouvrages_hydrauliques": "ouvrages_hydrauliques_amenagements_fk",
         }
         for table, constraints in expected_constraints.items():
             if isinstance(constraints, str):
@@ -282,6 +313,14 @@ class TargetSchemaTest(unittest.TestCase):
             statement,
         )
         self.assertNotIn("primary key (desordre_id, troncon_id)", statement)
+        amenagement_link = normalized(
+            TABLE_DEFINITIONS["link_amenagements_troncons"]
+        )
+        self.assertIn(
+            "constraint link_amenagements_troncons_unique "
+            "unique (amenagement_hydraulique_id, troncon_id)",
+            amenagement_link,
+        )
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):
         troncon = normalized(TABLE_DEFINITIONS["troncons"])
@@ -306,6 +345,11 @@ class TargetSchemaTest(unittest.TestCase):
                 "geometry geometry(geometry, 3950)",
                 normalized(TABLE_DEFINITIONS[table]),
             )
+        amenagement = normalized(TABLE_DEFINITIONS["amenagements_hydrauliques"])
+        self.assertIn("geometry geometry(polygon, 3950) not null", amenagement)
+        self.assertNotIn("superficie", amenagement)
+        self.assertNotIn("capacite_stockage", amenagement)
+        self.assertNotIn("profondeur_moyenne", amenagement)
 
     def test_observation_designation_is_nullable_text(self):
         observation = normalized(TABLE_DEFINITIONS["observations"])

@@ -235,6 +235,25 @@ def run_migrate_core() -> int:
         "  valid=false: "
         f"{sum(prepared.ouvrages.invalid_counts.values())}"
     )
+    print("Aménagements hydrauliques :")
+    print(f"  source: {len(prepared.amenagements.amenagements)}")
+    print(
+        "  migrés: "
+        f"{report.validation.table_counts['amenagements_hydrauliques']}"
+    )
+    print(
+        "  relations explicites aux tronçons: "
+        f"{report.validation.table_counts['link_amenagements_troncons']}"
+    )
+    print(
+        "  ouvrages associés réintégrés: "
+        f"{len(prepared.amenagements.associated_ouvrages)}"
+    )
+    print(f"  chemins différés: {prepared.amenagements.deferred_chemins}")
+    print(
+        "  prestations spécifiques différées: "
+        f"{prepared.amenagements.deferred_prestations}"
+    )
     print("Warnings :")
     if prepared.warnings:
         for warning in prepared.warnings:

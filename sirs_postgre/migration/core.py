@@ -14,6 +14,13 @@ from sirs_postgre.source import CouchDBClient, connect_couchdb
 from sirs_postgre.target import PostgreSQLConfig
 from sirs_postgre.target.schema import EXPECTED_TABLES
 
+from .amenagements import (
+    AMENAGEMENT_SOURCE_CLASSES,
+    PreparedAmenagementsMigration,
+    attach_associated_ouvrages,
+    insert_prepared_amenagements,
+    prepare_amenagements_migration,
+)
 from .ouvrages import (
     OUVRAGE_SOURCE_CLASSES,
     PreparedOuvragesMigration,
@@ -32,6 +39,7 @@ CORE_SOURCE_CLASSES = {
     "TronconDigue": "fr.sirs.core.model.TronconDigue",
     "Desordre": "fr.sirs.core.model.Desordre",
     **OUVRAGE_SOURCE_CLASSES,
+    **AMENAGEMENT_SOURCE_CLASSES,
 }
 
 CORE_FIELD_MAPPINGS = {
@@ -100,6 +108,23 @@ CORE_FIELD_MAPPINGS = {
         "date ISO → DATE → date",
         "designation → texte inchangé → designation",
         "valid → booléen inchangé → valid",
+    ),
+    "amenagements_hydrauliques": (
+        "_id → UUID historique → id",
+        "type source connu → mapping explicite ; absent/inconnu → IND + warning",
+        "override nommé par base source → type provisoire isolé",
+        "designation/date_debut/valid → colonnes homonymes",
+        "geometry WKT POLYGON → ST_GeomFromText(..., 3950) → geometry",
+    ),
+    "link_amenagements_troncons": (
+        "AmenagementHydraulique._id → amenagement_hydraulique_id",
+        "tronconIds explicites uniquement → troncon_id",
+        "aucune intersection spatiale utilisée",
+    ),
+    "ouvrage_associe_amenagement": (
+        "amenagementHydrauliqueId explicite → amenagement_hydraulique_id",
+        "RefOuvrageAssocieAH:3 → DVS",
+        "UUID et WKT historiques conservés dans ouvrages_hydrauliques",
     ),
 }
 
@@ -211,6 +236,7 @@ class PreparedCoreMigration:
     observations: tuple[ObservationRow, ...]
     photos: tuple[PhotoRow, ...]
     ouvrages: PreparedOuvragesMigration
+    amenagements: PreparedAmenagementsMigration
     digues_without_system: int
     desordre_source_geometry_present: int
     desordre_source_geometry_absent: int
@@ -232,6 +258,7 @@ class PreparedCoreMigration:
             "photos": len(self.photos),
         }
         counts.update(self.ouvrages.expected_counts)
+        counts.update(self.amenagements.expected_counts)
         return counts
 
     @property
@@ -393,6 +420,8 @@ def _sorted_reference_documents(
 
 def prepare_core_migration(
     source_documents: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    source_database: str | None = None,
 ) -> PreparedCoreMigration:
     """Transforme les documents live en lignes typées, sans accès PostgreSQL."""
 
@@ -687,11 +716,28 @@ def prepare_core_migration(
             ouvrages = prepare_ouvrages_migration(
                 source_documents,
                 troncon_ids=troncon_ids,
+                strict_counts=False,
             )
         except Exception as exc:
             raise CoreMigrationError(f"Bloc Ouvrages invalide : {exc}") from exc
     else:
         ouvrages = PreparedOuvragesMigration.empty()
+
+    if any(label in source_documents for label in AMENAGEMENT_SOURCE_CLASSES):
+        try:
+            amenagements = prepare_amenagements_migration(
+                source_documents,
+                troncon_ids=troncon_ids,
+                source_database=source_database,
+            )
+            ouvrages = attach_associated_ouvrages(ouvrages, amenagements)
+            warnings.extend(amenagements.warnings)
+        except Exception as exc:
+            raise CoreMigrationError(
+                f"Bloc Aménagements hydrauliques invalide : {exc}"
+            ) from exc
+    else:
+        amenagements = PreparedAmenagementsMigration.empty()
 
     return PreparedCoreMigration(
         categories_desordre=categories_desordre,
@@ -705,6 +751,7 @@ def prepare_core_migration(
         observations=observations,
         photos=photos,
         ouvrages=ouvrages,
+        amenagements=amenagements,
         digues_without_system=digues_without_system,
         desordre_source_geometry_present=source_geometry_present,
         desordre_source_geometry_absent=source_geometry_absent,
@@ -863,6 +910,7 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
     for table, rows in batches:
         if rows:
             cursor.executemany(INSERT_STATEMENTS[table], rows)
+    insert_prepared_amenagements(cursor, prepared.amenagements)
     insert_prepared_ouvrages(cursor, prepared.ouvrages)
 
 
@@ -896,6 +944,17 @@ def execute_core_migration(
                     expected_ouvrage_geometries=prepared.ouvrages.geometry_counts,
                     expected_ouvrage_invalid=prepared.ouvrages.invalid_counts,
                     ouvrages_enabled=prepared.ouvrages.enabled,
+                    amenagements_enabled=prepared.amenagements.enabled,
+                    expected_amenagement_links=len(prepared.amenagements.links),
+                    expected_deferred_chemins=(
+                        prepared.amenagements.deferred_chemins
+                    ),
+                    expected_deferred_prestations=(
+                        prepared.amenagements.deferred_prestations
+                    ),
+                    expected_associated_ouvrage_types=(
+                        prepared.amenagements.associated_type_counts
+                    ),
                 )
     except (CoreMigrationError, TargetNotEmptyError):
         raise
@@ -923,7 +982,10 @@ def migrate_core(
 
     client = source_client or connect_couchdb()
     documents = fetch_core_documents(client)
-    prepared = prepare_core_migration(documents)
+    prepared = prepare_core_migration(
+        documents,
+        source_database=client.config.database,
+    )
     validation = execute_core_migration(
         prepared,
         target_config,

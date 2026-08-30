@@ -101,6 +101,15 @@ TABLE_DEFINITIONS = {
             valid BOOLEAN NOT NULL
         )
     """,
+    "ref_types_amenagement_hydraulique": """
+        CREATE TABLE IF NOT EXISTS public.ref_types_amenagement_hydraulique (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
     "desordres": """
         CREATE TABLE IF NOT EXISTS public.desordres (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -161,6 +170,34 @@ TABLE_DEFINITIONS = {
                 REFERENCES public.observations (id)
         )
     """,
+    "amenagements_hydrauliques": """
+        CREATE TABLE IF NOT EXISTS public.amenagements_hydrauliques (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            type_id TEXT NULL,
+            designation TEXT NULL,
+            date_debut DATE NULL,
+            geometry geometry(Polygon, 3950) NOT NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT amenagements_hydrauliques_type_fk
+                FOREIGN KEY (type_id)
+                REFERENCES public.ref_types_amenagement_hydraulique (id)
+        )
+    """,
+    "link_amenagements_troncons": """
+        CREATE TABLE IF NOT EXISTS public.link_amenagements_troncons (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            amenagement_hydraulique_id UUID NOT NULL,
+            troncon_id UUID NOT NULL,
+            CONSTRAINT link_amenagements_troncons_amenagements_fk
+                FOREIGN KEY (amenagement_hydraulique_id)
+                REFERENCES public.amenagements_hydrauliques (id),
+            CONSTRAINT link_amenagements_troncons_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id),
+            CONSTRAINT link_amenagements_troncons_unique
+                UNIQUE (amenagement_hydraulique_id, troncon_id)
+        )
+    """,
     "ouvrages_hydrauliques": """
         CREATE TABLE IF NOT EXISTS public.ouvrages_hydrauliques (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -170,13 +207,17 @@ TABLE_DEFINITIONS = {
             date_debut DATE NULL,
             geometry geometry(Geometry, 3950) NULL,
             troncon_id UUID NULL,
+            amenagement_hydraulique_id UUID NULL,
             valid BOOLEAN NOT NULL,
             CONSTRAINT ouvrages_hydrauliques_type_fk
                 FOREIGN KEY (type_id)
                 REFERENCES public.ref_types_ouvrage_hydraulique (id),
             CONSTRAINT ouvrages_hydrauliques_troncons_fk
                 FOREIGN KEY (troncon_id)
-                REFERENCES public.troncons (id)
+                REFERENCES public.troncons (id),
+            CONSTRAINT ouvrages_hydrauliques_amenagements_fk
+                FOREIGN KEY (amenagement_hydraulique_id)
+                REFERENCES public.amenagements_hydrauliques (id)
         )
     """,
     "equipements_mesure": """

@@ -95,6 +95,11 @@ def validate_core_migration(
     expected_ouvrage_geometries: Mapping[str, Mapping[str, int]],
     expected_ouvrage_invalid: Mapping[str, int],
     ouvrages_enabled: bool,
+    amenagements_enabled: bool,
+    expected_amenagement_links: int,
+    expected_deferred_chemins: int,
+    expected_deferred_prestations: int,
+    expected_associated_ouvrage_types: Mapping[str, int],
 ) -> CoreValidationResult:
     """Compare la cible à la source avant le commit de la transaction."""
 
@@ -150,6 +155,13 @@ def validate_core_migration(
                 "ouvrages_franchissement",
                 "mobilier",
                 "reseaux_techniques",
+            )
+        )
+    if amenagements_enabled:
+        id_tables.extend(
+            (
+                "ref_types_amenagement_hydraulique",
+                "amenagements_hydrauliques",
             )
         )
     for table in id_tables:
@@ -307,13 +319,41 @@ def validate_core_migration(
             """
         )
         distinct_row = cursor.fetchone()
+        expected_ouvrage_total = sum(
+            expected_counts[table]
+            for table in (
+                "ouvrages_hydrauliques",
+                "equipements_mesure",
+                "ouvrages_franchissement",
+                "mobilier",
+                "reseaux_techniques",
+            )
+        )
         if (
             not total_row
             or not distinct_row
-            or int(total_row[0]) != 109
-            or int(distinct_row[0]) != 109
+            or int(total_row[0]) != expected_ouvrage_total
+            or int(distinct_row[0]) != expected_ouvrage_total
         ):
-            ouvrage_errors.append("UUID Ouvrages non uniques ou total différent de 109")
+            ouvrage_errors.append(
+                "UUID Ouvrages non uniques ou total différent de "
+                f"{expected_ouvrage_total}"
+            )
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM public.ouvrages_hydrauliques AS o
+            LEFT JOIN public.amenagements_hydrauliques AS a
+              ON a.id = o.amenagement_hydraulique_id
+            WHERE o.amenagement_hydraulique_id IS NOT NULL AND a.id IS NULL
+            """
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            ouvrage_errors.append(
+                "ouvrages_hydrauliques: amenagement_hydraulique_id invalide"
+            )
 
         cursor.execute(
             """
@@ -329,6 +369,106 @@ def validate_core_migration(
         if ouvrage_errors:
             raise MigrationValidationError(
                 "Validation du bloc Ouvrages invalide : " + "; ".join(ouvrage_errors)
+            )
+
+    if amenagements_enabled:
+        amenagement_errors: list[str] = []
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM public.ref_types_amenagement_hydraulique
+            WHERE id <> abrege OR NOT valid
+            """
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            amenagement_errors.append("référentiel id/abrege/valid non conforme")
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM public.amenagements_hydrauliques AS a
+            LEFT JOIN public.ref_types_amenagement_hydraulique AS r
+              ON r.id = a.type_id
+            WHERE a.type_id IS NOT NULL AND r.id IS NULL
+            """
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            amenagement_errors.append("type_id invalide")
+
+        for label, predicate in (
+            ("géométrie NULL", "geometry IS NULL"),
+            ("SRID différent de 3950", "ST_SRID(geometry) <> 3950"),
+            ("géométrie non Polygon", "GeometryType(geometry) <> 'POLYGON'"),
+            ("géométrie invalide", "NOT ST_IsValid(geometry)"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) FROM public.amenagements_hydrauliques "
+                f"WHERE {predicate}"
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                amenagement_errors.append(label)
+
+        cursor.execute(
+            """
+            SELECT COUNT(*), COUNT(id), COUNT(DISTINCT id),
+                   COUNT(*) - COUNT(DISTINCT (
+                       amenagement_hydraulique_id, troncon_id
+                   ))
+            FROM public.link_amenagements_troncons
+            """
+        )
+        row = cursor.fetchone()
+        if (
+            not row
+            or int(row[0]) != expected_amenagement_links
+            or int(row[1]) != expected_amenagement_links
+            or int(row[2]) != expected_amenagement_links
+            or int(row[3]) != 0
+        ):
+            amenagement_errors.append(
+                "nombre, identifiants ou couples de liaison invalides"
+            )
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM public.link_amenagements_troncons AS l
+            LEFT JOIN public.amenagements_hydrauliques AS a
+              ON a.id = l.amenagement_hydraulique_id
+            LEFT JOIN public.troncons AS t ON t.id = l.troncon_id
+            WHERE a.id IS NULL OR t.id IS NULL
+            """
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            amenagement_errors.append("relation vers aménagement/tronçon invalide")
+
+        cursor.execute(
+            """
+            SELECT type_id, COUNT(*)
+            FROM public.ouvrages_hydrauliques
+            WHERE amenagement_hydraulique_id IS NOT NULL
+            GROUP BY type_id
+            """
+        )
+        actual_associated_types = {
+            str(type_id): int(count) for type_id, count in cursor.fetchall()
+        }
+        if actual_associated_types != dict(expected_associated_ouvrage_types):
+            amenagement_errors.append(
+                "ouvrages associés attendus "
+                f"{dict(expected_associated_ouvrage_types)}, "
+                f"obtenus {actual_associated_types}"
+            )
+
+        if expected_deferred_chemins < 0 or expected_deferred_prestations < 0:
+            amenagement_errors.append("compteur différé négatif")
+        if amenagement_errors:
+            raise MigrationValidationError(
+                "Validation du bloc Aménagements hydrauliques invalide : "
+                + "; ".join(amenagement_errors)
             )
 
     return CoreValidationResult(
