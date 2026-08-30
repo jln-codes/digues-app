@@ -194,10 +194,84 @@ sirs-postgre diagnose
 ```
 
 Cette commande indépendante lit tous les documents CouchDB et génère
-`audits/bilan.md`. Elle découvre les valeurs `@class` et les clés JSON réelles,
-les compare à un registre de couverture et distingue `MIGREE`, `PARTIELLE`,
-`NON_MIGREE`, `TECHNIQUE_IGNORE` et `REFERENTIEL_IGNORE`. Une classe ou un champ
-inconnu dans une autre base apparaît donc automatiquement dans le bilan.
+`audits/bilan.md`, `audits/anomalies.json` et `audits/anomalies.csv`. Elle
+découvre les valeurs `@class` et les clés JSON réelles, les compare au registre
+de couverture et distingue `MIGREE`, `PARTIELLE`, `NON_MIGREE`,
+`TECHNIQUE_IGNORE` et `REFERENTIEL_IGNORE`. Une classe ou un champ inconnu dans
+une autre base apparaît donc automatiquement dans le bilan et, lorsqu'il est
+actionnable, dans le registre des anomalies.
+
+## Diagnostic et registre des anomalies
+
+Les trois livrables ont des usages distincts :
+
+- `bilan.md` synthétise la couverture globale des classes, champs et relations ;
+- `anomalies.json` est le registre structuré et persistant destiné au suivi ;
+- `anomalies.csv` expose le même registre aux tableurs, à QGIS et aux autres
+  outils d'analyse.
+
+Chaque entrée reçoit un `anomaly_id` déterministe calculé depuis la base source,
+la classe, l'identifiant source, la catégorie et le champ concernés. Le message
+n'entre pas dans cette identité : il peut évoluer sans casser le suivi. Une
+régénération préserve le statut, le commentaire de résolution et la première
+date de détection. Une anomalie disparue reste dans l'historique avec
+`active=false`; si elle réapparaît, elle retrouve le même ID et redevient active.
+`active` décrit uniquement la présence du constat dans le dernier diagnostic,
+tandis que `status` enregistre une décision humaine. Le diagnostic ne transforme
+donc jamais automatiquement un statut `OPEN` en statut résolu :
+
+- `active=true`, `status=OPEN` : problème actuel non traité ;
+- `active=false`, `status=OPEN` : problème absent du dernier diagnostic, sans
+  décision humaine enregistrée ;
+- `active=true`, `status=ACCEPTED_AS_IS` : problème encore présent mais accepté ;
+- `active=false`, `status=RESOLVED_IN_COUCHDB` : correction enregistrée et
+  constat désormais absent.
+
+Les statuts disponibles sont `OPEN`, `RESOLVED_IN_COUCHDB`,
+`RESOLVED_IN_POSTGRES`, `RESOLVED_BY_MIGRATOR`, `ACCEPTED_AS_IS` et `IGNORED`.
+`correction_location` indique si l'action relève de `COUCHDB`, `POSTGRESQL`, du
+`MIGRATOR`, des deux (`EITHER`), d'une revue manuelle ou n'est pas applicable.
+La sévérité (`INFO`, `WARNING`, `ERROR`, `BLOCKING`) est choisie explicitement
+selon l'impact et non déduite mécaniquement de la catégorie.
+
+L'affichage regroupe en outre les constats en trois familles internes : `DATA`
+pour les géométries, références, relations, médias et revues manuelles ;
+`COVERAGE` pour les classes/champs inconnus, partiels ou différés ;
+`MIGRATION_DECISION` pour les overrides explicites. Cette séparation évite
+d'interpréter chaque lacune de couverture comme une corruption de données.
+
+Consultation :
+
+```bash
+sirs-postgre anomalies
+sirs-postgre anomalies --open
+sirs-postgre anomalies --actionable
+sirs-postgre anomalies --category INVALID_GEOMETRY
+sirs-postgre anomalies --source-id <uuid>
+```
+
+La vue générale distingue les anomalies actives et inactives, puis les statuts
+des seules anomalies actives. `--open` conserve toutes les catégories actives
+encore ouvertes. `--actionable` se limite aux anomalies `DATA` actives et
+ouvertes ; il exclut notamment les classes partiellement migrées, les
+fonctionnalités différées et les décisions `SOURCE_OVERRIDE`.
+
+Enregistrement d'une décision locale :
+
+```bash
+sirs-postgre anomalies resolve <anomaly_id> \
+  --status RESOLVED_IN_COUCHDB \
+  --comment "Géométrie corrigée et validée dans la source"
+```
+
+La commande `anomalies resolve` ne contacte et ne modifie ni CouchDB ni
+PostgreSQL. Elle met uniquement à jour `audits/anomalies.json` et son export CSV;
+la prochaine exécution de `diagnose` préservera cette décision.
+
+Une correction réalisée uniquement dans PostgreSQL est perdue au prochain
+`recreate`. Elle peut servir à vérifier une solution ou corriger temporairement
+la cible, mais une correction reproductible doit ensuite être appliquée dans
+CouchDB ou codée dans le migrateur/`source_overrides.py`.
 
 ## Modèle PostgreSQL actuel
 
@@ -463,7 +537,7 @@ de migration.
 
 ```text
 sirs_postgre/
-├── cli.py                  # check, recreate, init-schema, migrate-core, diagnose
+├── cli.py                  # check, cycle de migration, diagnose, anomalies
 ├── source/
 │   └── couchdb.py          # configuration et client CouchDB
 ├── target/
@@ -472,6 +546,7 @@ sirs_postgre/
 └── migration/
     ├── core.py             # orchestration transactionnelle du noyau
     ├── amenagements.py     # aménagements hydrauliques
+    ├── anomalies.py        # collecte, historique et exports JSON/CSV
     ├── coverage.py         # registre et bilan de couverture CouchDB réel
     ├── media.py            # normalisation objet → observation → photo
     ├── ouvrages.py         # ouvrages et équipements

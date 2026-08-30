@@ -9,6 +9,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .migration import TargetNotEmptyError, migrate_core
+from .migration.anomalies import (
+    ACTIONABLE_CATEGORIES,
+    DEFAULT_CSV_PATH,
+    DEFAULT_JSON_PATH,
+    FAMILY_BY_CATEGORY,
+    RESOLUTION_STATUSES,
+    load_anomalies,
+    resolve_anomaly,
+)
 from .migration.coverage import generate_coverage_report
 from .source import connect_couchdb
 from .target import (
@@ -61,6 +70,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     diagnose.add_argument("--profile", choices=("local", "secure"))
     diagnose.add_argument("--source-database")
+    anomalies = subparsers.add_parser(
+        "anomalies",
+        description="Consulte ou résout localement le registre des anomalies.",
+    )
+    anomalies.add_argument("--open", action="store_true", dest="only_open")
+    anomalies.add_argument(
+        "--actionable",
+        action="store_true",
+        help="Affiche les anomalies de données actives et encore ouvertes.",
+    )
+    anomalies.add_argument("--category")
+    anomalies.add_argument("--source-id")
+    anomaly_commands = anomalies.add_subparsers(dest="anomalies_command")
+    resolve = anomaly_commands.add_parser(
+        "resolve",
+        description="Enregistre une décision sans modifier CouchDB/PostgreSQL.",
+    )
+    resolve.add_argument("anomaly_id")
+    resolve.add_argument("--status", required=True, choices=sorted(RESOLUTION_STATUSES))
+    resolve.add_argument("--comment")
     return parser
 
 
@@ -304,6 +333,8 @@ def run_migrate_core() -> int:
         print(f"[ERREUR] Migration appliquée mais diagnostic incomplet : {exc}")
         return 1
     print(f"Diagnostic : {coverage.path}")
+    print(f"Anomalies JSON : {coverage.anomalies_json_path}")
+    print(f"Anomalies CSV : {coverage.anomalies_csv_path}")
     print("Résultat final :")
     print("[OK] Migration du noyau et diagnostic terminés")
     return 0
@@ -320,9 +351,103 @@ def run_diagnose(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"[ERREUR] Diagnostic de couverture : {exc}")
         return 1
-    print(f"[OK] Bilan généré : {result.path}")
-    print(f"Classes CouchDB : {result.total_classes}")
-    print(f"Documents non migrés : {result.non_migrated_documents}")
+    counts = result.anomaly_register.counts_by_severity
+    print(f"Anomalies actives : {len(result.anomaly_register.active)}")
+    for severity in ("INFO", "WARNING", "ERROR", "BLOCKING"):
+        print(f"{severity} : {counts[severity]}")
+    print(f"Bilan : {result.path}")
+    print(f"Anomalies JSON : {result.anomalies_json_path}")
+    print(f"Anomalies CSV : {result.anomalies_csv_path}")
+    return 0
+
+
+def run_anomalies(args: argparse.Namespace) -> int:
+    if args.anomalies_command == "resolve":
+        try:
+            anomaly = resolve_anomaly(
+                args.anomaly_id,
+                status=args.status,
+                comment=args.comment,
+                json_path=DEFAULT_JSON_PATH,
+                csv_path=DEFAULT_CSV_PATH,
+            )
+        except Exception as exc:
+            print(f"[ERREUR] Résolution locale : {exc}")
+            return 1
+        print(f"[OK] {anomaly.anomaly_id} : {anomaly.status}")
+        return 0
+
+    try:
+        anomalies = load_anomalies(DEFAULT_JSON_PATH)
+    except Exception as exc:
+        print(f"[ERREUR] Lecture du registre : {exc}")
+        return 1
+    selected = list(anomalies)
+    if args.only_open:
+        selected = [
+            anomaly
+            for anomaly in selected
+            if anomaly.active and anomaly.status == "OPEN"
+        ]
+    if args.actionable:
+        selected = [
+            anomaly
+            for anomaly in selected
+            if anomaly.active
+            and anomaly.status == "OPEN"
+            and anomaly.category in ACTIONABLE_CATEGORIES
+        ]
+    if args.category:
+        selected = [
+            anomaly for anomaly in selected if anomaly.category == args.category
+        ]
+    if args.source_id:
+        selected = [
+            anomaly for anomaly in selected if anomaly.source_id == args.source_id
+        ]
+    active_selected = [anomaly for anomaly in selected if anomaly.active]
+
+    print(f"ACTIVE : {len(active_selected)}")
+    print(f"INACTIVE : {sum(not anomaly.active for anomaly in selected)}")
+    print(
+        "ACTIVE OPEN : "
+        f"{sum(anomaly.status == 'OPEN' for anomaly in active_selected)}"
+    )
+    print(
+        "ACTIVE ACCEPTED : "
+        f"{sum(anomaly.status == 'ACCEPTED_AS_IS' for anomaly in active_selected)}"
+    )
+    print(
+        "ACTIVE RESOLVED : "
+        f"{sum(anomaly.status.startswith('RESOLVED_') for anomaly in active_selected)}"
+    )
+    for severity in ("INFO", "WARNING", "ERROR", "BLOCKING"):
+        print(
+            f"{severity} : "
+            f"{sum(anomaly.severity == severity for anomaly in active_selected)}"
+        )
+    category_counts = {}
+    for anomaly in active_selected:
+        category_counts[anomaly.category] = category_counts.get(anomaly.category, 0) + 1
+    for category in sorted(category_counts):
+        print(f"{category} : {category_counts[category]}")
+    family_counts = {
+        family: sum(
+            FAMILY_BY_CATEGORY[anomaly.category] == family
+            for anomaly in active_selected
+        )
+        for family in ("DATA", "COVERAGE", "MIGRATION_DECISION")
+    }
+    for family, count in family_counts.items():
+        print(f"{family} : {count}")
+    if args.only_open or args.actionable or args.category or args.source_id:
+        for anomaly in selected:
+            source = anomaly.source_id or anomaly.source_class or "—"
+            activity = "ACTIVE" if anomaly.active else "INACTIVE"
+            print(
+                f"{anomaly.anomaly_id} | {anomaly.severity} | "
+                f"{anomaly.category} | {activity} | {anomaly.status} | {source}"
+            )
     return 0
 
 
@@ -339,6 +464,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_migrate_core()
     if args.command == "diagnose":
         return run_diagnose(args)
+    if args.command == "anomalies":
+        return run_anomalies(args)
     raise AssertionError(f"Commande inconnue : {args.command}")
 
 

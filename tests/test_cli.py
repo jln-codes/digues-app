@@ -2,6 +2,7 @@ import io
 import os
 import tempfile
 import unittest
+from collections import defaultdict
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -50,6 +51,17 @@ class CLITest(unittest.TestCase):
             path=Path("/project/audits/bilan.md"),
             total_classes=12,
             non_migrated_documents=3,
+            anomalies_json_path=Path("/project/audits/anomalies.json"),
+            anomalies_csv_path=Path("/project/audits/anomalies.csv"),
+            anomaly_register=SimpleNamespace(
+                active=(object(), object()),
+                counts_by_severity={
+                    "INFO": 1,
+                    "WARNING": 1,
+                    "ERROR": 0,
+                    "BLOCKING": 0,
+                },
+            ),
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -57,6 +69,8 @@ class CLITest(unittest.TestCase):
         self.assertEqual(result, 0)
         generate_report.assert_called_once_with(client)
         self.assertIn("audits/bilan.md", output.getvalue())
+        self.assertIn("audits/anomalies.json", output.getvalue())
+        self.assertIn("audits/anomalies.csv", output.getvalue())
 
     @patch(
         "sirs_postgre.cli.migrate_core",
@@ -72,6 +86,72 @@ class CLITest(unittest.TestCase):
         self.assertIn("sirs-postgre recreate", text)
         self.assertIn("sirs-postgre init-schema", text)
         self.assertIn("sirs-postgre migrate-core", text)
+
+    @patch("sirs_postgre.cli.generate_coverage_report")
+    @patch("sirs_postgre.cli.connect_couchdb")
+    @patch("sirs_postgre.cli.migrate_core")
+    def test_successful_migrate_core_generates_all_three_diagnostics(
+        self, migrate, connect_source, generate_report
+    ):
+        prepared = SimpleNamespace(
+            categories_desordre=(),
+            types_desordre=(),
+            urgences=(),
+            systemes=(),
+            digues=(),
+            digues_without_system=0,
+            troncons=(),
+            desordres=(),
+            desordre_geometry_counts={"point": 0, "linestring": 0, "null": 0},
+            desordre_source_geometry_present=0,
+            desordre_source_geometry_absent=0,
+            observations=(),
+            photos=(),
+            synthetic_observations=0,
+            direct_troncon_photos=0,
+            direct_other_photos=0,
+            ouvrages=SimpleNamespace(
+                rows={}, migrated_count=0, deferred_count=0, invalid_counts={}
+            ),
+            amenagements=SimpleNamespace(
+                amenagements=(),
+                associated_ouvrages=(),
+                deferred_chemins=0,
+                deferred_prestations=0,
+            ),
+            vegetation=SimpleNamespace(
+                geometry_counts={
+                    "point": 0,
+                    "linestring": 0,
+                    "polygon": 0,
+                    "null": 0,
+                },
+                method_counts={},
+                deferred_treatments=0,
+                deferred_planifications=0,
+            ),
+            warnings=(),
+        )
+        migrate.return_value = SimpleNamespace(
+            prepared=prepared,
+            validation=SimpleNamespace(table_counts=defaultdict(int)),
+        )
+        client = object()
+        connect_source.return_value = client
+        generate_report.return_value = SimpleNamespace(
+            path=Path("/project/audits/bilan.md"),
+            anomalies_json_path=Path("/project/audits/anomalies.json"),
+            anomalies_csv_path=Path("/project/audits/anomalies.csv"),
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["migrate-core"])
+        self.assertEqual(result, 0)
+        generate_report.assert_called_once_with(client)
+        text = output.getvalue()
+        self.assertIn("audits/bilan.md", text)
+        self.assertIn("audits/anomalies.json", text)
+        self.assertIn("audits/anomalies.csv", text)
 
     @patch("sirs_postgre.cli.initialize_postgresql_schema")
     @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")

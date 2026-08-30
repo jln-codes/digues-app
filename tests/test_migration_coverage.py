@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sirs_postgre.migration.coverage import diagnose_documents
+from sirs_postgre.migration.coverage import diagnose_documents, rule_for
 
 
 class CoverageDiagnosticTest(unittest.TestCase):
@@ -25,6 +25,8 @@ class CoverageDiagnosticTest(unittest.TestCase):
             path = Path(directory) / "audits" / "bilan.md"
             result = diagnose_documents(documents, output_path=path)
             self.assertTrue(path.is_file())
+            self.assertTrue(result.anomalies_json_path.is_file())
+            self.assertTrue(result.anomalies_csv_path.is_file())
             report = path.read_text(encoding="utf-8")
         self.assertEqual(result.total_documents, 2)
         self.assertEqual(result.total_classes, 2)
@@ -35,7 +37,59 @@ class CoverageDiagnosticTest(unittest.TestCase):
         self.assertIn("NON_MIGREE", report)
         self.assertIn("nouveauChamp", report)
         self.assertIn("Champs non analysés/non migrés", report)
+        self.assertIn("Registre détaillé des anomalies", report)
+        self.assertIn("Anomalies de données actives (`DATA`)", report)
+        self.assertIn("Anomalies de couverture actives (`COVERAGE`)", report)
+        self.assertIn("Décisions de migration actives (`MIGRATION_DECISION`)", report)
         self.assertGreaterEqual(result.unanalysed_field_pairs, 2)
+
+    def test_known_deferred_and_technical_classes_are_explicitly_classified(self):
+        for class_name in (
+            "Prestation",
+            "GlobalPrestation",
+            "BorneDigue",
+            "TalusDigue",
+            "RapportEtude",
+            "Organisme",
+            "Contact",
+        ):
+            self.assertEqual(rule_for(class_name).status, "NON_MIGREE")
+        for class_name in (
+            "PositionDocument",
+            "SystemeReperage",
+            "BookMark",
+            "SQLQuery",
+            "ModeleRapport",
+            "Utilisateur",
+        ):
+            self.assertEqual(rule_for(class_name).status, "TECHNIQUE_IGNORE")
+
+    def test_prestations_are_deferred_and_a_truly_new_class_stays_unknown(self):
+        documents = [
+            {
+                "_id": f"id-{class_name}",
+                "@class": f"fr.sirs.core.model.{class_name}",
+            }
+            for class_name in ("Prestation", "GlobalPrestation", "FutureClass")
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            result = diagnose_documents(
+                documents,
+                output_path=Path(directory) / "bilan.md",
+                source_database="test_source",
+            )
+        by_class = {
+            anomaly.source_class: anomaly
+            for anomaly in result.anomaly_register.active
+        }
+        for class_name in ("Prestation", "GlobalPrestation"):
+            self.assertEqual(by_class[class_name].category, "DEFERRED_FEATURE")
+            self.assertEqual(by_class[class_name].severity, "WARNING")
+            self.assertEqual(
+                by_class[class_name].correction_location, "NOT_APPLICABLE"
+            )
+        self.assertEqual(by_class["FutureClass"].category, "UNKNOWN_CLASS")
+        self.assertEqual(by_class["FutureClass"].severity, "ERROR")
 
     def test_unknown_reference_is_distinguished_from_unknown_business_class(self):
         with tempfile.TemporaryDirectory() as directory:

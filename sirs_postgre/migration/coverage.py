@@ -11,6 +11,11 @@ from uuid import UUID
 
 from sirs_postgre.source import CouchDBClient
 
+from .anomalies import (
+    AnomalyRegisterResult,
+    collect_anomalies,
+    update_anomaly_register,
+)
 from .amenagements import AMENAGEMENT_SOURCE_CLASSES
 from .core import CORE_SOURCE_CLASSES, prepare_core_migration
 from .ouvrages import OUVRAGE_SOURCE_CLASSES
@@ -75,6 +80,15 @@ class CoverageResult:
     ignored_field_pairs: int
     unanalysed_field_pairs: int
     direct_photos_unmigrated: int
+    anomaly_register: AnomalyRegisterResult
+
+    @property
+    def anomalies_json_path(self) -> Path:
+        return self.anomaly_register.json_path
+
+    @property
+    def anomalies_csv_path(self) -> Path:
+        return self.anomaly_register.csv_path
 
 
 def _fields(*names: str) -> frozenset[str]:
@@ -112,6 +126,41 @@ COVERAGE_REGISTRY: dict[str, CoverageRule] = {
     "PlanVegetation": CoverageRule("plans_gestion_vegetation", "PARTIELLE", BASE_FIELDS | _fields("libelle", "anneeDebut", "anneeFin"), comment="Plan migré ; planifications/traitements sans contenu opérationnel différés."),
     "ParcelleVegetation": CoverageRule("parcelles_gestion_vegetation, link_parcelles_gestion_troncons", "PARTIELLE", BASE_FIELDS | _fields("planId", "designation", "date_debut", "geometry", "linearId"), comment="Parcelle et lien explicite migrés ; champs historiques documentés séparément."),
 }
+
+# Classes métier SIRS identifiées mais laissées hors du périmètre courant.
+# Leur présence relève d'une fonctionnalité différée, pas d'une classe inconnue.
+for _class_name, _comment in {
+    "Prestation": "Différée jusqu'au futur modèle général des prestations.",
+    "GlobalPrestation": "Différée avec le futur modèle général des prestations.",
+    "BorneDigue": "Classe connue, explicitement hors du premier lot Ouvrages.",
+    "TalusDigue": "Composant patrimonial connu, non modélisé dans le périmètre courant.",
+    "RapportEtude": "Fonctionnalité documentaire connue, différée.",
+    "Organisme": "Acteur métier connu, différé jusqu'au bloc organismes/contacts.",
+    "Contact": "Acteur métier connu, différé jusqu'au bloc organismes/contacts.",
+}.items():
+    COVERAGE_REGISTRY[_class_name] = CoverageRule(
+        None,
+        "NON_MIGREE",
+        frozenset(),
+        comment=_comment,
+    )
+
+# Documents de support technique/UI connus et volontairement non migrés.
+# Ils restent visibles dans bilan.md mais ne produisent aucune anomalie actionnable.
+for _class_name, _comment in {
+    "PositionDocument": "Structure technique historique de positionnement.",
+    "SystemeReperage": "Système de repérage historique remplacé par les relations cibles.",
+    "BookMark": "État d'interface utilisateur sans destination métier cible.",
+    "SQLQuery": "Requête enregistrée technique sans destination métier cible.",
+    "ModeleRapport": "Modèle technique de génération de rapport.",
+    "Utilisateur": "Compte applicatif SIRS hors du modèle métier cible.",
+}.items():
+    COVERAGE_REGISTRY[_class_name] = CoverageRule(
+        None,
+        "TECHNIQUE_IGNORE",
+        frozenset(),
+        comment=_comment,
+    )
 
 _OUVRAGE_DESTINATIONS = "famille Ouvrages cible, observations, photos"
 for _class_name in OUVRAGE_SOURCE_CLASSES:
@@ -238,6 +287,8 @@ def diagnose_documents(
                 "comment": rule.comment,
                 "migrated": migrated_count,
                 "remaining": len(class_documents) - migrated_count,
+                "known": class_name in COVERAGE_REGISTRY,
+                "unanalysed": tuple(sorted(unanalysed)),
             }
         )
         if rule.status in {"MIGREE", "PARTIELLE"}:
@@ -283,6 +334,7 @@ def diagnose_documents(
         geometry_notes.append(f"  - `{class_name}` : {count}.")
 
     migration_warnings: list[str] = []
+    prepared_core = None
     try:
         supported_documents = {
             class_name: grouped.get(class_name, [])
@@ -297,6 +349,22 @@ def diagnose_documents(
         migration_warnings.append(
             f"Préparation complète impossible : {_escape(exc)}"
         )
+
+    anomalies_json_path = output_path.parent / "anomalies.json"
+    anomalies_csv_path = output_path.parent / "anomalies.csv"
+    anomaly_register = update_anomaly_register(
+        collect_anomalies(
+            documents,
+            source_database=source_database,
+            coverage_rows=rows,
+            prepared_core=prepared_core,
+        ),
+        json_path=anomalies_json_path,
+        csv_path=anomalies_csv_path,
+    )
+    active_anomalies = anomaly_register.active
+    anomaly_severities = anomaly_register.counts_by_severity
+    anomaly_families = anomaly_register.active_counts_by_family
 
     lines = [
         "# Bilan généré de couverture SIRS → PostgreSQL",
@@ -376,6 +444,20 @@ def diagnose_documents(
             ),
             "- Toute nouvelle classe ou tout nouveau champ absent du registre apparaît automatiquement comme non couvert.",
             "",
+            "## G. Registre détaillé des anomalies",
+            "",
+            f"- Anomalies actives : {len(active_anomalies)}",
+            f"- Anomalies de données actives (`DATA`) : {anomaly_families['DATA']}",
+            f"- Anomalies de couverture actives (`COVERAGE`) : {anomaly_families['COVERAGE']}",
+            "- Décisions de migration actives (`MIGRATION_DECISION`) : "
+            f"{anomaly_families['MIGRATION_DECISION']}",
+            f"- INFO : {anomaly_severities['INFO']}",
+            f"- WARNING : {anomaly_severities['WARNING']}",
+            f"- ERROR : {anomaly_severities['ERROR']}",
+            f"- BLOCKING : {anomaly_severities['BLOCKING']}",
+            f"- Registre JSON : `{anomalies_json_path.name}`",
+            f"- Export CSV : `{anomalies_csv_path.name}`",
+            "",
         ]
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -393,6 +475,7 @@ def diagnose_documents(
         ignored_field_pairs=ignored_fields,
         unanalysed_field_pairs=unanalysed_fields,
         direct_photos_unmigrated=direct_photos_unmigrated,
+        anomaly_register=anomaly_register,
     )
 
 
