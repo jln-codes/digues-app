@@ -41,7 +41,12 @@ sont opérationnels. Ils couvrent :
   `link_parcelles_gestion_troncons` ;
 - les observations généralisées et les photos exclusivement rattachées à une
   observation ;
-- le diagnostic de couverture CouchDB généré dans `audits/bilan.md`.
+- le diagnostic de couverture CouchDB généré dans `audits/bilan.md` ;
+- le registre persistant des anomalies dans `audits/anomalies.json` et
+  `audits/anomalies.csv`, avec distinction `DATA`, `COVERAGE` et
+  `MIGRATION_DECISION` ;
+- la détection du CRS global SIRS depuis le document CouchDB `$sirs`, avec
+  reprojection réelle vers `EPSG:3950` lorsque le CRS source diffère.
 
 Les objets métier provenant de CouchDB conservent leurs UUID historiques. Les
 insertions réalisées directement dans PostgreSQL ou QGIS peuvent omettre l'ID :
@@ -57,7 +62,8 @@ uniquement au mapping de migration.
 ## Installation
 
 Le projet nécessite Python 3.11 ou plus récent ainsi qu'un serveur PostgreSQL
-disposant de PostGIS et de `pgcrypto`.
+compatible disposant de PostGIS et de `pgcrypto`. Le développement courant est
+validé sur PostgreSQL 16.
 
 ```bash
 cd /home/julien/Projects/sirs-postgre
@@ -103,18 +109,20 @@ géométrie dans son vrai CRS puis applique `ST_Transform(..., 3950)`. Affecter
 simplement le SRID 3950 à des coordonnées exprimées dans un autre CRS donnerait
 une localisation fausse et n'est jamais utilisé comme transformation.
 
-Lorsque `$sirs.epsgCode` manque ou est invalide, un fallback explicite peut être
-configuré :
+Lorsque `$sirs.epsgCode` manque ou n'est pas exploitable, un fallback explicite
+peut être configuré :
 
 ```bash
 SIRS_SOURCE_SRID=2154
 ```
 
 La variable accepte aussi la forme `EPSG:2154`. Elle est normalement inutile
-pour une base SIRS correctement renseignée. Si la métadonnée et le fallback
-sont tous deux valides mais contradictoires, la migration est bloquée. Le champ
-objet historique `crsName` sert uniquement de contrôle de cohérence : il n'est
-jamais utilisé pour choisir le CRS source et son absence n'est pas une anomalie.
+pour une base SIRS correctement renseignée. Le fallback n'autorise jamais à
+masquer une contradiction : si `$sirs.epsgCode`, `crsWkt`, `proj4` ou
+`SIRS_SOURCE_SRID` apportent des informations incompatibles, la migration est
+bloquée. Le champ objet historique `crsName` sert uniquement de contrôle de
+cohérence : il n'est jamais utilisé pour choisir le CRS source et son absence
+n'est pas une anomalie.
 
 ## Commandes principales
 
@@ -207,7 +215,9 @@ et date sous des observations synthétiques déterministes. Après une migration
 réussie, le bilan de couverture est automatiquement régénéré ; une erreur du
 diagnostic rend la commande explicitement incomplète.
 Les insertions et validations s'exécutent dans une transaction PostgreSQL unique :
-une erreur bloquante entraîne un rollback complet.
+une erreur bloquante entraîne un rollback complet. Le CRS source est résolu une
+seule fois pour l'exécution puis partagé par les modules de migration ; les
+géométries ne sont reprojetées que si ce CRS diffère de `EPSG:3950`.
 
 La migration refuse une cible contenant déjà des données et n'effectue aucun
 UPSERT. Il faut alors rejouer le cycle `recreate`, `init-schema`,
@@ -219,13 +229,18 @@ UPSERT. Il faut alors rejouer le cycle `recreate`, `init-schema`,
 sirs-postgre diagnose
 ```
 
-Cette commande indépendante lit tous les documents CouchDB et génère
+Cette commande indépendante lit les documents CouchDB et génère
 `audits/bilan.md`, `audits/anomalies.json` et `audits/anomalies.csv`. Elle
 découvre les valeurs `@class` et les clés JSON réelles, les compare au registre
 de couverture et distingue `MIGREE`, `PARTIELLE`, `NON_MIGREE`,
 `TECHNIQUE_IGNORE` et `REFERENTIEL_IGNORE`. Une classe ou un champ inconnu dans
 une autre base apparaît donc automatiquement dans le bilan et, lorsqu'il est
 actionnable, dans le registre des anomalies.
+
+Le bilan contient aussi une synthèse CRS : CRS source détecté, origine de cette
+détection, CRS cible et nécessité éventuelle d'une transformation. Les codes
+EPSG sont validés contre PostGIS avant d'être utilisés pour une migration
+géométrique.
 
 ## Diagnostic et registre des anomalies
 
@@ -549,16 +564,22 @@ périmé.
 
 ## Tests
 
-Les tests unitaires emploient des doubles de connexion et ne nécessitent pas de
-base CouchDB ou PostgreSQL réelle :
+La suite principale s'exécute avec :
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Ils couvrent notamment la configuration, les diagnostics, la protection de
-`recreate`, le DDL, les transformations CouchDB, l'atomicité et les validations
-de migration.
+La majorité des tests utilisent des doubles de connexion et ne nécessitent pas
+de base CouchDB réelle. Un test d'intégration CRS utilise toutefois PostGIS pour
+vérifier qu'une reprojection modifie réellement les coordonnées et qu'un aller-
+retour vers le CRS d'origine reste cohérent. Lorsque PostgreSQL/PostGIS n'est pas
+accessible, ce test peut être ignoré ; dans l'environnement de développement
+courant, il est exécuté.
+
+Les tests couvrent notamment la configuration, les diagnostics, la protection
+de `recreate`, le DDL, les transformations CouchDB, l'atomicité, le registre
+d'anomalies, la résolution du CRS source et les validations de migration.
 
 ## Structure du code
 
