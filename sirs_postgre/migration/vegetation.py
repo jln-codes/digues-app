@@ -15,6 +15,8 @@ import re
 from typing import Any
 from uuid import UUID
 
+from .crs import CRSInfo, geometry_sql
+
 from .source_overrides import SourceMigrationOverrides, get_source_overrides
 
 
@@ -863,7 +865,7 @@ INSERT_STATEMENTS.update(
         TARGET_PARCELLE_TABLE: f"""
             INSERT INTO public.{TARGET_PARCELLE_TABLE}
                 (id, plan_id, designation, date_debut, geometry, valid)
-            VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s)
+            VALUES (%s, %s, %s, %s, {geometry_sql()}, %s)
         """,
         TARGET_LINK_TABLE: f"""
             INSERT INTO public.{TARGET_LINK_TABLE}
@@ -876,19 +878,26 @@ INSERT_STATEMENTS.update(
                  date_debut, etat_sanitaire_id, classe_hauteur_id,
                  classe_diametre_id, geometry, parcelle_gestion_id, valid)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    ST_GeomFromText(%s, 3950), %s, %s)
+                    {geometry_sql()}, %s, %s)
         """,
     }
 )
 
 
 def insert_prepared_vegetation(
-    cursor: Any, prepared: PreparedVegetationMigration
+    cursor: Any,
+    prepared: PreparedVegetationMigration,
+    *,
+    crs_info: CRSInfo | None = None,
 ) -> None:
     """Insère le bloc Végétation dans la transaction globale."""
 
     if not prepared.enabled:
         return
+    statements = dict(INSERT_STATEMENTS)
+    expression = geometry_sql(crs_info)
+    for table in (TARGET_PARCELLE_TABLE, TARGET_VEGETATION_TABLE):
+        statements[table] = statements[table].replace(geometry_sql(), expression)
     for table in REFERENCE_TABLES:
         cursor.executemany(
             INSERT_STATEMENTS[table],
@@ -907,7 +916,7 @@ def insert_prepared_vegetation(
         )
     if prepared.parcelles:
         cursor.executemany(
-            INSERT_STATEMENTS[TARGET_PARCELLE_TABLE],
+            statements[TARGET_PARCELLE_TABLE],
             [
                 (
                     row.id,
@@ -927,7 +936,7 @@ def insert_prepared_vegetation(
         )
     if prepared.vegetation:
         cursor.executemany(
-            INSERT_STATEMENTS[TARGET_VEGETATION_TABLE],
+            statements[TARGET_VEGETATION_TABLE],
             [
                 (
                     row.id,

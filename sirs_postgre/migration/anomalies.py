@@ -18,6 +18,7 @@ from uuid import UUID
 
 from .source_overrides import get_source_overrides
 from .vegetation import KEEP_NULL, MANUAL_REVIEW, inspect_wkt
+from .crs import CRSInfo, CRSResolutionError, crs_hint_is_consistent
 
 if TYPE_CHECKING:
     from .core import PreparedCoreMigration
@@ -47,6 +48,10 @@ CATEGORIES = frozenset(
         "MANUAL_REVIEW",
         "SOURCE_OVERRIDE",
         "DEFERRED_FEATURE",
+        "MISSING_SOURCE_CRS",
+        "INVALID_SOURCE_CRS",
+        "CONFLICTING_SOURCE_CRS",
+        "OBJECT_CRS_HINT_CONFLICT",
     }
 )
 SEVERITIES = frozenset({"INFO", "WARNING", "ERROR", "BLOCKING"})
@@ -77,6 +82,10 @@ FAMILY_BY_CATEGORY = {
     "UNMIGRATED_MEDIA": "DATA",
     "PHOTO_WITHOUT_DATE": "DATA",
     "MANUAL_REVIEW": "DATA",
+    "MISSING_SOURCE_CRS": "DATA",
+    "INVALID_SOURCE_CRS": "DATA",
+    "CONFLICTING_SOURCE_CRS": "DATA",
+    "OBJECT_CRS_HINT_CONFLICT": "DATA",
     "UNKNOWN_CLASS": "COVERAGE",
     "PARTIALLY_MIGRATED_CLASS": "COVERAGE",
     "UNKNOWN_FIELD": "COVERAGE",
@@ -106,6 +115,10 @@ PREFIX_BY_CATEGORY = {
     "PHOTO_WITHOUT_DATE": "MEDIA",
     "SOURCE_OVERRIDE": "OVERRIDE",
     "DEFERRED_FEATURE": "DEFER",
+    "MISSING_SOURCE_CRS": "CRS",
+    "INVALID_SOURCE_CRS": "CRS",
+    "CONFLICTING_SOURCE_CRS": "CRS",
+    "OBJECT_CRS_HINT_CONFLICT": "CRS",
 }
 
 REGISTER_FIELDS = (
@@ -390,6 +403,8 @@ def collect_anomalies(
     source_database: str | None,
     coverage_rows: Sequence[Mapping[str, Any]],
     prepared_core: "PreparedCoreMigration | None" = None,
+    crs_info: CRSInfo | None = None,
+    crs_error: CRSResolutionError | None = None,
 ) -> tuple[Anomaly, ...]:
     """Collecte des constats actionnables sans modifier les données."""
 
@@ -399,6 +414,47 @@ def collect_anomalies(
         class_name = str(document.get("@class") or "<SANS_@class>").rsplit(".", 1)[-1]
         grouped.setdefault(class_name, []).append(document)
     coverage_by_class = {str(row["class"]): row for row in coverage_rows}
+
+    if crs_error is not None:
+        anomalies.append(
+            Anomaly.create(
+                category=crs_error.category,
+                severity="BLOCKING",
+                source_database=source_database,
+                source_class="$sirs",
+                source_id="$sirs",
+                source_field="epsgCode",
+                message=str(crs_error),
+                suggested_action=(
+                    "Corriger $sirs.epsgCode dans CouchDB ou configurer "
+                    "explicitement SIRS_SOURCE_SRID."
+                ),
+                correction_location="EITHER",
+                expected_value="code EPSG résolvable et non contradictoire",
+            )
+        )
+    elif crs_info is not None:
+        for class_name, class_documents in grouped.items():
+            for document in class_documents:
+                hint = document.get("crsName")
+                if hint in (None, "") or crs_hint_is_consistent(hint, crs_info):
+                    continue
+                anomalies.append(
+                    Anomaly.create(
+                        category="OBJECT_CRS_HINT_CONFLICT",
+                        severity="WARNING",
+                        source_database=source_database,
+                        source_class=class_name,
+                        source_id=_normal_uuid(document.get("_id")) or str(document.get("_id") or ""),
+                        source_field="crsName",
+                        message="Le crsName objet contredit le CRS global sans le remplacer.",
+                        details={"authority": crs_info.source},
+                        suggested_action="Vérifier le contexte de saisie historique de cet objet.",
+                        correction_location="COUCHDB",
+                        detected_value=hint,
+                        expected_value=f"indice compatible avec EPSG:{crs_info.source_srid}",
+                    )
+                )
 
     for row in coverage_rows:
         class_name = str(row["class"])

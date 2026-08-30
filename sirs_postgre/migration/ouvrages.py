@@ -11,6 +11,8 @@ import re
 from typing import Any
 from uuid import UUID
 
+from .crs import CRSInfo, geometry_sql
+
 
 OUVRAGE_SOURCE_CLASSES = {
     "OuvrageParticulier": "fr.sirs.core.model.OuvrageParticulier",
@@ -533,26 +535,33 @@ INSERT_STATEMENTS.update(
             INSERT INTO public.{table}
                 (id, type_id, designation, commentaire, date_debut,
                  geometry, troncon_id, valid)
-            VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s, %s)
+            VALUES (%s, %s, %s, %s, %s, {geometry_sql()}, %s, %s)
         """
         for table in EXPECTED_BUSINESS_COUNTS
     }
 )
-INSERT_STATEMENTS["ouvrages_hydrauliques"] = """
+INSERT_STATEMENTS["ouvrages_hydrauliques"] = f"""
     INSERT INTO public.ouvrages_hydrauliques
         (id, type_id, designation, commentaire, date_debut,
          geometry, troncon_id, amenagement_hydraulique_id, valid)
-    VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s, %s, %s)
+    VALUES (%s, %s, %s, %s, %s, {geometry_sql()}, %s, %s, %s)
 """
 
 
 def insert_prepared_ouvrages(
-    cursor: Any, prepared: PreparedOuvragesMigration
+    cursor: Any,
+    prepared: PreparedOuvragesMigration,
+    *,
+    crs_info: CRSInfo | None = None,
 ) -> None:
     """Insère le lot dans la transaction du noyau appelant."""
 
     if not prepared.enabled:
         return
+    statements = dict(INSERT_STATEMENTS)
+    expression = geometry_sql(crs_info)
+    for table in EXPECTED_BUSINESS_COUNTS:
+        statements[table] = statements[table].replace(geometry_sql(), expression)
     for table, rows in prepared.references.items():
         cursor.executemany(
             INSERT_STATEMENTS[table],
@@ -590,6 +599,6 @@ def insert_prepared_ouvrages(
                     for row in rows
                 ]
             cursor.executemany(
-                INSERT_STATEMENTS[table],
+                statements[table],
                 values,
             )

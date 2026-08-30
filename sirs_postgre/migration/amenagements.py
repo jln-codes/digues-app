@@ -10,6 +10,8 @@ import re
 from typing import Any
 from uuid import UUID
 
+from .crs import CRSInfo, geometry_sql
+
 from .ouvrages import (
     OuvrageRow,
     PreparedOuvragesMigration,
@@ -405,7 +407,7 @@ INSERT_STATEMENTS = {
     TARGET_AMENAGEMENT_TABLE: f"""
         INSERT INTO public.{TARGET_AMENAGEMENT_TABLE}
             (id, type_id, designation, date_debut, geometry, valid)
-        VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s)
+        VALUES (%s, %s, %s, %s, {geometry_sql()}, %s)
     """,
     TARGET_LINK_TABLE: f"""
         INSERT INTO public.{TARGET_LINK_TABLE}
@@ -416,12 +418,19 @@ INSERT_STATEMENTS = {
 
 
 def insert_prepared_amenagements(
-    cursor: Any, prepared: PreparedAmenagementsMigration
+    cursor: Any,
+    prepared: PreparedAmenagementsMigration,
+    *,
+    crs_info: CRSInfo | None = None,
 ) -> None:
     """Insère le bloc dans la transaction globale, avant les ouvrages associés."""
 
     if not prepared.enabled:
         return
+    statements = dict(INSERT_STATEMENTS)
+    statements[TARGET_AMENAGEMENT_TABLE] = statements[
+        TARGET_AMENAGEMENT_TABLE
+    ].replace(geometry_sql(), geometry_sql(crs_info))
     cursor.executemany(
         INSERT_STATEMENTS[TARGET_REFERENCE_TABLE],
         [
@@ -431,7 +440,7 @@ def insert_prepared_amenagements(
     )
     if prepared.amenagements:
         cursor.executemany(
-            INSERT_STATEMENTS[TARGET_AMENAGEMENT_TABLE],
+            statements[TARGET_AMENAGEMENT_TABLE],
             [
                 (
                     row.id,

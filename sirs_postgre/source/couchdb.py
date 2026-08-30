@@ -117,6 +117,17 @@ class CouchDBSourceStatus:
     document_count: int | None
 
 
+@dataclass(frozen=True)
+class CouchDBDatabaseInfo:
+    """Métadonnées globales SIRS portées par le document CouchDB ``$sirs``."""
+
+    source_database: str
+    epsg_code: str | int | None
+    crs_wkt: str | None
+    proj4: str | None
+    document_found: bool = True
+
+
 class CouchDBClient:
     """Façade HTTP injectable, sans aucune opération d'écriture."""
 
@@ -163,6 +174,26 @@ class CouchDBClient:
 
     def get(self, document_id: str) -> Document:
         return self._request("GET", quote(document_id, safe="")).json()
+
+    def get_database_info(self) -> CouchDBDatabaseInfo:
+        """Lit l'unique métadonnée CRS globale de la base, sans fallback objet."""
+
+        try:
+            document = self.get("$sirs")
+        except DocumentNotFound:
+            return CouchDBDatabaseInfo(
+                source_database=self.config.database,
+                epsg_code=None,
+                crs_wkt=None,
+                proj4=None,
+                document_found=False,
+            )
+        return CouchDBDatabaseInfo(
+            source_database=self.config.database,
+            epsg_code=document.get("epsgCode"),
+            crs_wkt=document.get("crsWkt"),
+            proj4=document.get("proj4"),
+        )
 
     def get_attachment(self, document_id: str, attachment_name: str) -> bytes:
         path = f"{quote(document_id, safe='')}/{quote(attachment_name, safe='')}"

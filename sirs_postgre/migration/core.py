@@ -21,6 +21,7 @@ from .amenagements import (
     insert_prepared_amenagements,
     prepare_amenagements_migration,
 )
+from .crs import CRSInfo, resolve_source_crs, validate_crs, geometry_sql
 from .ouvrages import (
     OUVRAGE_SOURCE_CLASSES,
     PreparedOuvragesMigration,
@@ -90,7 +91,7 @@ CORE_FIELD_MAPPINGS = {
         "_id → UUID → id",
         "digueId → UUID vérifié → digue_id",
         "libelle → texte inchangé → libelle",
-        "geometry WKT LINESTRING → ST_GeomFromText(..., 3950) → geometry",
+        "geometry WKT LINESTRING + CRS global → assignation/reprojection centralisée → geometry EPSG:3950",
         "valid → booléen inchangé → valid",
     ),
     "desordres": (
@@ -99,7 +100,7 @@ CORE_FIELD_MAPPINGS = {
         "categorieDesordreId → contrôle de cohérence uniquement, non stocké",
         "designation/commentaire → textes inchangés → colonnes homonymes",
         "date_debut/date_fin ISO → DATE → colonnes homonymes",
-        "positionDebut/positionFin → POINT ou LINESTRING SRID 3950 → geometry",
+        "positionDebut/positionFin + CRS global → POINT ou LINESTRING reprojeté en 3950 → geometry",
         "valid → booléen inchangé → valid",
         "geometry source Polygon valide → conservée ; autres formes historiques → positions",
     ),
@@ -131,7 +132,7 @@ CORE_FIELD_MAPPINGS = {
         "type source connu → mapping explicite ; absent/inconnu → IND + warning",
         "override nommé par base source → type provisoire isolé",
         "designation/date_debut/valid → colonnes homonymes",
-        "geometry WKT POLYGON → ST_GeomFromText(..., 3950) → geometry",
+        "geometry WKT POLYGON + CRS global → geometry EPSG:3950",
     ),
     "link_amenagements_troncons": (
         "AmenagementHydraulique._id → amenagement_hydraulique_id",
@@ -152,7 +153,7 @@ CORE_FIELD_MAPPINGS = {
     ),
     "parcelles_gestion_vegetation": (
         "PlanVegetation.planId → plan_id nullable vérifié",
-        "geometry WKT LINESTRING → ST_GeomFromText(..., 3950)",
+        "geometry WKT LINESTRING + CRS global → geometry EPSG:3950",
         "linearId non stocké directement : relation portée par une table de lien",
     ),
     "link_parcelles_gestion_troncons": (
@@ -293,6 +294,7 @@ class PreparedCoreMigration:
 class CoreMigrationReport:
     prepared: PreparedCoreMigration
     validation: CoreValidationResult
+    crs_info: CRSInfo | None = None
 
 
 def couchdb_id_to_uuid(value: Any, *, context: str = "identifiant") -> UUID:
@@ -812,15 +814,15 @@ INSERT_STATEMENTS = {
         INSERT INTO public.digues (id, systeme_endiguement_id, libelle, valid)
         VALUES (%s, %s, %s, %s)
     """,
-    "troncons": """
+    "troncons": f"""
         INSERT INTO public.troncons (id, digue_id, libelle, geometry, valid)
-        VALUES (%s, %s, %s, ST_GeomFromText(%s, 3950), %s)
+        VALUES (%s, %s, %s, {geometry_sql()}, %s)
     """,
-    "desordres": """
+    "desordres": f"""
         INSERT INTO public.desordres
             (id, type_desordre_id, designation, commentaire,
              date_debut, date_fin, geometry, valid)
-        VALUES (%s, %s, %s, %s, %s, %s, ST_GeomFromText(%s, 3950), %s)
+        VALUES (%s, %s, %s, %s, %s, %s, {geometry_sql()}, %s)
     """,
     "link_desordres_troncons": """
         INSERT INTO public.link_desordres_troncons (desordre_id, troncon_id)
@@ -855,7 +857,17 @@ def ensure_target_empty(cursor: Any) -> None:
         )
 
 
-def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
+def _insert_prepared_core(
+    cursor: Any,
+    prepared: PreparedCoreMigration,
+    crs_info: CRSInfo | None = None,
+) -> None:
+    statements = dict(INSERT_STATEMENTS)
+    geometry_expression = geometry_sql(crs_info)
+    for table in ("troncons", "desordres"):
+        statements[table] = statements[table].replace(
+            geometry_sql(), geometry_expression
+        )
     batches = (
         (
             "ref_categories_desordre",
@@ -913,10 +925,10 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
     )
     for table, rows in batches:
         if rows:
-            cursor.executemany(INSERT_STATEMENTS[table], rows)
-    insert_prepared_amenagements(cursor, prepared.amenagements)
-    insert_prepared_ouvrages(cursor, prepared.ouvrages)
-    insert_prepared_vegetation(cursor, prepared.vegetation)
+            cursor.executemany(statements[table], rows)
+    insert_prepared_amenagements(cursor, prepared.amenagements, crs_info=crs_info)
+    insert_prepared_ouvrages(cursor, prepared.ouvrages, crs_info=crs_info)
+    insert_prepared_vegetation(cursor, prepared.vegetation, crs_info=crs_info)
     observation_rows = [
         (
             row.id,
@@ -930,7 +942,7 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
         for row in prepared.observations
     ]
     if observation_rows:
-        cursor.executemany(INSERT_STATEMENTS["observations"], observation_rows)
+        cursor.executemany(statements["observations"], observation_rows)
     photo_rows = [
         (
             row.id,
@@ -943,7 +955,7 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
         for row in prepared.photos
     ]
     if photo_rows:
-        cursor.executemany(INSERT_STATEMENTS["photos"], photo_rows)
+        cursor.executemany(statements["photos"], photo_rows)
 
 
 def _default_connector() -> Callable[..., Any]:
@@ -959,6 +971,7 @@ def execute_core_migration(
     config: PostgreSQLConfig | None = None,
     *,
     connector: Callable[..., Any] | None = None,
+    crs_info: CRSInfo | None = None,
 ) -> CoreValidationResult:
     """Insère et valide tout le noyau dans une transaction PostgreSQL unique."""
 
@@ -967,8 +980,10 @@ def execute_core_migration(
     try:
         with connect(**selected.connect_kwargs(autocommit=False)) as connection:
             with connection.cursor() as cursor:
+                if crs_info is not None:
+                    validate_crs(cursor, crs_info)
                 ensure_target_empty(cursor)
-                _insert_prepared_core(cursor, prepared)
+                _insert_prepared_core(cursor, prepared, crs_info)
                 return validate_core_migration(
                     cursor,
                     expected_counts=prepared.expected_counts,
@@ -1024,6 +1039,7 @@ def migrate_core(
     """Lit CouchDB, transforme, puis migre atomiquement vers PostgreSQL."""
 
     client = source_client or connect_couchdb()
+    crs_info = resolve_source_crs(client.get_database_info())
     documents = fetch_core_documents(client)
     prepared = prepare_core_migration(
         documents,
@@ -1033,5 +1049,10 @@ def migrate_core(
         prepared,
         target_config,
         connector=connector,
+        crs_info=crs_info,
     )
-    return CoreMigrationReport(prepared=prepared, validation=validation)
+    return CoreMigrationReport(
+        prepared=prepared,
+        validation=validation,
+        crs_info=crs_info,
+    )

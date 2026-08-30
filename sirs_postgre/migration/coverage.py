@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID
 
 from sirs_postgre.source import CouchDBClient
+from sirs_postgre.source import CouchDBDatabaseInfo
 
 from .anomalies import (
     AnomalyRegisterResult,
@@ -18,6 +19,12 @@ from .anomalies import (
 )
 from .amenagements import AMENAGEMENT_SOURCE_CLASSES
 from .core import CORE_SOURCE_CLASSES, prepare_core_migration
+from .crs import (
+    CRSInfo,
+    CRSResolutionError,
+    resolve_source_crs,
+    validate_crs_with_postgis,
+)
 from .ouvrages import OUVRAGE_SOURCE_CLASSES
 from .vegetation import VEGETATION_SOURCE_CLASSES, prepare_vegetation_migration
 
@@ -81,6 +88,8 @@ class CoverageResult:
     unanalysed_field_pairs: int
     direct_photos_unmigrated: int
     anomaly_register: AnomalyRegisterResult
+    crs_info: CRSInfo | None = None
+    crs_error: str | None = None
 
     @property
     def anomalies_json_path(self) -> Path:
@@ -233,10 +242,47 @@ def diagnose_documents(
     *,
     output_path: Path = REPORT_PATH,
     source_database: str | None = None,
+    validate_postgis: bool = False,
 ) -> CoverageResult:
     grouped: defaultdict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for document in documents:
         grouped[short_class(document)].append(document)
+
+    database_document = next(
+        (document for document in documents if document.get("_id") == "$sirs"),
+        None,
+    )
+    database_info = CouchDBDatabaseInfo(
+        source_database=source_database or "",
+        epsg_code=database_document.get("epsgCode") if database_document else None,
+        crs_wkt=database_document.get("crsWkt") if database_document else None,
+        proj4=database_document.get("proj4") if database_document else None,
+        document_found=database_document is not None,
+    )
+    crs_info: CRSInfo | None = None
+    crs_resolution_error: CRSResolutionError | None = None
+    try:
+        crs_info = resolve_source_crs(database_info)
+        if validate_postgis:
+            validate_crs_with_postgis(crs_info)
+    except CRSResolutionError as exc:
+        crs_resolution_error = exc
+        crs_info = None
+    except Exception:
+        # Le diagnostic de couverture reste utilisable avant création de la
+        # cible. La résolution PostGIS sera impérativement répétée par la
+        # migration transactionnelle avant toute insertion.
+        pass
+    crs_names = sorted(
+        {
+            str(document["crsName"])
+            for document in documents
+            if document.get("crsName") not in (None, "")
+        }
+    )
+    crs_name_count = sum(
+        document.get("crsName") not in (None, "") for document in documents
+    )
 
     rows: list[dict[str, Any]] = []
     status_counts: Counter[str] = Counter()
@@ -358,6 +404,8 @@ def diagnose_documents(
             source_database=source_database,
             coverage_rows=rows,
             prepared_core=prepared_core,
+            crs_info=crs_info,
+            crs_error=crs_resolution_error,
         ),
         json_path=anomalies_json_path,
         csv_path=anomalies_csv_path,
@@ -458,6 +506,28 @@ def diagnose_documents(
             f"- Registre JSON : `{anomalies_json_path.name}`",
             f"- Export CSV : `{anomalies_csv_path.name}`",
             "",
+            "## H. CRS",
+            "",
+            *(
+                [
+                    f"- CRS source détecté : `EPSG:{crs_info.source_srid}`",
+                    f"- Origine : `{crs_info.source}`",
+                    f"- CRS cible : `EPSG:{crs_info.target_srid}`",
+                    "- Transformation nécessaire : "
+                    f"{'oui' if crs_info.transformation_required else 'non'}",
+                    "- Conflits : aucun",
+                ]
+                if crs_info is not None
+                else [
+                    "- CRS source détecté : aucun",
+                    f"- Conflit bloquant : {_escape(crs_resolution_error)}",
+                    "- CRS cible : `EPSG:3950`",
+                ]
+            ),
+            f"- Documents avec `crsName` : {crs_name_count}",
+            "- Valeurs distinctes `crsName` : "
+            + (", ".join(f"`{value}`" for value in crs_names) or "aucune"),
+            "",
         ]
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -476,6 +546,8 @@ def diagnose_documents(
         unanalysed_field_pairs=unanalysed_fields,
         direct_photos_unmigrated=direct_photos_unmigrated,
         anomaly_register=anomaly_register,
+        crs_info=crs_info,
+        crs_error=str(crs_resolution_error) if crs_resolution_error else None,
     )
 
 
@@ -488,4 +560,5 @@ def generate_coverage_report(
         client.all_documents(),
         output_path=output_path,
         source_database=client.config.database,
+        validate_postgis=True,
     )

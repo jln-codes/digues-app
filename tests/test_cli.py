@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 from sirs_postgre.cli import SOURCE_CLASSES, main
 from sirs_postgre.migration import TargetNotEmptyError
-from sirs_postgre.source import CouchDBConfig, CouchDBSourceStatus
+from sirs_postgre.source import CouchDBConfig, CouchDBDatabaseInfo, CouchDBSourceStatus
 from sirs_postgre.target import (
     PostgreSQLConfig,
     PostgreSQLRecreateStatus,
@@ -37,6 +37,14 @@ class FakeSourceClient:
             SOURCE_CLASSES["TronconDigue"]: 104,
             SOURCE_CLASSES["Desordre"]: 1_598,
         }[class_name]
+
+    def get_database_info(self):
+        return CouchDBDatabaseInfo(
+            source_database="cabbalr",
+            epsg_code="EPSG:3950",
+            crs_wkt='PROJCS["RGF93 / CC50",AUTHORITY["EPSG","3950"]]',
+            proj4="+proj=lcc",
+        )
 
 
 class CLITest(unittest.TestCase):
@@ -255,6 +263,9 @@ class CLITest(unittest.TestCase):
         text = output.getvalue()
         self.assertIn("SystemeEndiguement: 9", text)
         self.assertIn("Desordre: 1598", text)
+        self.assertIn("Source CRS: EPSG:3950", text)
+        self.assertIn("Target CRS: EPSG:3950", text)
+        self.assertIn("Transformation: non", text)
         self.assertIn("Cible PostgreSQL", text)
         self.assertIn("systemes: présente", text)
         self.assertIn("photos: présente", text)

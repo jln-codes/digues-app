@@ -19,6 +19,7 @@ from .migration.anomalies import (
     resolve_anomaly,
 )
 from .migration.coverage import generate_coverage_report
+from .migration.crs import CRSInfo, resolve_source_crs
 from .source import connect_couchdb
 from .target import (
     PostgreSQLConfig,
@@ -93,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _check_source(profile: str | None, database: str | None) -> None:
+def _check_source(profile: str | None, database: str | None) -> CRSInfo:
     client = connect_couchdb(profile=profile, database=database)
     try:
         status = client.check_connection()
@@ -114,6 +115,14 @@ def _check_source(profile: str | None, database: str | None) -> None:
         print("[INFO] CouchDB : authentification non configurée ; connexion réussie")
     for label, class_name in SOURCE_CLASSES.items():
         print(f"     {label}: {client.count_by_class(class_name)}")
+    crs_info = resolve_source_crs(client.get_database_info())
+    print(f"Source CRS: {crs_info.source_label}")
+    print(f"Target CRS: EPSG:{crs_info.target_srid}")
+    print(
+        "Transformation: "
+        f"{'oui' if crs_info.transformation_required else 'non'}"
+    )
+    return crs_info
 
 
 def _check_target() -> None:
@@ -211,6 +220,14 @@ def run_migrate_core() -> int:
         return 1
 
     prepared = report.prepared
+    crs_info = getattr(report, "crs_info", None)
+    if crs_info is not None:
+        print(f"Source CRS: {crs_info.source_label}")
+        print(f"Target CRS: EPSG:{crs_info.target_srid}")
+        print(
+            "Transformation: "
+            f"{'oui' if crs_info.transformation_required else 'non'}"
+        )
     geometries = prepared.desordre_geometry_counts
     print("RefCategorieDesordre :")
     print(f"  source: {len(prepared.categories_desordre)}")
@@ -352,6 +369,17 @@ def run_diagnose(args: argparse.Namespace) -> int:
         print(f"[ERREUR] Diagnostic de couverture : {exc}")
         return 1
     counts = result.anomaly_register.counts_by_severity
+    crs_info = getattr(result, "crs_info", None)
+    crs_error = getattr(result, "crs_error", None)
+    if crs_info is not None:
+        print(f"Source CRS: {crs_info.source_label}")
+        print(f"Target CRS: EPSG:{crs_info.target_srid}")
+        print(
+            "Transformation: "
+            f"{'oui' if crs_info.transformation_required else 'non'}"
+        )
+    elif crs_error:
+        print(f"CRS: erreur bloquante — {crs_error}")
     print(f"Anomalies actives : {len(result.anomaly_register.active)}")
     for severity in ("INFO", "WARNING", "ERROR", "BLOCKING"):
         print(f"{severity} : {counts[severity]}")

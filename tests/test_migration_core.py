@@ -10,9 +10,11 @@ from sirs_postgre.migration.core import (
     desordre_geometry_from_positions,
     desordre_geometry_from_source,
     execute_core_migration,
+    _insert_prepared_core,
     prepare_core_migration,
     validate_troncon_wkt,
 )
+from sirs_postgre.migration.crs import CRSInfo
 from sirs_postgre.target.schema import EXPECTED_TABLES
 
 
@@ -376,6 +378,23 @@ class CoreTransformationTest(unittest.TestCase):
                 connector=lambda **_kwargs: connection,
             )
         self.assertIs(connection.rolled_back, True)
+
+    def test_all_core_geometry_inserts_use_shared_reprojection_expression(self):
+        prepared = prepare_core_migration(source_fixture())
+        cursor = FakeMigrationCursor([])
+        _insert_prepared_core(cursor, prepared, CRSInfo(source_srid=2154))
+        geometry_queries = [
+            " ".join(query.split())
+            for query, _rows in cursor.inserted_batches
+            if "public.troncons" in query or "public.desordres" in query
+        ]
+        self.assertEqual(len(geometry_queries), 2)
+        self.assertTrue(
+            all(
+                "ST_Transform(ST_GeomFromText(%s, 2154), 3950)" in query
+                for query in geometry_queries
+            )
+        )
 
     def test_invalid_reference_is_blocking(self):
         documents = copy.deepcopy(source_fixture())

@@ -83,7 +83,25 @@ class CouchDBInfrastructureTest(unittest.TestCase):
         self.assertEqual(content, b"photo")
         self.assertTrue(session.calls[0][1].endswith("/doc%2F1/photos%2Fphoto%201.jpg"))
 
+    def test_database_info_reads_the_global_sirs_document(self):
+        client, session = self.make_client(
+            [
+                FakeResponse(
+                    {
+                        "_id": "$sirs",
+                        "epsgCode": "EPSG:3950",
+                        "crsWkt": "PROJCS[\"RGF93 / CC50\"]",
+                        "proj4": "+proj=lcc",
+                    }
+                )
+            ]
+        )
+        info = client.get_database_info()
+        self.assertEqual(info.source_database, "sirs test")
+        self.assertEqual(info.epsg_code, "EPSG:3950")
+        self.assertIn("RGF93 / CC50", info.crs_wkt)
+        self.assertTrue(session.calls[0][1].endswith("/%24sirs"))
+
 
 if __name__ == "__main__":
     unittest.main()
-

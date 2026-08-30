@@ -90,6 +90,32 @@ La connexion PostgreSQL peut être définie par les paramètres séparés
 `recreate` est configurable avec `SIRS_POSTGRE_ADMIN_DATABASE` et vaut
 `postgres` par défaut.
 
+### Gestion des systèmes de coordonnées
+
+SIRS Digues stocke le CRS global de chaque base CouchDB dans le document
+`$sirs`, notamment dans `epsgCode`. Le migrateur utilise cette valeur comme
+autorité, vérifie que le code est résolvable par PostGIS, puis standardise les
+géométries dans le CRS cible fixe `EPSG:3950`.
+
+Si le CRS source est déjà `EPSG:3950`, le WKT est inséré avec ce SRID sans
+reprojection. Si le CRS source diffère, le migrateur construit d'abord la
+géométrie dans son vrai CRS puis applique `ST_Transform(..., 3950)`. Affecter
+simplement le SRID 3950 à des coordonnées exprimées dans un autre CRS donnerait
+une localisation fausse et n'est jamais utilisé comme transformation.
+
+Lorsque `$sirs.epsgCode` manque ou est invalide, un fallback explicite peut être
+configuré :
+
+```bash
+SIRS_SOURCE_SRID=2154
+```
+
+La variable accepte aussi la forme `EPSG:2154`. Elle est normalement inutile
+pour une base SIRS correctement renseignée. Si la métadonnée et le fallback
+sont tous deux valides mais contradictoires, la migration est bloquée. Le champ
+objet historique `crsName` sert uniquement de contrôle de cohérence : il n'est
+jamais utilisé pour choisir le CRS source et son absence n'est pas une anomalie.
+
 ## Commandes principales
 
 Cycle complet actuel :
@@ -435,7 +461,8 @@ les FK, les identifiants ou les validations annule la migration.
 ### Tronçons
 
 `troncons.geometry` utilise `geometry(LineString, 3950)`. Le WKT source est
-validé puis inséré avec le SRID 3950, sans modification ni reprojection.
+validé, associé au CRS global détecté dans `$sirs`, puis reprojeté vers 3950
+uniquement lorsque le CRS source diffère.
 
 ### Désordres
 
@@ -548,6 +575,7 @@ sirs_postgre/
     ├── amenagements.py     # aménagements hydrauliques
     ├── anomalies.py        # collecte, historique et exports JSON/CSV
     ├── coverage.py         # registre et bilan de couverture CouchDB réel
+    ├── crs.py              # détection, validation et reprojection CRS
     ├── media.py            # normalisation objet → observation → photo
     ├── ouvrages.py         # ouvrages et équipements
     ├── vegetation.py       # gestion et objets physiques de végétation
