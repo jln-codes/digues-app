@@ -110,6 +110,42 @@ TABLE_DEFINITIONS = {
             valid BOOLEAN NOT NULL
         )
     """,
+    "ref_natures_vegetation": """
+        CREATE TABLE IF NOT EXISTS public.ref_natures_vegetation (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "ref_etats_sanitaires_vegetation": """
+        CREATE TABLE IF NOT EXISTS public.ref_etats_sanitaires_vegetation (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "ref_classes_hauteur_vegetation": """
+        CREATE TABLE IF NOT EXISTS public.ref_classes_hauteur_vegetation (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "ref_classes_diametre_vegetation": """
+        CREATE TABLE IF NOT EXISTS public.ref_classes_diametre_vegetation (
+            id TEXT PRIMARY KEY,
+            code TEXT NOT NULL UNIQUE,
+            abrege TEXT NOT NULL UNIQUE,
+            libelle TEXT NOT NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
     "desordres": """
         CREATE TABLE IF NOT EXISTS public.desordres (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,7 +158,12 @@ TABLE_DEFINITIONS = {
             valid BOOLEAN NOT NULL,
             CONSTRAINT desordres_type_desordre_fk
                 FOREIGN KEY (type_desordre_id)
-                REFERENCES public.ref_types_desordre (id)
+                REFERENCES public.ref_types_desordre (id),
+            CONSTRAINT desordres_geometry_type_check
+                CHECK (
+                    geometry IS NULL
+                    OR GeometryType(geometry) IN ('POINT', 'LINESTRING', 'POLYGON')
+                )
         )
     """,
     "link_desordres_troncons": """
@@ -138,36 +179,6 @@ TABLE_DEFINITIONS = {
                 REFERENCES public.troncons (id),
             CONSTRAINT link_desordres_troncons_unique
                 UNIQUE (desordre_id, troncon_id)
-        )
-    """,
-    "observations": """
-        CREATE TABLE IF NOT EXISTS public.observations (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            desordre_id UUID NOT NULL,
-            urgence_id TEXT NULL,
-            designation TEXT NULL,
-            date DATE NULL,
-            evolution TEXT NULL,
-            valid BOOLEAN NOT NULL,
-            CONSTRAINT observations_desordres_fk
-                FOREIGN KEY (desordre_id)
-                REFERENCES public.desordres (id),
-            CONSTRAINT observations_urgence_fk
-                FOREIGN KEY (urgence_id)
-                REFERENCES public.ref_urgences (id)
-        )
-    """,
-    "photos": """
-        CREATE TABLE IF NOT EXISTS public.photos (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            observation_id UUID NOT NULL,
-            chemin_source TEXT NOT NULL,
-            date DATE NULL,
-            designation TEXT NULL,
-            valid BOOLEAN NOT NULL,
-            CONSTRAINT photos_observations_fk
-                FOREIGN KEY (observation_id)
-                REFERENCES public.observations (id)
         )
     """,
     "amenagements_hydrauliques": """
@@ -196,6 +207,79 @@ TABLE_DEFINITIONS = {
                 REFERENCES public.troncons (id),
             CONSTRAINT link_amenagements_troncons_unique
                 UNIQUE (amenagement_hydraulique_id, troncon_id)
+        )
+    """,
+    "plans_gestion_vegetation": """
+        CREATE TABLE IF NOT EXISTS public.plans_gestion_vegetation (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            libelle TEXT NULL,
+            annee_debut INTEGER NULL,
+            annee_fin INTEGER NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "parcelles_gestion_vegetation": """
+        CREATE TABLE IF NOT EXISTS public.parcelles_gestion_vegetation (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            plan_id UUID NULL,
+            designation TEXT NULL,
+            date_debut DATE NULL,
+            geometry geometry(LineString, 3950) NOT NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT parcelles_gestion_vegetation_plan_fk
+                FOREIGN KEY (plan_id)
+                REFERENCES public.plans_gestion_vegetation (id)
+        )
+    """,
+    "link_parcelles_gestion_troncons": """
+        CREATE TABLE IF NOT EXISTS public.link_parcelles_gestion_troncons (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            parcelle_gestion_id UUID NOT NULL,
+            troncon_id UUID NOT NULL,
+            CONSTRAINT link_parcelles_gestion_troncons_parcelles_fk
+                FOREIGN KEY (parcelle_gestion_id)
+                REFERENCES public.parcelles_gestion_vegetation (id),
+            CONSTRAINT link_parcelles_gestion_troncons_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id),
+            CONSTRAINT link_parcelles_gestion_troncons_unique
+                UNIQUE (parcelle_gestion_id, troncon_id)
+        )
+    """,
+    "vegetation": """
+        CREATE TABLE IF NOT EXISTS public.vegetation (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            nature_id TEXT NOT NULL,
+            type_source_code TEXT NULL,
+            designation TEXT NULL,
+            commentaire TEXT NULL,
+            date_debut DATE NULL,
+            etat_sanitaire_id TEXT NULL,
+            classe_hauteur_id TEXT NULL,
+            classe_diametre_id TEXT NULL,
+            geometry geometry(Geometry, 3950) NULL,
+            parcelle_gestion_id UUID NOT NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT vegetation_nature_fk
+                FOREIGN KEY (nature_id)
+                REFERENCES public.ref_natures_vegetation (id),
+            CONSTRAINT vegetation_etat_sanitaire_fk
+                FOREIGN KEY (etat_sanitaire_id)
+                REFERENCES public.ref_etats_sanitaires_vegetation (id),
+            CONSTRAINT vegetation_classe_hauteur_fk
+                FOREIGN KEY (classe_hauteur_id)
+                REFERENCES public.ref_classes_hauteur_vegetation (id),
+            CONSTRAINT vegetation_classe_diametre_fk
+                FOREIGN KEY (classe_diametre_id)
+                REFERENCES public.ref_classes_diametre_vegetation (id),
+            CONSTRAINT vegetation_parcelle_gestion_fk
+                FOREIGN KEY (parcelle_gestion_id)
+                REFERENCES public.parcelles_gestion_vegetation (id),
+            CONSTRAINT vegetation_geometry_type_check
+                CHECK (
+                    geometry IS NULL
+                    OR GeometryType(geometry) IN ('POINT', 'LINESTRING', 'POLYGON')
+                )
         )
     """,
     "ouvrages_hydrauliques": """
@@ -290,6 +374,74 @@ TABLE_DEFINITIONS = {
             CONSTRAINT reseaux_techniques_troncons_fk
                 FOREIGN KEY (troncon_id)
                 REFERENCES public.troncons (id)
+        )
+    """,
+    "observations": """
+        CREATE TABLE IF NOT EXISTS public.observations (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            desordre_id UUID NULL,
+            troncon_id UUID NULL,
+            ouvrage_hydraulique_id UUID NULL,
+            equipement_mesure_id UUID NULL,
+            ouvrage_franchissement_id UUID NULL,
+            mobilier_id UUID NULL,
+            reseau_technique_id UUID NULL,
+            amenagement_hydraulique_id UUID NULL,
+            vegetation_id UUID NULL,
+            urgence_id TEXT NULL,
+            designation TEXT NULL,
+            date DATE NULL,
+            evolution TEXT NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT observations_desordres_fk
+                FOREIGN KEY (desordre_id) REFERENCES public.desordres (id),
+            CONSTRAINT observations_troncons_fk
+                FOREIGN KEY (troncon_id) REFERENCES public.troncons (id),
+            CONSTRAINT observations_ouvrages_hydrauliques_fk
+                FOREIGN KEY (ouvrage_hydraulique_id)
+                REFERENCES public.ouvrages_hydrauliques (id),
+            CONSTRAINT observations_equipements_mesure_fk
+                FOREIGN KEY (equipement_mesure_id)
+                REFERENCES public.equipements_mesure (id),
+            CONSTRAINT observations_ouvrages_franchissement_fk
+                FOREIGN KEY (ouvrage_franchissement_id)
+                REFERENCES public.ouvrages_franchissement (id),
+            CONSTRAINT observations_mobilier_fk
+                FOREIGN KEY (mobilier_id) REFERENCES public.mobilier (id),
+            CONSTRAINT observations_reseaux_techniques_fk
+                FOREIGN KEY (reseau_technique_id)
+                REFERENCES public.reseaux_techniques (id),
+            CONSTRAINT observations_amenagements_hydrauliques_fk
+                FOREIGN KEY (amenagement_hydraulique_id)
+                REFERENCES public.amenagements_hydrauliques (id),
+            CONSTRAINT observations_vegetation_fk
+                FOREIGN KEY (vegetation_id) REFERENCES public.vegetation (id),
+            CONSTRAINT observations_urgence_fk
+                FOREIGN KEY (urgence_id) REFERENCES public.ref_urgences (id),
+            CONSTRAINT observations_exactly_one_parent_check
+                CHECK (
+                    num_nonnulls(
+                        desordre_id, troncon_id, ouvrage_hydraulique_id,
+                        equipement_mesure_id, ouvrage_franchissement_id,
+                        mobilier_id, reseau_technique_id,
+                        amenagement_hydraulique_id, vegetation_id
+                    ) = 1
+                ),
+            CONSTRAINT observations_urgence_desordre_only_check
+                CHECK (urgence_id IS NULL OR desordre_id IS NOT NULL)
+        )
+    """,
+    "photos": """
+        CREATE TABLE IF NOT EXISTS public.photos (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            observation_id UUID NOT NULL,
+            chemin_source TEXT NOT NULL,
+            date DATE NULL,
+            designation TEXT NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT photos_observations_fk
+                FOREIGN KEY (observation_id)
+                REFERENCES public.observations (id)
         )
     """,
 }

@@ -27,6 +27,21 @@ from .ouvrages import (
     insert_prepared_ouvrages,
     prepare_ouvrages_migration,
 )
+from .media import (
+    OWNER_FIELDS,
+    MediaMigrationError,
+    ObservationRow,
+    OwnerBinding,
+    PhotoRow,
+    prepare_media_migration,
+)
+from .vegetation import (
+    VEGETATION_SOURCE_CLASSES,
+    PreparedVegetationMigration,
+    insert_prepared_vegetation,
+    inspect_wkt,
+    prepare_vegetation_migration,
+)
 from .validation import CoreValidationResult, validate_core_migration
 
 
@@ -40,6 +55,7 @@ CORE_SOURCE_CLASSES = {
     "Desordre": "fr.sirs.core.model.Desordre",
     **OUVRAGE_SOURCE_CLASSES,
     **AMENAGEMENT_SOURCE_CLASSES,
+    **VEGETATION_SOURCE_CLASSES,
 }
 
 CORE_FIELD_MAPPINGS = {
@@ -85,7 +101,7 @@ CORE_FIELD_MAPPINGS = {
         "date_debut/date_fin ISO → DATE → colonnes homonymes",
         "positionDebut/positionFin → POINT ou LINESTRING SRID 3950 → geometry",
         "valid → booléen inchangé → valid",
-        "geometry source → comptée dans le rapport, non utilisée pour la cible",
+        "geometry source Polygon valide → conservée ; autres formes historiques → positions",
     ),
     "link_desordres_troncons": (
         "aucune source → gen_random_uuid() PostgreSQL → id technique",
@@ -93,16 +109,17 @@ CORE_FIELD_MAPPINGS = {
         "Desordre.linearId → UUID de TronconDigue vérifié → troncon_id",
     ),
     "observations": (
-        "Desordre.observations[].id → UUID → id",
-        "Desordre._id → UUID injecté → desordre_id",
-        "urgenceId absent ou référence texte vérifiée → urgence_id",
+        "Objet.observations[].id → UUID → id",
+        "UUID de l'objet → exactement une FK métier explicite",
+        "urgenceId des désordres absent ou référence texte vérifiée → urgence_id",
         "designation → texte inchangé ou absent → designation nullable",
         "date ISO → DATE → date",
         "evolution → texte inchangé → evolution",
         "valid → booléen inchangé → valid",
+        "photos directes objet/date → observation synthétique UUID v5 déterministe",
     ),
     "photos": (
-        "Observation.photos[].id → UUID → id",
+        "Observation.photos[].id ou Objet.photos[].id → UUID → id",
         "Observation.id → UUID injecté → observation_id",
         "chemin → texte inchangé sans déduplication → chemin_source",
         "date ISO → DATE → date",
@@ -125,6 +142,22 @@ CORE_FIELD_MAPPINGS = {
         "amenagementHydrauliqueId explicite → amenagement_hydraulique_id",
         "RefOuvrageAssocieAH:3 → DVS",
         "UUID et WKT historiques conservés dans ouvrages_hydrauliques",
+    ),
+    "vegetation": (
+        "classes source → nature structurelle ARB/PEU/INV",
+        "parcelleId explicite → parcelle_gestion_id",
+        "géométrie valide conservée ; reconstruction déterministe sinon",
+        "overrides propres à la source isolés dans source_overrides.py",
+        "MANUAL_REVIEW → ligne métier conservée avec geometry NULL",
+    ),
+    "parcelles_gestion_vegetation": (
+        "PlanVegetation.planId → plan_id nullable vérifié",
+        "geometry WKT LINESTRING → ST_GeomFromText(..., 3950)",
+        "linearId non stocké directement : relation portée par une table de lien",
+    ),
+    "link_parcelles_gestion_troncons": (
+        "ParcelleVegetation.linearId explicite uniquement → troncon_id",
+        "aucune intersection spatiale utilisée",
     ),
 }
 
@@ -203,27 +236,6 @@ class LinkDesordreTronconRow:
 
 
 @dataclass(frozen=True)
-class ObservationRow:
-    id: UUID
-    desordre_id: UUID
-    urgence_id: str | None
-    designation: str | None
-    date: date | None
-    evolution: str | None
-    valid: bool
-
-
-@dataclass(frozen=True)
-class PhotoRow:
-    id: UUID
-    observation_id: UUID
-    chemin_source: str
-    date: date | None
-    designation: str | None
-    valid: bool
-
-
-@dataclass(frozen=True)
 class PreparedCoreMigration:
     categories_desordre: tuple[ReferenceRow, ...]
     types_desordre: tuple[TypeDesordreReferenceRow, ...]
@@ -237,10 +249,13 @@ class PreparedCoreMigration:
     photos: tuple[PhotoRow, ...]
     ouvrages: PreparedOuvragesMigration
     amenagements: PreparedAmenagementsMigration
+    vegetation: PreparedVegetationMigration
     digues_without_system: int
     desordre_source_geometry_present: int
     desordre_source_geometry_absent: int
-    ignored_direct_troncon_photos: int
+    synthetic_observations: int
+    direct_troncon_photos: int
+    direct_other_photos: int
     warnings: tuple[str, ...]
 
     @property
@@ -259,6 +274,7 @@ class PreparedCoreMigration:
         }
         counts.update(self.ouvrages.expected_counts)
         counts.update(self.amenagements.expected_counts)
+        counts.update(self.vegetation.expected_counts)
         return counts
 
     @property
@@ -268,6 +284,7 @@ class PreparedCoreMigration:
             "linestring": sum(
                 row.geometry_kind == "linestring" for row in self.desordres
             ),
+            "polygon": sum(row.geometry_kind == "polygon" for row in self.desordres),
             "null": sum(row.geometry_kind == "null" for row in self.desordres),
         }
 
@@ -325,6 +342,36 @@ def desordre_geometry_from_positions(
         f"({start.group(1)} {start.group(2)}, {end.group(1)} {end.group(2)})",
         "linestring",
         None,
+    )
+
+
+def desordre_geometry_from_source(
+    source_geometry: Any,
+    position_debut: Any,
+    position_fin: Any,
+    *,
+    desordre_id: Any,
+) -> tuple[str | None, str, str | None]:
+    """Préserve un Polygon source valide, sinon applique le repérage historique.
+
+    Les sources cabbalr ponctuelles et linéaires restent reconstruites depuis
+    leurs positions, conformément à la migration historique. Un Polygon SIRS
+    explicite et valide est en revanche une géométrie métier autonome.
+    """
+
+    if isinstance(source_geometry, str) and source_geometry.lstrip().upper().startswith("POLYGON"):
+        geometry = inspect_wkt(source_geometry)
+        if geometry is not None and geometry.kind == "POLYGON" and geometry.valid:
+            return source_geometry, "polygon", None
+        return (
+            None,
+            "null",
+            f"Desordre {desordre_id}: Polygon source invalide ; geometry cible NULL",
+        )
+    return desordre_geometry_from_positions(
+        position_debut,
+        position_fin,
+        desordre_id=desordre_id,
     )
 
 
@@ -529,7 +576,6 @@ def prepare_core_migration(
     digue_ids = {row.id for row in digues}
 
     troncons_list: list[TronconRow] = []
-    direct_troncon_photos = 0
     for doc in _sorted_documents(
         source_documents.get("TronconDigue", ()),
         id_field="_id",
@@ -539,10 +585,6 @@ def prepare_core_migration(
         digue_id = couchdb_id_to_uuid(doc.get("digueId"), context=f"{context}.digueId")
         if digue_id not in digue_ids:
             raise CoreMigrationError(f"{context}: digueId référence une digue absente")
-        direct_photos = doc.get("photos") or []
-        if not isinstance(direct_photos, list):
-            raise CoreMigrationError(f"{context}: photos directes invalides")
-        direct_troncon_photos += len(direct_photos)
         troncons_list.append(
             TronconRow(
                 id=couchdb_id_to_uuid(doc.get("_id"), context=f"{context}._id"),
@@ -558,19 +600,19 @@ def prepare_core_migration(
 
     desordres_list: list[DesordreRow] = []
     links_list: list[LinkDesordreTronconRow] = []
-    observations_list: list[ObservationRow] = []
-    photos_list: list[PhotoRow] = []
     source_geometry_present = 0
     source_geometry_absent = 0
-    direct_desordre_photos = 0
     for doc in _sorted_documents(
         source_documents.get("Desordre", ()), id_field="_id", context="Desordre"
     ):
         raw_id = doc.get("_id")
         context = f"Desordre {raw_id}"
         desordre_id = couchdb_id_to_uuid(raw_id, context=f"{context}._id")
-        geometry_wkt, geometry_kind, warning = desordre_geometry_from_positions(
-            doc.get("positionDebut"), doc.get("positionFin"), desordre_id=raw_id
+        geometry_wkt, geometry_kind, warning = desordre_geometry_from_source(
+            doc.get("geometry"),
+            doc.get("positionDebut"),
+            doc.get("positionFin"),
+            desordre_id=raw_id,
         )
         if warning:
             warnings.append(warning)
@@ -578,10 +620,6 @@ def prepare_core_migration(
             source_geometry_present += 1
         else:
             source_geometry_absent += 1
-        direct_desordre = doc.get("photos") or []
-        if not isinstance(direct_desordre, list):
-            raise CoreMigrationError(f"{context}: photos directes invalides")
-        direct_desordre_photos += len(direct_desordre)
         type_desordre_id = _optional_source_reference_id(
             doc.get("typeDesordreId"), context=f"{context}.typeDesordreId"
         )
@@ -635,81 +673,11 @@ def prepare_core_migration(
             )
         )
 
-        raw_observations = _embedded_items(doc, "observations", context)
-        for observation in _sorted_documents(
-            raw_observations, id_field="id", context=f"{context}.Observation"
-        ):
-            raw_observation_id = observation.get("id")
-            observation_context = f"Observation {raw_observation_id}"
-            observation_id = couchdb_id_to_uuid(
-                raw_observation_id, context=f"{observation_context}.id"
-            )
-            urgence_id = _optional_source_reference_id(
-                observation.get("urgenceId"),
-                context=f"{observation_context}.urgenceId",
-            )
-            if urgence_id is not None and urgence_id not in urgence_ids:
-                raise CoreMigrationError(
-                    f"{observation_context}: urgenceId référence une urgence absente"
-                )
-            observations_list.append(
-                ObservationRow(
-                    id=observation_id,
-                    desordre_id=desordre_id,
-                    urgence_id=urgence_id,
-                    designation=_optional_text(
-                        observation, "designation", observation_context
-                    ),
-                    date=_optional_date(observation, "date", observation_context),
-                    evolution=_optional_text(
-                        observation, "evolution", observation_context
-                    ),
-                    valid=_required_bool(observation, "valid", observation_context),
-                )
-            )
-            raw_photos = _embedded_items(
-                observation, "photos", observation_context
-            )
-            for photo in _sorted_documents(
-                raw_photos, id_field="id", context=f"{observation_context}.Photo"
-            ):
-                raw_photo_id = photo.get("id")
-                photo_context = f"Photo {raw_photo_id}"
-                photos_list.append(
-                    PhotoRow(
-                        id=couchdb_id_to_uuid(
-                            raw_photo_id, context=f"{photo_context}.id"
-                        ),
-                        observation_id=observation_id,
-                        chemin_source=_required_text(photo, "chemin", photo_context),
-                        date=_optional_date(photo, "date", photo_context),
-                        designation=_optional_text(
-                            photo, "designation", photo_context
-                        ),
-                        valid=_required_bool(photo, "valid", photo_context),
-                    )
-                )
-
     desordres = tuple(desordres_list)
     links = tuple(links_list)
-    observations = tuple(sorted(observations_list, key=lambda row: row.id.int))
-    photos = tuple(sorted(photos_list, key=lambda row: row.id.int))
     _ensure_unique_ids(desordres, "desordres")
-    _ensure_unique_ids(observations, "observations")
-    _ensure_unique_ids(photos, "photos")
     if len(links) != len({(row.desordre_id, row.troncon_id) for row in links}):
         raise CoreMigrationError("Liaisons source desordre/troncon dupliquées")
-
-    if direct_troncon_photos:
-        warnings.append(
-            f"{direct_troncon_photos} photo(s) directement rattachée(s) aux "
-            "tronçons ignorée(s) conformément au périmètre"
-        )
-    if direct_desordre_photos:
-        warnings.append(
-            f"{direct_desordre_photos} photo(s) directement rattachée(s) aux "
-            "désordres ignorée(s) conformément au périmètre"
-        )
 
     if any(label in source_documents for label in OUVRAGE_SOURCE_CLASSES):
         try:
@@ -739,6 +707,65 @@ def prepare_core_migration(
     else:
         amenagements = PreparedAmenagementsMigration.empty()
 
+    if any(label in source_documents for label in VEGETATION_SOURCE_CLASSES):
+        try:
+            vegetation = prepare_vegetation_migration(
+                source_documents,
+                troncon_ids=troncon_ids,
+                source_database=source_database,
+            )
+            warnings.extend(vegetation.warnings)
+        except Exception as exc:
+            raise CoreMigrationError(f"Bloc Végétation invalide : {exc}") from exc
+    else:
+        vegetation = PreparedVegetationMigration.empty()
+
+    owner_bindings: dict[tuple[str, UUID], OwnerBinding] = {}
+    owner_bindings.update(
+        {("TronconDigue", row.id): OwnerBinding("troncon_id", row.id) for row in troncons}
+    )
+    owner_bindings.update(
+        {("Desordre", row.id): OwnerBinding("desordre_id", row.id) for row in desordres}
+    )
+    ouvrage_owner_fields = {
+        "ouvrages_hydrauliques": "ouvrage_hydraulique_id",
+        "equipements_mesure": "equipement_mesure_id",
+        "ouvrages_franchissement": "ouvrage_franchissement_id",
+        "mobilier": "mobilier_id",
+        "reseaux_techniques": "reseau_technique_id",
+    }
+    for table, rows in ouvrages.rows.items():
+        owner_field = ouvrage_owner_fields[table]
+        owner_bindings.update(
+            {
+                (row.source_class, row.id): OwnerBinding(owner_field, row.id)
+                for row in rows
+            }
+        )
+    owner_bindings.update(
+        {
+            ("AmenagementHydraulique", row.id): OwnerBinding(
+                "amenagement_hydraulique_id", row.id
+            )
+            for row in amenagements.amenagements
+        }
+    )
+    owner_bindings.update(
+        {
+            (row.source_class, row.id): OwnerBinding("vegetation_id", row.id)
+            for row in vegetation.vegetation
+        }
+    )
+    try:
+        media = prepare_media_migration(
+            source_documents,
+            owner_bindings=owner_bindings,
+            urgence_ids=urgence_ids,
+        )
+    except MediaMigrationError as exc:
+        raise CoreMigrationError(f"Bloc Observations/photos invalide : {exc}") from exc
+    warnings.extend(media.warnings)
+
     return PreparedCoreMigration(
         categories_desordre=categories_desordre,
         types_desordre=types_desordre,
@@ -748,14 +775,17 @@ def prepare_core_migration(
         troncons=troncons,
         desordres=desordres,
         links=links,
-        observations=observations,
-        photos=photos,
+        observations=media.observations,
+        photos=media.photos,
         ouvrages=ouvrages,
         amenagements=amenagements,
+        vegetation=vegetation,
         digues_without_system=digues_without_system,
         desordre_source_geometry_present=source_geometry_present,
         desordre_source_geometry_absent=source_geometry_absent,
-        ignored_direct_troncon_photos=direct_troncon_photos,
+        synthetic_observations=media.synthetic_observation_count,
+        direct_troncon_photos=media.direct_troncon_photos,
+        direct_other_photos=media.direct_other_photos,
         warnings=tuple(warnings),
     )
 
@@ -798,8 +828,11 @@ INSERT_STATEMENTS = {
     """,
     "observations": """
         INSERT INTO public.observations
-            (id, desordre_id, urgence_id, designation, date, evolution, valid)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (id, desordre_id, troncon_id, ouvrage_hydraulique_id,
+             equipement_mesure_id, ouvrage_franchissement_id, mobilier_id,
+             reseau_technique_id, amenagement_hydraulique_id, vegetation_id,
+             urgence_id, designation, date, evolution, valid)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """,
     "photos": """
         INSERT INTO public.photos
@@ -877,41 +910,40 @@ def _insert_prepared_core(cursor: Any, prepared: PreparedCoreMigration) -> None:
             "link_desordres_troncons",
             [(row.desordre_id, row.troncon_id) for row in prepared.links],
         ),
-        (
-            "observations",
-            [
-                (
-                    row.id,
-                    row.desordre_id,
-                    row.urgence_id,
-                    row.designation,
-                    row.date,
-                    row.evolution,
-                    row.valid,
-                )
-                for row in prepared.observations
-            ],
-        ),
-        (
-            "photos",
-            [
-                (
-                    row.id,
-                    row.observation_id,
-                    row.chemin_source,
-                    row.date,
-                    row.designation,
-                    row.valid,
-                )
-                for row in prepared.photos
-            ],
-        ),
     )
     for table, rows in batches:
         if rows:
             cursor.executemany(INSERT_STATEMENTS[table], rows)
     insert_prepared_amenagements(cursor, prepared.amenagements)
     insert_prepared_ouvrages(cursor, prepared.ouvrages)
+    insert_prepared_vegetation(cursor, prepared.vegetation)
+    observation_rows = [
+        (
+            row.id,
+            *row.parent_values,
+            row.urgence_id,
+            row.designation,
+            row.date,
+            row.evolution,
+            row.valid,
+        )
+        for row in prepared.observations
+    ]
+    if observation_rows:
+        cursor.executemany(INSERT_STATEMENTS["observations"], observation_rows)
+    photo_rows = [
+        (
+            row.id,
+            row.observation_id,
+            row.chemin_source,
+            row.date,
+            row.designation,
+            row.valid,
+        )
+        for row in prepared.photos
+    ]
+    if photo_rows:
+        cursor.executemany(INSERT_STATEMENTS["photos"], photo_rows)
 
 
 def _default_connector() -> Callable[..., Any]:
@@ -954,6 +986,17 @@ def execute_core_migration(
                     ),
                     expected_associated_ouvrage_types=(
                         prepared.amenagements.associated_type_counts
+                    ),
+                    vegetation_enabled=prepared.vegetation.enabled,
+                    expected_vegetation_geometries=(
+                        prepared.vegetation.geometry_counts
+                    ),
+                    expected_vegetation_invalid=(
+                        prepared.vegetation.invalid_count
+                    ),
+                    expected_vegetation_links=len(prepared.vegetation.links),
+                    expected_manual_review_ids=(
+                        prepared.vegetation.manual_review_ids
                     ),
                 )
     except (CoreMigrationError, TargetNotEmptyError):

@@ -16,6 +16,7 @@ class SourceMigrationOverrides:
     """Décisions métier validées pour une base source nommée."""
 
     amenagement_type_by_id: Mapping[str, str] = field(default_factory=dict)
+    vegetation_geometry_source_by_id: Mapping[str, str] = field(default_factory=dict)
 
 
 _CABBALR_AMENAGEMENT_TYPES = MappingProxyType(
@@ -29,12 +30,24 @@ _CABBALR_AMENAGEMENT_TYPES = MappingProxyType(
     }
 )
 
+_CABBALR_VEGETATION_GEOMETRY_SOURCES = MappingProxyType(
+    {
+        # Audit géométrique du 30 août 2026 : le Polygon principal est
+        # effondré et les positions valent (0, 0), tandis que la géométrie
+        # explicite est un Polygon valide. Cette décision n'est pas générique.
+        "16f47274e17fbb21a37b9213fe0030a9": "explicitGeometry",
+    }
+)
+
 
 SOURCE_OVERRIDES: Mapping[str, SourceMigrationOverrides] = MappingProxyType(
     {
         # Audit du 30 août 2026 : classement ZEC provisoire pour cette base seule.
         "cabbalr": SourceMigrationOverrides(
-            amenagement_type_by_id=_CABBALR_AMENAGEMENT_TYPES
+            amenagement_type_by_id=_CABBALR_AMENAGEMENT_TYPES,
+            vegetation_geometry_source_by_id=(
+                _CABBALR_VEGETATION_GEOMETRY_SOURCES
+            ),
         ),
     }
 )

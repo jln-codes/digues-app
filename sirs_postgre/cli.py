@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .migration import TargetNotEmptyError, migrate_core
+from .migration.coverage import generate_coverage_report
 from .source import connect_couchdb
 from .target import (
     PostgreSQLConfig,
@@ -54,6 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
         "migrate-core",
         description="Migre le noyau CouchDB vers PostgreSQL/PostGIS.",
     )
+    diagnose = subparsers.add_parser(
+        "diagnose",
+        description="Génère audits/bilan.md depuis le contenu CouchDB réel.",
+    )
+    diagnose.add_argument("--profile", choices=("local", "secure"))
+    diagnose.add_argument("--source-database")
     return parser
 
 
@@ -226,6 +233,9 @@ def run_migrate_core() -> int:
     print("Photo :")
     print(f"  migrées: {report.validation.table_counts['photos']}")
     print(f"  valid=false: {sum(not row.valid for row in prepared.photos)}")
+    print(f"  observations synthétiques: {prepared.synthetic_observations}")
+    print(f"  photos directes tronçons: {prepared.direct_troncon_photos}")
+    print(f"  photos directes autres objets: {prepared.direct_other_photos}")
     print("Ouvrages :")
     for table, rows in prepared.ouvrages.rows.items():
         print(f"  {table}: {len(rows)}")
@@ -254,14 +264,65 @@ def run_migrate_core() -> int:
         "  prestations spécifiques différées: "
         f"{prepared.amenagements.deferred_prestations}"
     )
+    vegetation_geometries = prepared.vegetation.geometry_counts
+    print("Végétation :")
+    print(
+        "  plans de gestion: "
+        f"{report.validation.table_counts['plans_gestion_vegetation']}"
+    )
+    print(
+        "  parcelles de gestion: "
+        f"{report.validation.table_counts['parcelles_gestion_vegetation']}"
+    )
+    print(
+        "  relations explicites aux tronçons: "
+        f"{report.validation.table_counts['link_parcelles_gestion_troncons']}"
+    )
+    print(f"  objets: {report.validation.table_counts['vegetation']}")
+    print(f"  points: {vegetation_geometries['point']}")
+    print(f"  lignes: {vegetation_geometries['linestring']}")
+    print(f"  polygones: {vegetation_geometries['polygon']}")
+    print(f"  sans géométrie: {vegetation_geometries['null']}")
+    print(
+        "  revue manuelle: "
+        f"{prepared.vegetation.method_counts.get('MANUAL_REVIEW', 0)}"
+    )
+    print(f"  traitements différés: {prepared.vegetation.deferred_treatments}")
+    print(
+        "  planifications différées: "
+        f"{prepared.vegetation.deferred_planifications}"
+    )
     print("Warnings :")
     if prepared.warnings:
         for warning in prepared.warnings:
             print(f"  - {warning}")
     else:
         print("  aucun")
+    try:
+        coverage = generate_coverage_report(connect_couchdb())
+    except Exception as exc:
+        print(f"[ERREUR] Migration appliquée mais diagnostic incomplet : {exc}")
+        return 1
+    print(f"Diagnostic : {coverage.path}")
     print("Résultat final :")
-    print("[OK] Migration du noyau terminée")
+    print("[OK] Migration du noyau et diagnostic terminés")
+    return 0
+
+
+def run_diagnose(args: argparse.Namespace) -> int:
+    try:
+        result = generate_coverage_report(
+            connect_couchdb(
+                profile=args.profile,
+                database=args.source_database,
+            )
+        )
+    except Exception as exc:
+        print(f"[ERREUR] Diagnostic de couverture : {exc}")
+        return 1
+    print(f"[OK] Bilan généré : {result.path}")
+    print(f"Classes CouchDB : {result.total_classes}")
+    print(f"Documents non migrés : {result.non_migrated_documents}")
     return 0
 
 
@@ -276,6 +337,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_init_schema()
     if args.command == "migrate-core":
         return run_migrate_core()
+    if args.command == "diagnose":
+        return run_diagnose(args)
     raise AssertionError(f"Commande inconnue : {args.command}")
 
 

@@ -60,17 +60,25 @@ class TargetSchemaTest(unittest.TestCase):
                 "ref_types_mobilier",
                 "ref_types_reseau_technique",
                 "ref_types_amenagement_hydraulique",
+                "ref_natures_vegetation",
+                "ref_etats_sanitaires_vegetation",
+                "ref_classes_hauteur_vegetation",
+                "ref_classes_diametre_vegetation",
                 "desordres",
                 "link_desordres_troncons",
-                "observations",
-                "photos",
                 "amenagements_hydrauliques",
                 "link_amenagements_troncons",
+                "plans_gestion_vegetation",
+                "parcelles_gestion_vegetation",
+                "link_parcelles_gestion_troncons",
+                "vegetation",
                 "ouvrages_hydrauliques",
                 "equipements_mesure",
                 "ouvrages_franchissement",
                 "mobilier",
                 "reseaux_techniques",
+                "observations",
+                "photos",
             ),
         )
         created = [
@@ -107,6 +115,10 @@ class TargetSchemaTest(unittest.TestCase):
             "photos",
             "amenagements_hydrauliques",
             "link_amenagements_troncons",
+            "plans_gestion_vegetation",
+            "parcelles_gestion_vegetation",
+            "link_parcelles_gestion_troncons",
+            "vegetation",
             "ouvrages_hydrauliques",
             "equipements_mesure",
             "ouvrages_franchissement",
@@ -129,6 +141,10 @@ class TargetSchemaTest(unittest.TestCase):
             "photos",
             "amenagements_hydrauliques",
             "link_amenagements_troncons",
+            "plans_gestion_vegetation",
+            "parcelles_gestion_vegetation",
+            "link_parcelles_gestion_troncons",
+            "vegetation",
             "ouvrages_hydrauliques",
             "equipements_mesure",
             "ouvrages_franchissement",
@@ -146,12 +162,28 @@ class TargetSchemaTest(unittest.TestCase):
             "digues": ("systeme_endiguement_id",),
             "troncons": ("digue_id",),
             "link_desordres_troncons": ("desordre_id", "troncon_id"),
-            "observations": ("desordre_id",),
+            "observations": (
+                "desordre_id",
+                "troncon_id",
+                "ouvrage_hydraulique_id",
+                "equipement_mesure_id",
+                "ouvrage_franchissement_id",
+                "mobilier_id",
+                "reseau_technique_id",
+                "amenagement_hydraulique_id",
+                "vegetation_id",
+            ),
             "photos": ("observation_id",),
             "link_amenagements_troncons": (
                 "amenagement_hydraulique_id",
                 "troncon_id",
             ),
+            "parcelles_gestion_vegetation": ("plan_id",),
+            "link_parcelles_gestion_troncons": (
+                "parcelle_gestion_id",
+                "troncon_id",
+            ),
+            "vegetation": ("parcelle_gestion_id",),
             "ouvrages_hydrauliques": (
                 "troncon_id",
                 "amenagement_hydraulique_id",
@@ -178,6 +210,10 @@ class TargetSchemaTest(unittest.TestCase):
             "ref_types_mobilier",
             "ref_types_reseau_technique",
             "ref_types_amenagement_hydraulique",
+            "ref_natures_vegetation",
+            "ref_etats_sanitaires_vegetation",
+            "ref_classes_hauteur_vegetation",
+            "ref_classes_diametre_vegetation",
         ):
             with self.subTest(table=table):
                 self.assertIn("id text primary key", normalized(TABLE_DEFINITIONS[table]))
@@ -201,6 +237,10 @@ class TargetSchemaTest(unittest.TestCase):
             "ref_types_mobilier",
             "ref_types_reseau_technique",
             "ref_types_amenagement_hydraulique",
+            "ref_natures_vegetation",
+            "ref_etats_sanitaires_vegetation",
+            "ref_classes_hauteur_vegetation",
+            "ref_classes_diametre_vegetation",
         ):
             statement = normalized(TABLE_DEFINITIONS[table])
             self.assertIn("code text not null unique", statement)
@@ -223,6 +263,14 @@ class TargetSchemaTest(unittest.TestCase):
             ),
             "observations": (
                 "foreign key (desordre_id) references public.desordres (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
+                "foreign key (ouvrage_hydraulique_id) references public.ouvrages_hydrauliques (id)",
+                "foreign key (equipement_mesure_id) references public.equipements_mesure (id)",
+                "foreign key (ouvrage_franchissement_id) references public.ouvrages_franchissement (id)",
+                "foreign key (mobilier_id) references public.mobilier (id)",
+                "foreign key (reseau_technique_id) references public.reseaux_techniques (id)",
+                "foreign key (amenagement_hydraulique_id) references public.amenagements_hydrauliques (id)",
+                "foreign key (vegetation_id) references public.vegetation (id)",
                 "foreign key (urgence_id) references public.ref_urgences (id)",
             ),
             "desordres": (
@@ -243,6 +291,20 @@ class TargetSchemaTest(unittest.TestCase):
             "link_amenagements_troncons": (
                 "foreign key (amenagement_hydraulique_id) references public.amenagements_hydrauliques (id)",
                 "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "parcelles_gestion_vegetation": (
+                "foreign key (plan_id) references public.plans_gestion_vegetation (id)"
+            ),
+            "link_parcelles_gestion_troncons": (
+                "foreign key (parcelle_gestion_id) references public.parcelles_gestion_vegetation (id)",
+                "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "vegetation": (
+                "foreign key (nature_id) references public.ref_natures_vegetation (id)",
+                "foreign key (etat_sanitaire_id) references public.ref_etats_sanitaires_vegetation (id)",
+                "foreign key (classe_hauteur_id) references public.ref_classes_hauteur_vegetation (id)",
+                "foreign key (classe_diametre_id) references public.ref_classes_diametre_vegetation (id)",
+                "foreign key (parcelle_gestion_id) references public.parcelles_gestion_vegetation (id)",
             ),
             "equipements_mesure": (
                 "foreign key (type_id) references public.ref_types_equipement_mesure (id)",
@@ -283,6 +345,8 @@ class TargetSchemaTest(unittest.TestCase):
             "observations": (
                 "observations_desordres_fk",
                 "observations_urgence_fk",
+                "observations_exactly_one_parent_check",
+                "observations_urgence_desordre_only_check",
             ),
             "photos": "photos_observations_fk",
             "amenagements_hydrauliques": "amenagements_hydrauliques_type_fk",
@@ -290,6 +354,20 @@ class TargetSchemaTest(unittest.TestCase):
                 "link_amenagements_troncons_amenagements_fk",
                 "link_amenagements_troncons_troncons_fk",
                 "link_amenagements_troncons_unique",
+            ),
+            "parcelles_gestion_vegetation": "parcelles_gestion_vegetation_plan_fk",
+            "link_parcelles_gestion_troncons": (
+                "link_parcelles_gestion_troncons_parcelles_fk",
+                "link_parcelles_gestion_troncons_troncons_fk",
+                "link_parcelles_gestion_troncons_unique",
+            ),
+            "vegetation": (
+                "vegetation_nature_fk",
+                "vegetation_etat_sanitaire_fk",
+                "vegetation_classe_hauteur_fk",
+                "vegetation_classe_diametre_fk",
+                "vegetation_parcelle_gestion_fk",
+                "vegetation_geometry_type_check",
             ),
             "ouvrages_hydrauliques": "ouvrages_hydrauliques_amenagements_fk",
         }
@@ -321,6 +399,15 @@ class TargetSchemaTest(unittest.TestCase):
             "unique (amenagement_hydraulique_id, troncon_id)",
             amenagement_link,
         )
+        vegetation_link = normalized(
+            TABLE_DEFINITIONS["link_parcelles_gestion_troncons"]
+        )
+        self.assertIn(
+            "constraint link_parcelles_gestion_troncons_unique "
+            "unique (parcelle_gestion_id, troncon_id)",
+            vegetation_link,
+        )
+        self.assertNotIn("unique (parcelle_gestion_id)", vegetation_link)
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):
         troncon = normalized(TABLE_DEFINITIONS["troncons"])
@@ -328,6 +415,10 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertIn("geometry geometry(linestring, 3950)", troncon)
         self.assertIn("geometry geometry(geometry, 3950)", desordre)
         self.assertNotIn("geometry geometry(linestring, 3950)", desordre)
+        self.assertIn(
+            "geometrytype(geometry) in ('point', 'linestring', 'polygon')",
+            desordre,
+        )
         self.assertIn(
             "geometry geometry(point, 3950)",
             normalized(TABLE_DEFINITIONS["equipements_mesure"]),
@@ -350,6 +441,12 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertNotIn("superficie", amenagement)
         self.assertNotIn("capacite_stockage", amenagement)
         self.assertNotIn("profondeur_moyenne", amenagement)
+        parcelle = normalized(TABLE_DEFINITIONS["parcelles_gestion_vegetation"])
+        vegetation = normalized(TABLE_DEFINITIONS["vegetation"])
+        self.assertIn("geometry geometry(linestring, 3950) not null", parcelle)
+        self.assertIn("geometry geometry(geometry, 3950) null", vegetation)
+        self.assertIn("geometrytype(geometry) in ('point', 'linestring', 'polygon')", vegetation)
+        self.assertNotIn("troncon_id", vegetation)
 
     def test_observation_designation_is_nullable_text(self):
         observation = normalized(TABLE_DEFINITIONS["observations"])
@@ -360,6 +457,19 @@ class TargetSchemaTest(unittest.TestCase):
             "lastupdateauthor",
         ):
             self.assertNotIn(excluded_field, observation)
+
+    def test_observation_requires_exactly_one_parent_and_photo_requires_observation(self):
+        observation = normalized(TABLE_DEFINITIONS["observations"])
+        self.assertIn("num_nonnulls(", observation)
+        self.assertIn(") = 1", observation)
+        self.assertIn("desordre_id uuid null", observation)
+        self.assertIn("vegetation_id uuid null", observation)
+        photo = normalized(TABLE_DEFINITIONS["photos"])
+        self.assertIn("observation_id uuid not null", photo)
+        self.assertIn(
+            "foreign key (observation_id) references public.observations (id)",
+            photo,
+        )
 
     def test_desordres_does_not_store_category(self):
         desordres = normalized(TABLE_DEFINITIONS["desordres"])

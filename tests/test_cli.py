@@ -5,6 +5,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from sirs_postgre.cli import SOURCE_CLASSES, main
 from sirs_postgre.migration import TargetNotEmptyError
@@ -38,6 +39,25 @@ class FakeSourceClient:
 
 
 class CLITest(unittest.TestCase):
+    @patch("sirs_postgre.cli.generate_coverage_report")
+    @patch("sirs_postgre.cli.connect_couchdb")
+    def test_diagnose_command_generates_the_expected_report(
+        self, connect_source, generate_report
+    ):
+        client = object()
+        connect_source.return_value = client
+        generate_report.return_value = SimpleNamespace(
+            path=Path("/project/audits/bilan.md"),
+            total_classes=12,
+            non_migrated_documents=3,
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["diagnose"])
+        self.assertEqual(result, 0)
+        generate_report.assert_called_once_with(client)
+        self.assertIn("audits/bilan.md", output.getvalue())
+
     @patch(
         "sirs_postgre.cli.migrate_core",
         side_effect=TargetNotEmptyError("cible non vide"),

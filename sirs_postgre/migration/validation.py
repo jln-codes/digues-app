@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any, Mapping
+from uuid import UUID
 
 from sirs_postgre.target.schema import EXPECTED_TABLES
 
@@ -16,6 +18,7 @@ class MigrationValidationError(RuntimeError):
 class CoreValidationResult:
     table_counts: dict[str, int]
     desordre_geometry_counts: dict[str, int]
+    vegetation_geometry_counts: dict[str, int]
 
 
 INTEGRITY_CHECKS = {
@@ -45,11 +48,40 @@ INTEGRITY_CHECKS = {
         LEFT JOIN public.troncons AS t ON t.id = l.troncon_id
         WHERE d.id IS NULL OR t.id IS NULL
     """,
-    "observations → desordres": """
+    "observations exactement un parent": """
+        SELECT COUNT(*) FROM public.observations
+        WHERE num_nonnulls(
+            desordre_id, troncon_id, ouvrage_hydraulique_id,
+            equipement_mesure_id, ouvrage_franchissement_id, mobilier_id,
+            reseau_technique_id, amenagement_hydraulique_id, vegetation_id
+        ) <> 1
+    """,
+    "observations → parents métier": """
         SELECT COUNT(*)
         FROM public.observations AS o
         LEFT JOIN public.desordres AS d ON d.id = o.desordre_id
-        WHERE d.id IS NULL
+        LEFT JOIN public.troncons AS t ON t.id = o.troncon_id
+        LEFT JOIN public.ouvrages_hydrauliques AS oh
+          ON oh.id = o.ouvrage_hydraulique_id
+        LEFT JOIN public.equipements_mesure AS em
+          ON em.id = o.equipement_mesure_id
+        LEFT JOIN public.ouvrages_franchissement AS ofr
+          ON ofr.id = o.ouvrage_franchissement_id
+        LEFT JOIN public.mobilier AS m ON m.id = o.mobilier_id
+        LEFT JOIN public.reseaux_techniques AS rt
+          ON rt.id = o.reseau_technique_id
+        LEFT JOIN public.amenagements_hydrauliques AS ah
+          ON ah.id = o.amenagement_hydraulique_id
+        LEFT JOIN public.vegetation AS v ON v.id = o.vegetation_id
+        WHERE (o.desordre_id IS NOT NULL AND d.id IS NULL)
+           OR (o.troncon_id IS NOT NULL AND t.id IS NULL)
+           OR (o.ouvrage_hydraulique_id IS NOT NULL AND oh.id IS NULL)
+           OR (o.equipement_mesure_id IS NOT NULL AND em.id IS NULL)
+           OR (o.ouvrage_franchissement_id IS NOT NULL AND ofr.id IS NULL)
+           OR (o.mobilier_id IS NOT NULL AND m.id IS NULL)
+           OR (o.reseau_technique_id IS NOT NULL AND rt.id IS NULL)
+           OR (o.amenagement_hydraulique_id IS NOT NULL AND ah.id IS NULL)
+           OR (o.vegetation_id IS NOT NULL AND v.id IS NULL)
     """,
     "desordres → ref_types_desordre": """
         SELECT COUNT(*)
@@ -77,6 +109,11 @@ INTEGRITY_CHECKS = {
         SELECT COUNT(*) FROM public.desordres
         WHERE geometry IS NOT NULL AND ST_SRID(geometry) <> 3950
     """,
+    "types geometry desordres": """
+        SELECT COUNT(*) FROM public.desordres
+        WHERE geometry IS NOT NULL
+          AND GeometryType(geometry) NOT IN ('POINT', 'LINESTRING', 'POLYGON')
+    """,
     "absence categorie_desordre_id dans desordres": """
         SELECT COUNT(*)
         FROM information_schema.columns
@@ -100,6 +137,11 @@ def validate_core_migration(
     expected_deferred_chemins: int,
     expected_deferred_prestations: int,
     expected_associated_ouvrage_types: Mapping[str, int],
+    vegetation_enabled: bool,
+    expected_vegetation_geometries: Mapping[str, int],
+    expected_vegetation_invalid: int,
+    expected_vegetation_links: int,
+    expected_manual_review_ids: Sequence[UUID],
 ) -> CoreValidationResult:
     """Compare la cible à la source avant le commit de la transaction."""
 
@@ -164,6 +206,18 @@ def validate_core_migration(
                 "amenagements_hydrauliques",
             )
         )
+    if vegetation_enabled:
+        id_tables.extend(
+            (
+                "ref_natures_vegetation",
+                "ref_etats_sanitaires_vegetation",
+                "ref_classes_hauteur_vegetation",
+                "ref_classes_diametre_vegetation",
+                "plans_gestion_vegetation",
+                "parcelles_gestion_vegetation",
+                "vegetation",
+            )
+        )
     for table in id_tables:
         cursor.execute(
             f"SELECT COUNT(*) - COUNT(DISTINCT id) FROM public.{table}"
@@ -197,11 +251,12 @@ def validate_core_migration(
         str(geometry_type).upper(): int(count)
         for geometry_type, count in cursor.fetchall()
     }
-    for geometry_type in ("POINT", "LINESTRING"):
+    for geometry_type in ("POINT", "LINESTRING", "POLYGON"):
         actual_geometries.setdefault(geometry_type, 0)
     expected_non_null = {
         "POINT": expected_desordre_geometries.get("point", 0),
         "LINESTRING": expected_desordre_geometries.get("linestring", 0),
+        "POLYGON": expected_desordre_geometries.get("polygon", 0),
     }
     if actual_geometries != expected_non_null:
         raise MigrationValidationError(
@@ -471,7 +526,202 @@ def validate_core_migration(
                 + "; ".join(amenagement_errors)
             )
 
+    actual_vegetation_geometries: dict[str, int] = {}
+    if vegetation_enabled:
+        vegetation_errors: list[str] = []
+        for table in (
+            "ref_natures_vegetation",
+            "ref_etats_sanitaires_vegetation",
+            "ref_classes_hauteur_vegetation",
+            "ref_classes_diametre_vegetation",
+        ):
+            cursor.execute(
+                f"SELECT COUNT(*) FROM public.{table} "
+                "WHERE id <> abrege OR NOT valid"
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                vegetation_errors.append(f"{table}: id/abrege/valid non conforme")
+
+        for label, query in (
+            (
+                "parcelle → plan",
+                """
+                SELECT COUNT(*)
+                FROM public.parcelles_gestion_vegetation AS p
+                LEFT JOIN public.plans_gestion_vegetation AS g ON g.id = p.plan_id
+                WHERE p.plan_id IS NOT NULL AND g.id IS NULL
+                """,
+            ),
+            (
+                "lien parcelle → parcelle/tronçon",
+                """
+                SELECT COUNT(*)
+                FROM public.link_parcelles_gestion_troncons AS l
+                LEFT JOIN public.parcelles_gestion_vegetation AS p
+                  ON p.id = l.parcelle_gestion_id
+                LEFT JOIN public.troncons AS t ON t.id = l.troncon_id
+                WHERE p.id IS NULL OR t.id IS NULL
+                """,
+            ),
+            (
+                "vegetation → parcelle",
+                """
+                SELECT COUNT(*)
+                FROM public.vegetation AS v
+                LEFT JOIN public.parcelles_gestion_vegetation AS p
+                  ON p.id = v.parcelle_gestion_id
+                WHERE p.id IS NULL
+                """,
+            ),
+            (
+                "vegetation → nature",
+                """
+                SELECT COUNT(*)
+                FROM public.vegetation AS v
+                LEFT JOIN public.ref_natures_vegetation AS r ON r.id = v.nature_id
+                WHERE r.id IS NULL
+                """,
+            ),
+            (
+                "vegetation → état sanitaire",
+                """
+                SELECT COUNT(*)
+                FROM public.vegetation AS v
+                LEFT JOIN public.ref_etats_sanitaires_vegetation AS r
+                  ON r.id = v.etat_sanitaire_id
+                WHERE v.etat_sanitaire_id IS NOT NULL AND r.id IS NULL
+                """,
+            ),
+            (
+                "vegetation → classe hauteur",
+                """
+                SELECT COUNT(*)
+                FROM public.vegetation AS v
+                LEFT JOIN public.ref_classes_hauteur_vegetation AS r
+                  ON r.id = v.classe_hauteur_id
+                WHERE v.classe_hauteur_id IS NOT NULL AND r.id IS NULL
+                """,
+            ),
+            (
+                "vegetation → classe diamètre",
+                """
+                SELECT COUNT(*)
+                FROM public.vegetation AS v
+                LEFT JOIN public.ref_classes_diametre_vegetation AS r
+                  ON r.id = v.classe_diametre_id
+                WHERE v.classe_diametre_id IS NOT NULL AND r.id IS NULL
+                """,
+            ),
+        ):
+            cursor.execute(query)
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                vegetation_errors.append(f"{label}: référence invalide")
+
+        cursor.execute(
+            """
+            SELECT COUNT(*), COUNT(id), COUNT(DISTINCT id),
+                   COUNT(*) - COUNT(DISTINCT (parcelle_gestion_id, troncon_id))
+            FROM public.link_parcelles_gestion_troncons
+            """
+        )
+        row = cursor.fetchone()
+        if (
+            not row
+            or int(row[0]) != expected_vegetation_links
+            or int(row[1]) != expected_vegetation_links
+            or int(row[2]) != expected_vegetation_links
+            or int(row[3]) != 0
+        ):
+            vegetation_errors.append(
+                "nombre, identifiants ou couples parcelle/tronçon invalides"
+            )
+
+        for label, predicate in (
+            ("parcelle geometry NULL", "geometry IS NULL"),
+            ("parcelle SRID différent de 3950", "ST_SRID(geometry) <> 3950"),
+            (
+                "parcelle géométrie non LineString",
+                "GeometryType(geometry) <> 'LINESTRING'",
+            ),
+            ("parcelle géométrie invalide", "NOT ST_IsValid(geometry)"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) FROM public.parcelles_gestion_vegetation "
+                f"WHERE {predicate}"
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                vegetation_errors.append(label)
+
+        cursor.execute(
+            "SELECT GeometryType(geometry), COUNT(*) FROM public.vegetation "
+            "WHERE geometry IS NOT NULL GROUP BY GeometryType(geometry)"
+        )
+        actual_vegetation_geometries = {
+            str(geometry_type).lower(): int(count)
+            for geometry_type, count in cursor.fetchall()
+        }
+        for geometry_type in ("point", "linestring", "polygon"):
+            actual_vegetation_geometries.setdefault(geometry_type, 0)
+        cursor.execute("SELECT COUNT(*) FROM public.vegetation WHERE geometry IS NULL")
+        row = cursor.fetchone()
+        actual_vegetation_geometries["null"] = int(row[0]) if row else -1
+        expected_geometry_counts = {
+            geometry_type: int(expected_vegetation_geometries.get(geometry_type, 0))
+            for geometry_type in ("point", "linestring", "polygon", "null")
+        }
+        if actual_vegetation_geometries != expected_geometry_counts:
+            vegetation_errors.append(
+                "géométries attendues "
+                f"{expected_geometry_counts}, obtenues {actual_vegetation_geometries}"
+            )
+
+        for label, predicate in (
+            ("SRID différent de 3950", "ST_SRID(geometry) <> 3950"),
+            (
+                "type géométrique interdit",
+                "GeometryType(geometry) NOT IN ('POINT', 'LINESTRING', 'POLYGON')",
+            ),
+            ("géométrie invalide", "NOT ST_IsValid(geometry)"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) FROM public.vegetation "
+                f"WHERE geometry IS NOT NULL AND {predicate}"
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                vegetation_errors.append(label)
+
+        cursor.execute("SELECT COUNT(*) FROM public.vegetation WHERE NOT valid")
+        row = cursor.fetchone()
+        if not row or int(row[0]) != expected_vegetation_invalid:
+            vegetation_errors.append(
+                f"valid=false attendus {expected_vegetation_invalid}, "
+                f"obtenus {int(row[0]) if row else -1}"
+            )
+
+        if expected_manual_review_ids:
+            cursor.execute(
+                "SELECT COUNT(*) FROM public.vegetation "
+                "WHERE id = ANY(%s::uuid[]) AND geometry IS NULL",
+                ([str(object_id) for object_id in expected_manual_review_ids],),
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != len(expected_manual_review_ids):
+                vegetation_errors.append(
+                    "les objets MANUAL_REVIEW ne sont pas tous stockés avec geometry NULL"
+                )
+
+        if vegetation_errors:
+            raise MigrationValidationError(
+                "Validation du bloc Végétation invalide : "
+                + "; ".join(vegetation_errors)
+            )
+
     return CoreValidationResult(
         table_counts=actual_counts,
         desordre_geometry_counts=actual_geometries,
+        vegetation_geometry_counts=actual_vegetation_geometries,
     )

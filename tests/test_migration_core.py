@@ -8,6 +8,7 @@ from sirs_postgre.migration.core import (
     TargetNotEmptyError,
     couchdb_id_to_uuid,
     desordre_geometry_from_positions,
+    desordre_geometry_from_source,
     execute_core_migration,
     prepare_core_migration,
     validate_troncon_wkt,
@@ -244,6 +245,29 @@ class CoreTransformationTest(unittest.TestCase):
         self.assertEqual(kind, "null")
         self.assertIn("geometry cible NULL", warning)
 
+    def test_valid_source_polygon_is_preserved_for_future_sirs_bases(self):
+        polygon = "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))"
+        wkt, kind, warning = desordre_geometry_from_source(
+            polygon,
+            "POINT (1 1)",
+            "POINT (2 2)",
+            desordre_id="d1",
+        )
+        self.assertEqual(wkt, polygon)
+        self.assertEqual(kind, "polygon")
+        self.assertIsNone(warning)
+
+    def test_invalid_source_polygon_is_not_silently_rebuilt(self):
+        wkt, kind, warning = desordre_geometry_from_source(
+            "POLYGON ((0 0, 1 0, 0 0, 0 0))",
+            "POINT (1 1)",
+            "POINT (2 2)",
+            desordre_id="d1",
+        )
+        self.assertIsNone(wkt)
+        self.assertEqual(kind, "null")
+        self.assertIn("Polygon source invalide", warning)
+
     def test_flattens_observations_photos_and_links_preserving_invalid_rows(self):
         prepared = prepare_core_migration(source_fixture())
         self.assertEqual(
@@ -263,19 +287,23 @@ class CoreTransformationTest(unittest.TestCase):
         self.assertEqual(len(prepared.links), 1)
         self.assertEqual(prepared.links[0].desordre_id, prepared.desordres[0].id)
         self.assertEqual(prepared.links[0].troncon_id, prepared.troncons[0].id)
-        self.assertEqual(len(prepared.observations), 1)
-        self.assertEqual(prepared.observations[0].designation, "Observation test")
-        self.assertEqual(
-            prepared.observations[0].desordre_id, prepared.desordres[0].id
+        self.assertEqual(len(prepared.observations), 2)
+        source_observation = next(
+            row for row in prepared.observations if not row.synthetic
         )
-        self.assertIs(prepared.observations[0].valid, False)
+        self.assertEqual(source_observation.designation, "Observation test")
         self.assertEqual(
-            prepared.observations[0].urgence_id, REFERENCE_IDS["urgence"]
+            source_observation.desordre_id, prepared.desordres[0].id
         )
-        self.assertEqual(len(prepared.photos), 2)
+        self.assertIs(source_observation.valid, False)
+        self.assertEqual(
+            source_observation.urgence_id, REFERENCE_IDS["urgence"]
+        )
+        self.assertEqual(len(prepared.photos), 3)
         self.assertTrue(all(
-            photo.observation_id == prepared.observations[0].id
+            photo.observation_id == source_observation.id
             for photo in prepared.photos
+            if photo.id.hex != IDS["direct_photo"]
         ))
         self.assertEqual(sum(not photo.valid for photo in prepared.photos), 1)
 
@@ -291,17 +319,28 @@ class CoreTransformationTest(unittest.TestCase):
         prepared = prepare_core_migration(documents)
         self.assertIsNone(prepared.observations[0].urgence_id)
 
-    def test_ignores_direct_troncon_photos(self):
+    def test_migrates_direct_troncon_photos_through_synthetic_observation(self):
         prepared = prepare_core_migration(source_fixture())
         migrated_ids = {photo.id.hex for photo in prepared.photos}
-        self.assertNotIn(IDS["direct_photo"], migrated_ids)
-        self.assertEqual(prepared.ignored_direct_troncon_photos, 1)
+        self.assertIn(IDS["direct_photo"], migrated_ids)
+        self.assertEqual(prepared.direct_troncon_photos, 1)
+        self.assertEqual(prepared.synthetic_observations, 1)
+        synthetic = next(row for row in prepared.observations if row.synthetic)
+        self.assertEqual(synthetic.troncon_id, prepared.troncons[0].id)
+        self.assertEqual(synthetic.parent_count, 1)
+        self.assertIsNone(synthetic.date)
+        self.assertTrue(any("date absente" in warning for warning in prepared.warnings))
 
     def test_does_not_deduplicate_photos_by_path(self):
         prepared = prepare_core_migration(source_fixture())
-        self.assertEqual(len(prepared.photos), 2)
+        source_photos = [
+            photo
+            for photo in prepared.photos
+            if photo.id.hex in {IDS["photo_1"], IDS["photo_2"]}
+        ]
+        self.assertEqual(len(source_photos), 2)
         self.assertEqual(
-            [photo.chemin_source for photo in prepared.photos],
+            [photo.chemin_source for photo in source_photos],
             ["commun/photo.jpg", "commun/photo.jpg"],
         )
 

@@ -24,8 +24,8 @@ relancer la migration depuis la source.
 
 ## État actuel
 
-Le noyau métier, le premier lot Ouvrages et les aménagements hydrauliques sont
-opérationnels. Ils couvrent :
+Le noyau métier, les ouvrages, les aménagements hydrauliques et la végétation
+sont opérationnels. Ils couvrent :
 
 - les tables métier `systemes`, `digues`, `troncons`, `desordres`,
   `observations` et `photos` ;
@@ -36,7 +36,12 @@ opérationnels. Ils couvrent :
   `ouvrages_franchissement`, `mobilier` et `reseaux_techniques`, ainsi que leurs
   cinq référentiels de types indépendants ;
 - `amenagements_hydrauliques`, son référentiel minimal et la relation explicite
-  N-N `link_amenagements_troncons`.
+  N-N `link_amenagements_troncons` ;
+- les plans, parcelles de gestion et objets physiques de végétation, avec
+  `link_parcelles_gestion_troncons` ;
+- les observations généralisées et les photos exclusivement rattachées à une
+  observation ;
+- le diagnostic de couverture CouchDB généré dans `audits/bilan.md`.
 
 Les objets métier provenant de CouchDB conservent leurs UUID historiques. Les
 insertions réalisées directement dans PostgreSQL ou QGIS peuvent omettre l'ID :
@@ -98,6 +103,7 @@ sirs-postgre recreate
 sirs-postgre init-schema
 sirs-postgre migrate-core
 sirs-postgre check --target-only
+sirs-postgre diagnose
 ```
 
 ### `check`
@@ -161,20 +167,37 @@ la lecture de CouchDB relève de `migrate-core`.
 sirs-postgre migrate-core
 ```
 
-La commande migre le noyau, 110 objets Ouvrages et les aménagements hydrauliques
-depuis CouchDB dans l'ordre imposé par les relations. L'unique
+La commande migre le noyau, 110 objets Ouvrages, les aménagements hydrauliques,
+les plans/parcelles de gestion et les objets végétation depuis CouchDB dans
+l'ordre imposé par les relations. L'unique
 `OuvrageAssocieAmenagementHydraulique` rejoint désormais
 `ouvrages_hydrauliques` avec son parent explicitement stocké. Les huit
 `CheminAccesDependance` restent différés : leur parent n'est actuellement connu
 que par analyse spatiale et par leur désignation. L'unique
 `PrestationAmenagementHydraulique` reste également différée jusqu'au modèle
 général des prestations.
+Les anciennes photos directement portées par un objet sont regroupées par objet
+et date sous des observations synthétiques déterministes. Après une migration
+réussie, le bilan de couverture est automatiquement régénéré ; une erreur du
+diagnostic rend la commande explicitement incomplète.
 Les insertions et validations s'exécutent dans une transaction PostgreSQL unique :
 une erreur bloquante entraîne un rollback complet.
 
 La migration refuse une cible contenant déjà des données et n'effectue aucun
 UPSERT. Il faut alors rejouer le cycle `recreate`, `init-schema`,
 `migrate-core`.
+
+### `diagnose`
+
+```bash
+sirs-postgre diagnose
+```
+
+Cette commande indépendante lit tous les documents CouchDB et génère
+`audits/bilan.md`. Elle découvre les valeurs `@class` et les clés JSON réelles,
+les compare à un registre de couverture et distingue `MIGREE`, `PARTIELLE`,
+`NON_MIGREE`, `TECHNIQUE_IGNORE` et `REFERENTIEL_IGNORE`. Une classe ou un champ
+inconnu dans une autre base apparaît donc automatiquement dans le bilan.
 
 ## Modèle PostgreSQL actuel
 
@@ -186,7 +209,7 @@ systemes
 desordres
   └── N-N ↔ link_desordres_troncons ↔ troncons
 
-desordres
+desordres / troncons / familles d'ouvrages / amenagements_hydrauliques / vegetation
   └── 1-N → observations
                   └── 1-N → photos
 
@@ -215,6 +238,11 @@ tronçons est réellement N-N : `link_desordres_troncons` possède un ID UUID
 technique pour QGIS et garantit l'unicité du couple
 `(desordre_id, troncon_id)`.
 
+`observations` possède une FK nullable explicite vers chacune des neuf familles
+métier actuellement prises en charge. Une contrainte `num_nonnulls(...) = 1`
+garantit qu'une observation a exactement un parent. Ces FK permettent à QGIS de
+découvrir les relations sans couple polymorphe `objet_type/objet_id`.
+
 Une ZEC représente conceptuellement un ensemble hydraulique pouvant associer
 une emprise de stockage et un ou plusieurs tronçons ; elle ne se réduit donc pas
 au seul polygone de `amenagements_hydrauliques`. Seules les relations présentes
@@ -233,6 +261,44 @@ auditée `cabbalr` seulement, les six UUID actuels sont provisoirement classés
 `ZEC`. Cette configuration n'est pas une règle SIRS universelle : une autre base,
 même avec les mêmes désignations, conserve `IND` en l'absence de mapping de type.
 
+## Végétation et gestion de la végétation
+
+Le modèle sépare les objets physiques des structures qui organisent leur
+gestion :
+
+- `plans_gestion_vegetation` conserve les plans et leur période ;
+- `parcelles_gestion_vegetation` porte les segments de gestion et leur
+  géométrie linéaire ;
+- `link_parcelles_gestion_troncons` conserve uniquement les relations source
+  explicites aux tronçons ;
+- `vegetation` regroupe les objets physiques sous les natures structurelles
+  `ARB`, `PEU`, `INV` ou `IND`.
+
+Chaque objet physique référence sa parcelle de gestion. Il ne duplique ni le
+tronçon, ni la digue, ni le système. La relation 1 parcelle–1 tronçon observée
+dans `cabbalr` est historique : la table de lien accepte plusieurs tronçons par
+parcelle et aucune intersection spatiale ne crée de relation.
+
+`vegetation.geometry` accepte uniquement Point, LineString, Polygon ou NULL en
+EPSG:3950. Le migrateur conserve une géométrie valide, transforme une ligne
+d'arbre dégénérée en son Point réellement stocké, ou utilise les positions
+début/fin identiques d'un arbre sans géométrie. Une géométrie explicite valide
+peut récupérer une source corrompue seulement si elle est compatible. Deux
+représentations valides divergentes, ou une corruption sans alternative, donnent
+`MANUAL_REVIEW` : la ligne métier est conservée avec une géométrie NULL et un
+warning dédié. `ST_MakeValid` n'est jamais appliqué automatiquement.
+
+Les décisions propres au corpus restent dans `migration/source_overrides.py`.
+Pour `cabbalr`, seul Bos3 sélectionne explicitement `explicitGeometry` après
+audit. Aucun nom tel que « Haie », « Bos1 » ou « Ran1 » n'est utilisé comme règle
+générique.
+
+Les traitements embarqués et les tableaux de planification sont différés, car
+ils ne contiennent actuellement aucune action opérationnelle. Aucune essence
+n'est extraite des commentaires : le texte source est conservé et une future
+relation N-N aux essences pourra être étudiée avec le modèle général des
+interventions et prestations.
+
 ## Migration CouchDB → PostgreSQL
 
 Le mapping actuel est issu de l'inspection des documents CouchDB :
@@ -247,17 +313,20 @@ Le mapping actuel est issu de l'inspection des documents CouchDB :
 | `TronconDigue` | `troncons` | `digueId`, libellé, validité et WKT conservés |
 | `Desordre` | `desordres` | champs métier, type et géométrie dérivée des positions |
 | `Desordre.linearId` | `link_desordres_troncons` | liaison N-N avec ID technique généré |
-| `Desordre.observations[]` | `observations` | aplatissement et injection de `desordre_id` |
+| `*.observations[]` | `observations` | aplatissement et injection de l'unique FK métier |
 | `Observation.urgenceId` | `observations.urgence_id` | référence `TEXT` vérifiée ou `NULL` |
 | `Observation.designation` | `observations.designation` | texte nullable, `NULL` si absent |
 | `Observation.photos[]` | `photos` | aplatissement et injection de `observation_id` |
+| `Objet.photos[]` | `observations` + `photos` | regroupement par objet/date sous une observation synthétique stable |
 | `Photo.chemin` | `photos.chemin_source` | valeur conservée, sans déduplication par chemin |
 
-Les observations conservent notamment `designation`, `date`, `evolution`,
-`urgenceId` et `valid`. Seules les photos imbriquées sous
-`Desordre → Observation → Photo` sont migrées ; les photos directes des tronçons
-et les attachments binaires restent hors du périmètre actuel. Les chemins de
-photos ne sont pas utilisés pour dédupliquer les lignes.
+Les observations conservent notamment `designation`, `date`, `evolution` et
+`valid`. `urgenceId` n'est conservé que pour les observations de désordres. Une
+photo métier n'a jamais de FK directe vers un tronçon, un ouvrage ou une
+végétation : le modèle impose systématiquement objet → observation → photo. Les
+UUID source sont préservés ; seules les observations synthétiques reçoivent un
+UUID v5 reproductible. Une date absente reste `NULL` avec warning. Les chemins
+de photos ne servent pas à dédupliquer les lignes.
 
 `Desordre.categorieDesordreId` sert uniquement à contrôler la cohérence avec la
 catégorie du type. Une incohérence est signalée, mais la catégorie source n'est
@@ -272,8 +341,8 @@ Exemple de comptes obtenus lors d'une migration validée de la source live :
 | `troncons` | 104 |
 | `desordres` | 1 597 |
 | `link_desordres_troncons` | 1 597 |
-| `observations` | 3 206 |
-| `photos` | 3 458 |
+| `observations` | 3 400 |
+| `photos` | 3 967 |
 | `ref_categories_desordre` | 7 |
 | `ref_types_desordre` | 74 |
 | `ref_urgences` | 5 |
@@ -296,17 +365,67 @@ validé puis inséré avec le SRID 3950, sans modification ni reprojection.
 
 ### Désordres
 
-`desordres.geometry` utilise le type générique `geometry(Geometry, 3950)` afin
-d'accepter plusieurs types géométriques. La géométrie cible est actuellement
-construite depuis `positionDebut` et `positionFin` :
+`desordres.geometry` utilise le type générique `geometry(Geometry, 3950)` avec
+une contrainte limitant les valeurs à Point, LineString, Polygon ou NULL. Pour
+les sources ponctuelles/linéaires historiques, la géométrie cible est construite
+depuis `positionDebut` et `positionFin` :
 
 - positions identiques : `POINT` ;
 - positions différentes : `LINESTRING` ;
 - positions absentes ou inexploitables : `NULL` avec warning.
 
-Le champ historique `Desordre.geometry` n'est pas considéré comme la géométrie
-canonique et n'est pas utilisé pour construire la valeur cible dans cette
-itération. Sa présence est seulement comptabilisée dans le rapport de migration.
+Un Polygon source explicite, compatible et valide est conservé. Aucun Polygon,
+MultiPolygon ou MultiLineString n'est fabriqué depuis des données ponctuelles ou
+linéaires. Le champ historique `Desordre.geometry` non polygonal n'est pas
+considéré comme canonique dans la migration actuelle de `cabbalr`.
+
+## Évolutions du modèle par rapport au schéma initial
+
+- Désordres/tronçons : la relation est N-N via
+  `link_desordres_troncons`, car chaque côté peut concerner plusieurs objets.
+- Géométries des désordres : Point, LineString et Polygon sont désormais admis.
+- Ouvrages : les nombreuses classes SIRS sont normalisées vers
+  `ouvrages_hydrauliques`, `equipements_mesure`,
+  `ouvrages_franchissement`, `mobilier` et `reseaux_techniques`. Leurs
+  référentiels PostgreSQL sont indépendants des anciens IDs SIRS ; les
+  abréviations métier pertinentes ont été conservées autant que possible.
+- Aménagements hydrauliques : la table polygonale possède ses liens explicites
+  aux tronçons et peut être référencée par un ouvrage hydraulique. Le classement
+  provisoire `ZEC` des six objets de `cabbalr` est un override de source, pas une
+  vérité universelle SIRS.
+- Végétation : les objets biologiques sont séparés des plans et parcelles de
+  gestion. La relation parcelle–tronçon est N-N ; le 1-1 observé dans `cabbalr`
+  n'est pas une contrainte conceptuelle. Les corruptions géométriques sont
+  reconstruites uniquement par règles contrôlées, sinon `MANUAL_REVIEW` conserve
+  la ligne avec une géométrie NULL.
+- Observations/photos : toute photo passe désormais par une observation, y
+  compris quand CouchDB la stockait directement sous l'objet métier.
+
+## Base CouchDB utilisée pendant le développement
+
+Le développement initial s'appuie principalement sur la base CouchDB
+`cabbalr`, qui reflète les usages d'une collectivité particulière. Elle ne couvre
+pas nécessairement toutes les classes, référentiels, outils et workflows de SIRS
+Digues : certains sont absents, rares ou uniquement remplis de valeurs par
+défaut.
+
+L'absence d'implémentation d'une classe ne signifie donc pas qu'elle est inutile
+dans SIRS, et un override `cabbalr` n'est jamais une règle générale. En bref :
+
+> modèle cible générique ≠ contenu particulier de `cabbalr`
+
+Tout fork utilisant une autre base doit commencer par exécuter
+`sirs-postgre diagnose`, puis analyser chaque classe et champ non couvert avant
+d'étendre le migrateur.
+
+## Ce qui n'est pas encore migré
+
+Le modèle général des prestations reste à construire, notamment pour
+`GlobalPrestation` et `PrestationAmenagementHydraulique`. Certaines dépendances
+sans parent explicite (`CheminAccesDependance`, `DesordreDependance`) ainsi que
+les traitements/planifications végétation restent différés. Cette liste résume
+les grandes familles connues ; l'inventaire exhaustif et actualisé est généré
+dans `audits/bilan.md`.
 
 ## Intégration QGIS
 
@@ -344,14 +463,20 @@ de migration.
 
 ```text
 sirs_postgre/
-├── cli.py                  # commandes check, recreate, init-schema, migrate-core
+├── cli.py                  # check, recreate, init-schema, migrate-core, diagnose
 ├── source/
 │   └── couchdb.py          # configuration et client CouchDB
 ├── target/
 │   ├── database.py         # diagnostic, recréation et initialisation PostgreSQL
 │   └── schema.py           # DDL du noyau courant
 └── migration/
-    ├── core.py             # lecture, mapping et insertion du noyau
+    ├── core.py             # orchestration transactionnelle du noyau
+    ├── amenagements.py     # aménagements hydrauliques
+    ├── coverage.py         # registre et bilan de couverture CouchDB réel
+    ├── media.py            # normalisation objet → observation → photo
+    ├── ouvrages.py         # ouvrages et équipements
+    ├── vegetation.py       # gestion et objets physiques de végétation
+    ├── source_overrides.py # décisions isolées propres aux bases sources
     └── validation.py       # contrôles exécutés avant commit
 
 qgis/
@@ -384,12 +509,8 @@ config.example.env          # modèle de configuration sans secrets
 Le noyau actuel sera progressivement complété par :
 
 - les prestations ;
-- la végétation ;
-- les ouvrages ;
-- les aménagements hydrauliques ;
 - les intervenants ;
 - des vues PostgreSQL et configurations QGIS orientées métier.
 
-Ces briques ne font pas encore partie du schéma ni de `migrate-core`. Leur
-modélisation sera définie après audit des données CouchDB et des usages métier,
-sans recopier mécaniquement le modèle historique.
+Ces briques seront définies après audit des données CouchDB et des usages
+métier, sans recopier mécaniquement le modèle historique.
