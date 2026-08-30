@@ -17,6 +17,7 @@ from sirs_postgre.migration.anomalies import (
     FAMILY_BY_CATEGORY,
     collect_anomalies,
     load_anomalies,
+    is_actionable,
     make_anomaly_id,
     merge_previous_status,
     resolve_anomaly,
@@ -152,10 +153,111 @@ class AnomalySerializationTest(unittest.TestCase):
             write_anomalies_csv(csv_path, [anomaly])
             decoded = json.loads(json_path.read_text(encoding="utf-8"))
             with csv_path.open(encoding="utf-8", newline="") as stream:
-                rows = list(csv.DictReader(stream))
+                reader = csv.DictReader(stream)
+                header = reader.fieldnames
+                rows = list(reader)
         self.assertEqual(decoded[0]["anomaly_id"], anomaly.anomaly_id)
         self.assertEqual(rows[0]["category"], "INVALID_GEOMETRY")
         self.assertIn("auto-intersection", rows[0]["details"])
+        self.assertEqual(rows[0]["actionable"], "TRUE")
+        self.assertEqual(rows[0]["family"], "DATA")
+        self.assertNotIn("actionable", decoded[0])
+        self.assertNotIn("family", decoded[0])
+        self.assertEqual(
+            header[:9],
+            [
+                "anomaly_id",
+                "active",
+                "actionable",
+                "status",
+                "severity",
+                "family",
+                "category",
+                "source_class",
+                "source_id",
+            ],
+        )
+
+    def test_csv_actionable_view_uses_exactly_the_shared_cli_rule(self):
+        anomalies = [
+            Anomaly.create(
+                category="INVALID_GEOMETRY",
+                severity="WARNING",
+                source_database=DATABASE,
+                source_class="Geometry",
+                source_id="actionable",
+            ),
+            replace(
+                Anomaly.create(
+                    category="MISSING_GEOMETRY",
+                    severity="WARNING",
+                    source_database=DATABASE,
+                    source_class="Geometry",
+                    source_id="inactive",
+                ),
+                active=False,
+            ),
+            replace(
+                Anomaly.create(
+                    category="BROKEN_REFERENCE",
+                    severity="ERROR",
+                    source_database=DATABASE,
+                    source_class="Relation",
+                    source_id="accepted",
+                ),
+                status="ACCEPTED_AS_IS",
+            ),
+            Anomaly.create(
+                category="DEFERRED_FEATURE",
+                severity="WARNING",
+                source_database=DATABASE,
+                source_class="Coverage",
+                source_id="coverage",
+            ),
+            Anomaly.create(
+                category="SOURCE_OVERRIDE",
+                severity="INFO",
+                source_database=DATABASE,
+                source_class="Decision",
+                source_id="decision",
+            ),
+        ]
+        expected_ids = {
+            anomaly.anomaly_id for anomaly in anomalies if is_actionable(anomaly)
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            json_path = Path(directory) / "anomalies.json"
+            csv_path = Path(directory) / "anomalies.csv"
+            write_anomalies_json(json_path, anomalies)
+            canonical_json = json.loads(json_path.read_text(encoding="utf-8"))
+            write_anomalies_csv(csv_path, anomalies)
+            with csv_path.open(encoding="utf-8", newline="") as stream:
+                csv_rows = list(csv.DictReader(stream))
+            output = io.StringIO()
+            with (
+                patch("sirs_postgre.cli.DEFAULT_JSON_PATH", json_path),
+                patch("sirs_postgre.cli.DEFAULT_CSV_PATH", csv_path),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["anomalies", "--actionable"]), 0)
+
+        csv_ids = {
+            row["anomaly_id"] for row in csv_rows if row["actionable"] == "TRUE"
+        }
+        cli_ids = {
+            line.split(" | ", 1)[0]
+            for line in output.getvalue().splitlines()
+            if line.startswith(tuple(expected_ids))
+        }
+        self.assertEqual(csv_ids, expected_ids)
+        self.assertEqual(cli_ids, expected_ids)
+        self.assertEqual(sum(row["actionable"] == "TRUE" for row in csv_rows), 1)
+        self.assertEqual(
+            [row["actionable"] for row in csv_rows],
+            ["TRUE", "FALSE", "FALSE", "FALSE", "FALSE"],
+        )
+        self.assertTrue(all("actionable" not in item for item in canonical_json))
+        self.assertTrue(all("family" not in item for item in canonical_json))
 
     def test_register_update_preserves_manual_resolution(self):
         anomaly = Anomaly.create(

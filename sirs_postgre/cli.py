@@ -10,12 +10,12 @@ from dotenv import load_dotenv
 
 from .migration import TargetNotEmptyError, migrate_core
 from .migration.anomalies import (
-    ACTIONABLE_CATEGORIES,
     DEFAULT_CSV_PATH,
     DEFAULT_JSON_PATH,
     FAMILY_BY_CATEGORY,
     RESOLUTION_STATUSES,
     load_anomalies,
+    is_actionable,
     resolve_anomaly,
 )
 from .migration.coverage import generate_coverage_report
@@ -418,13 +418,7 @@ def run_anomalies(args: argparse.Namespace) -> int:
             if anomaly.active and anomaly.status == "OPEN"
         ]
     if args.actionable:
-        selected = [
-            anomaly
-            for anomaly in selected
-            if anomaly.active
-            and anomaly.status == "OPEN"
-            and anomaly.category in ACTIONABLE_CATEGORIES
-        ]
+        selected = [anomaly for anomaly in selected if is_actionable(anomaly)]
     if args.category:
         selected = [
             anomaly for anomaly in selected if anomaly.category == args.category

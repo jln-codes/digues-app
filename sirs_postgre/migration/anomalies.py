@@ -146,6 +146,32 @@ REGISTER_FIELDS = (
     "resolution_comment",
 )
 
+CSV_FIELDS = (
+    "anomaly_id",
+    "active",
+    "actionable",
+    "status",
+    "severity",
+    "family",
+    "category",
+    "source_class",
+    "source_id",
+    *(
+        field
+        for field in REGISTER_FIELDS
+        if field
+        not in {
+            "anomaly_id",
+            "active",
+            "status",
+            "severity",
+            "category",
+            "source_class",
+            "source_id",
+        }
+    ),
+)
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -247,6 +273,16 @@ class Anomaly:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def is_actionable(anomaly: Anomaly) -> bool:
+    """Règle unique partagée par la CLI et la vue CSV exploitable."""
+
+    return (
+        anomaly.active
+        and anomaly.status == "OPEN"
+        and anomaly.category in ACTIONABLE_CATEGORIES
+    )
 
 
 @dataclass(frozen=True)
@@ -901,11 +937,14 @@ def write_anomalies_csv(path: Path, anomalies: Sequence[Anomaly]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=REGISTER_FIELDS)
+        writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
         writer.writeheader()
         for anomaly in anomalies:
+            values = anomaly.to_dict()
+            values["actionable"] = "TRUE" if is_actionable(anomaly) else "FALSE"
+            values["family"] = FAMILY_BY_CATEGORY[anomaly.category]
             writer.writerow(
-                {key: _csv_value(value) for key, value in anomaly.to_dict().items()}
+                {key: _csv_value(values.get(key)) for key in CSV_FIELDS}
             )
     temporary.replace(path)
 
