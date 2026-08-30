@@ -12,7 +12,9 @@ from uuid import UUID
 
 from sirs_postgre.cli import main
 from sirs_postgre.migration.anomalies import (
+    ACTIONABLE_CATEGORIES,
     Anomaly,
+    FAMILY_BY_CATEGORY,
     collect_anomalies,
     load_anomalies,
     make_anomaly_id,
@@ -283,6 +285,43 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertEqual(broken.severity, "BLOCKING")
         self.assertEqual(broken.source_field, "systemeEndiguementId")
 
+    def test_technical_access_without_amenagement_parent_is_only_deferred(self):
+        for database in ("cabbalr", "another_sirs_database"):
+            with self.subTest(database=database):
+                anomalies = self.collect(
+                    [
+                        source_doc(
+                            "CheminAccesDependance",
+                            UUID(int=42).hex,
+                            geometry="LINESTRING (0 0, 1 1)",
+                        )
+                    ],
+                    [
+                        coverage_row(
+                            "CheminAccesDependance",
+                            "NON_MIGREE",
+                            known=True,
+                        )
+                    ],
+                    database=database,
+                )
+                categories = [anomaly.category for anomaly in anomalies]
+                self.assertEqual(categories.count("DEFERRED_FEATURE"), 1)
+                self.assertNotIn("AMBIGUOUS_RELATION", categories)
+
+    def test_real_ambiguous_relation_category_remains_actionable_data(self):
+        anomaly = Anomaly.create(
+            category="AMBIGUOUS_RELATION",
+            severity="ERROR",
+            source_database=DATABASE,
+            source_class="FutureRelationSource",
+            source_id="relation-1",
+            source_field="parentIds",
+        )
+        self.assertEqual(anomaly.category, "AMBIGUOUS_RELATION")
+        self.assertEqual(FAMILY_BY_CATEGORY[anomaly.category], "DATA")
+        self.assertIn(anomaly.category, ACTIONABLE_CATEGORIES)
+
     def test_detects_unknown_class_and_actionable_unknown_fields(self):
         anomalies = self.collect(
             [source_doc("Future", "future-1"), source_doc("Digue", UUID(int=1).hex)],
@@ -418,6 +457,7 @@ class AnomalyCliTest(unittest.TestCase):
             ("MANUAL_REVIEW", "WARNING"),
             ("UNMIGRATED_MEDIA", "ERROR"),
             ("MISSING_REFERENCE_VALUE", "WARNING"),
+            ("AMBIGUOUS_RELATION", "ERROR"),
             ("PARTIALLY_MIGRATED_CLASS", "INFO"),
             ("DEFERRED_FEATURE", "WARNING"),
             ("SOURCE_OVERRIDE", "INFO"),
@@ -493,6 +533,7 @@ class AnomalyCliTest(unittest.TestCase):
             "MANUAL_REVIEW",
             "UNMIGRATED_MEDIA",
             "MISSING_REFERENCE_VALUE",
+            "AMBIGUOUS_RELATION",
         ):
             self.assertIn(category, text)
         for category in (

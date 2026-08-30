@@ -205,8 +205,10 @@ les plans/parcelles de gestion et les objets végétation depuis CouchDB dans
 l'ordre imposé par les relations. L'unique
 `OuvrageAssocieAmenagementHydraulique` rejoint désormais
 `ouvrages_hydrauliques` avec son parent explicitement stocké. Les huit
-`CheminAccesDependance` restent différés : leur parent n'est actuellement connu
-que par analyse spatiale et par leur désignation. L'unique
+`CheminAccesDependance` restent différés : ce sont des objets d'accès technique
+connus, distincts des `VoieAcces`, qui seront repris lors de la normalisation
+des voies et chemins d'accès. Aucune relation obligatoire vers un aménagement
+hydraulique n'est supposée et aucun rattachement spatial n'est inféré. L'unique
 `PrestationAmenagementHydraulique` reste également différée jusqu'au modèle
 général des prestations.
 Les anciennes photos directement portées par un objet sont regroupées par objet
@@ -536,11 +538,11 @@ d'étendre le migrateur.
 ## Ce qui n'est pas encore migré
 
 Le modèle général des prestations reste à construire, notamment pour
-`GlobalPrestation` et `PrestationAmenagementHydraulique`. Certaines dépendances
-sans parent explicite (`CheminAccesDependance`, `DesordreDependance`) ainsi que
-les traitements/planifications végétation restent différés. Cette liste résume
-les grandes familles connues ; l'inventaire exhaustif et actualisé est généré
-dans `audits/bilan.md`.
+`GlobalPrestation` et `PrestationAmenagementHydraulique`. Certaines dépendances,
+dont `DesordreDependance`, les accès techniques `CheminAccesDependance` ainsi
+que les traitements/planifications végétation restent différés. Cette liste
+résume les grandes familles connues ; l'inventaire exhaustif et actualisé est
+généré dans `audits/bilan.md`.
 
 ## Intégration QGIS
 

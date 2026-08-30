@@ -178,7 +178,10 @@ for _class_name in OUVRAGE_SOURCE_CLASSES:
             None,
             "NON_MIGREE",
             frozenset(),
-            comment="Différé : parent aménagement non explicitement stocké.",
+            comment=(
+                "Objet d'accès technique connu, différé jusqu'à la "
+                "normalisation des voies et chemins d'accès."
+            ),
         )
     else:
         COVERAGE_REGISTRY[_class_name] = CoverageRule(
@@ -474,7 +477,9 @@ def diagnose_documents(
             "",
             "- Prestations et `GlobalPrestation` : différées jusqu'au modèle général des prestations.",
             "- `PrestationAmenagementHydraulique` : différée.",
-            "- `CheminAccesDependance` sans parent explicite : différé.",
+            "- `CheminAccesDependance` : accès technique différé jusqu'à la "
+            "normalisation des voies et chemins d'accès ; aucune relation "
+            "parent n'est supposée.",
             "- `DesordreDependance` : différé.",
             "- Traitements et planifications végétation : différés.",
             "- Référentiels à zéro usage ou non exploités : classés `REFERENTIEL_IGNORE` dans le tableau.",

@@ -784,26 +784,6 @@ def collect_anomalies(
                         )
                     )
 
-    for document in grouped.get("CheminAccesDependance", ()):
-        source_id = _normal_uuid(document.get("_id"))
-        anomalies.append(
-            Anomaly.create(
-                category="AMBIGUOUS_RELATION",
-                severity="ERROR",
-                source_database=source_database,
-                source_class="CheminAccesDependance",
-                source_id=source_id,
-                source_field="amenagementHydrauliqueId",
-                target_table="ouvrages_franchissement",
-                target_field="amenagement_hydraulique_id",
-                message="Le parent aménagement n'est pas explicitement stocké.",
-                suggested_action="Valider et enregistrer une relation métier explicite ; ne pas déduire une FK spatiale.",
-                correction_location="COUCHDB",
-                detected_value=None,
-                expected_value="UUID explicite d'un AmenagementHydraulique",
-            )
-        )
-
     photo_occurrences, photos_without_id = _embedded_photo_occurrences(grouped)
     for occurrence in photos_without_id:
         owner_id = occurrence["owner_source_id"]

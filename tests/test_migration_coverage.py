@@ -64,6 +64,14 @@ class CoverageDiagnosticTest(unittest.TestCase):
         ):
             self.assertEqual(rule_for(class_name).status, "TECHNIQUE_IGNORE")
 
+    def test_technical_access_is_deferred_without_required_parent_or_inference(self):
+        rule = rule_for("CheminAccesDependance")
+        self.assertEqual(rule.status, "NON_MIGREE")
+        self.assertIsNone(rule.destination)
+        self.assertEqual(rule.consumed_fields, frozenset())
+        self.assertIn("accès technique", rule.comment)
+        self.assertNotIn("parent aménagement", rule.comment)
+
     def test_prestations_are_deferred_and_a_truly_new_class_stays_unknown(self):
         documents = [
             {
