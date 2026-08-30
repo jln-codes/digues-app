@@ -31,9 +31,11 @@ sont opérationnels. Ils couvrent :
 - la relation N-N `link_desordres_troncons` ;
 - les référentiels `ref_categories_desordre`, `ref_types_desordre` et
   `ref_urgences` ;
-- les tables `ouvrages_hydrauliques`, `equipements_mesure`,
-  `ouvrages_franchissement`, `mobilier` et `reseaux_techniques`, ainsi que leurs
-  cinq référentiels de types indépendants ;
+- les tables `ouvrages_hydrauliques`, `equipements_mesure`, `cheminements`,
+  `mobilier` et `reseaux_techniques`, ainsi que leurs cinq référentiels de types
+  indépendants ;
+- les relations explicites N-N `link_cheminements_troncons` et
+  `link_cheminements_desordres` ;
 - `amenagements_hydrauliques`, son référentiel minimal et la relation explicite
   N-N `link_amenagements_troncons` ;
 - les plans, parcelles de gestion et objets physiques de végétation, avec
@@ -200,14 +202,14 @@ la lecture de CouchDB relève de `migrate-core`.
 sirs-postgre migrate-core
 ```
 
-La commande migre le noyau, 110 objets Ouvrages, les aménagements hydrauliques,
+La commande migre le noyau, 118 objets Ouvrages, les aménagements hydrauliques,
 les plans/parcelles de gestion et les objets végétation depuis CouchDB dans
 l'ordre imposé par les relations. L'unique
 `OuvrageAssocieAmenagementHydraulique` rejoint désormais
-`ouvrages_hydrauliques` avec son parent explicitement stocké. Les huit
-`CheminAccesDependance` restent différés : ce sont des objets d'accès technique
-connus, distincts des `VoieAcces`, qui seront repris lors de la normalisation
-des voies et chemins d'accès. Aucune relation obligatoire vers un aménagement
+`ouvrages_hydrauliques` avec son parent explicitement stocké. Les ponts,
+escaliers d'accès, voies sur digue, voies d'accès et chemins d'accès techniques
+sont réunis dans `cheminements`. Les huit `CheminAccesDependance` sont migrés
+même sans parent ni tronçon : aucune relation obligatoire vers un aménagement
 hydraulique n'est supposée et aucun rattachement spatial n'est inféré. L'unique
 `PrestationAmenagementHydraulique` reste également différée jusqu'au modèle
 général des prestations.
@@ -502,10 +504,19 @@ considéré comme canonique dans la migration actuelle de `cabbalr`.
   `link_desordres_troncons`, car chaque côté peut concerner plusieurs objets.
 - Géométries des désordres : Point, LineString et Polygon sont désormais admis.
 - Ouvrages : les nombreuses classes SIRS sont normalisées vers
-  `ouvrages_hydrauliques`, `equipements_mesure`,
-  `ouvrages_franchissement`, `mobilier` et `reseaux_techniques`. Leurs
+  `ouvrages_hydrauliques`, `equipements_mesure`, `cheminements`, `mobilier` et
+  `reseaux_techniques`. Leurs
   référentiels PostgreSQL sont indépendants des anciens IDs SIRS ; les
   abréviations métier pertinentes ont été conservées autant que possible.
+- Cheminements : ponts, escaliers d'accès, voies sur digue, voies d'accès et
+  chemins d'accès techniques partagent une famille de déplacement, d'accès et
+  de franchissement. Le type conserve leur distinction métier. Le rattachement
+  à un tronçon est facultatif et passe par `link_cheminements_troncons`; les
+  liens vers les désordres explicitement stockés passent par
+  `link_cheminements_desordres`. Les données historiques sans parent sont
+  acceptées. Ni proximité, ni intersection, ni désignation ne créent de lien.
+  Des contraintes métier plus fortes pourront être proposées dans QGIS ou une
+  application sans empêcher la conservation de la source historique.
 - Aménagements hydrauliques : la table polygonale possède ses liens explicites
   aux tronçons et peut être référencée par un ouvrage hydraulique. Le classement
   provisoire `ZEC` des six objets de `cabbalr` est un override de source, pas une
@@ -539,8 +550,10 @@ d'étendre le migrateur.
 
 Le modèle général des prestations reste à construire, notamment pour
 `GlobalPrestation` et `PrestationAmenagementHydraulique`. Certaines dépendances,
-dont `DesordreDependance`, les accès techniques `CheminAccesDependance` ainsi
-que les traitements/planifications végétation restent différés. Cette liste
+dont `DesordreDependance`, ainsi que les traitements/planifications végétation
+restent différés. Les relations explicites entre prestations et cheminements
+sont également conservées dans le diagnostic en attente de ce futur modèle.
+Cette liste
 résume les grandes familles connues ; l'inventaire exhaustif et actualisé est
 généré dans `audits/bilan.md`.
 

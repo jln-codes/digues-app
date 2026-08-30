@@ -52,7 +52,7 @@ INTEGRITY_CHECKS = {
         SELECT COUNT(*) FROM public.observations
         WHERE num_nonnulls(
             desordre_id, troncon_id, ouvrage_hydraulique_id,
-            equipement_mesure_id, ouvrage_franchissement_id, mobilier_id,
+            equipement_mesure_id, cheminement_id, mobilier_id,
             reseau_technique_id, amenagement_hydraulique_id, vegetation_id
         ) <> 1
     """,
@@ -65,8 +65,8 @@ INTEGRITY_CHECKS = {
           ON oh.id = o.ouvrage_hydraulique_id
         LEFT JOIN public.equipements_mesure AS em
           ON em.id = o.equipement_mesure_id
-        LEFT JOIN public.ouvrages_franchissement AS ofr
-          ON ofr.id = o.ouvrage_franchissement_id
+        LEFT JOIN public.cheminements AS c
+          ON c.id = o.cheminement_id
         LEFT JOIN public.mobilier AS m ON m.id = o.mobilier_id
         LEFT JOIN public.reseaux_techniques AS rt
           ON rt.id = o.reseau_technique_id
@@ -77,7 +77,7 @@ INTEGRITY_CHECKS = {
            OR (o.troncon_id IS NOT NULL AND t.id IS NULL)
            OR (o.ouvrage_hydraulique_id IS NOT NULL AND oh.id IS NULL)
            OR (o.equipement_mesure_id IS NOT NULL AND em.id IS NULL)
-           OR (o.ouvrage_franchissement_id IS NOT NULL AND ofr.id IS NULL)
+           OR (o.cheminement_id IS NOT NULL AND c.id IS NULL)
            OR (o.mobilier_id IS NOT NULL AND m.id IS NULL)
            OR (o.reseau_technique_id IS NOT NULL AND rt.id IS NULL)
            OR (o.amenagement_hydraulique_id IS NOT NULL AND ah.id IS NULL)
@@ -189,12 +189,14 @@ def validate_core_migration(
             (
                 "ref_types_ouvrage_hydraulique",
                 "ref_types_equipement_mesure",
-                "ref_types_ouvrage_franchissement",
+                "ref_types_cheminement",
                 "ref_types_mobilier",
                 "ref_types_reseau_technique",
                 "ouvrages_hydrauliques",
                 "equipements_mesure",
-                "ouvrages_franchissement",
+                "cheminements",
+                "link_cheminements_troncons",
+                "link_cheminements_desordres",
                 "mobilier",
                 "reseaux_techniques",
             )
@@ -268,7 +270,7 @@ def validate_core_migration(
         ouvrage_ref_tables = {
             "ouvrages_hydrauliques": "ref_types_ouvrage_hydraulique",
             "equipements_mesure": "ref_types_equipement_mesure",
-            "ouvrages_franchissement": "ref_types_ouvrage_franchissement",
+            "cheminements": "ref_types_cheminement",
             "mobilier": "ref_types_mobilier",
             "reseaux_techniques": "ref_types_reseau_technique",
         }
@@ -284,28 +286,33 @@ def validate_core_migration(
                     f"{reference_table}: id/abrege/valid non conforme"
                 )
         for table, reference_table in ouvrage_ref_tables.items():
+            type_column = (
+                "type_cheminement_id" if table == "cheminements" else "type_id"
+            )
             cursor.execute(
                 f"""
                 SELECT COUNT(*)
                 FROM public.{table} AS o
-                LEFT JOIN public.{reference_table} AS r ON r.id = o.type_id
+                LEFT JOIN public.{reference_table} AS r
+                  ON r.id = o.{type_column}
                 WHERE r.id IS NULL
                 """
             )
             row = cursor.fetchone()
             if not row or int(row[0]) != 0:
-                ouvrage_errors.append(f"{table}: type_id invalide")
-            cursor.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM public.{table} AS o
-                LEFT JOIN public.troncons AS t ON t.id = o.troncon_id
-                WHERE o.troncon_id IS NOT NULL AND t.id IS NULL
-                """
-            )
-            row = cursor.fetchone()
-            if not row or int(row[0]) != 0:
-                ouvrage_errors.append(f"{table}: troncon_id invalide")
+                ouvrage_errors.append(f"{table}: {type_column} invalide")
+            if table != "cheminements":
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM public.{table} AS o
+                    LEFT JOIN public.troncons AS t ON t.id = o.troncon_id
+                    WHERE o.troncon_id IS NOT NULL AND t.id IS NULL
+                    """
+                )
+                row = cursor.fetchone()
+                if not row or int(row[0]) != 0:
+                    ouvrage_errors.append(f"{table}: troncon_id invalide")
             cursor.execute(
                 f"SELECT COUNT(*) FROM public.{table} "
                 "WHERE geometry IS NOT NULL AND ST_SRID(geometry) <> 3950"
@@ -348,13 +355,49 @@ def validate_core_migration(
             if not row or int(row[0]) != 0:
                 ouvrage_errors.append(f"{table}: géométrie autre que Point")
 
+        for link_table, other_table, other_column in (
+            ("link_cheminements_troncons", "troncons", "troncon_id"),
+            ("link_cheminements_desordres", "desordres", "desordre_id"),
+        ):
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM public.{link_table} AS l
+                LEFT JOIN public.cheminements AS c
+                  ON c.id = l.cheminement_id
+                LEFT JOIN public.{other_table} AS o
+                  ON o.id = l.{other_column}
+                WHERE c.id IS NULL OR o.id IS NULL
+                """
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                ouvrage_errors.append(f"{link_table}: référence orpheline")
+            cursor.execute(
+                f"""
+                SELECT COUNT(*) - COUNT(DISTINCT (cheminement_id, {other_column}))
+                FROM public.{link_table}
+                """
+            )
+            row = cursor.fetchone()
+            if not row or int(row[0]) != 0:
+                ouvrage_errors.append(f"{link_table}: couple dupliqué")
+            cursor.execute(f"SELECT COUNT(*) FROM public.{link_table}")
+            row = cursor.fetchone()
+            actual_link_count = int(row[0]) if row else -1
+            if actual_link_count != expected_counts[link_table]:
+                ouvrage_errors.append(
+                    f"{link_table}: attendu {expected_counts[link_table]}, "
+                    f"obtenu {actual_link_count}"
+                )
+
         cursor.execute(
             """
             SELECT COUNT(*)
             FROM (
                 SELECT id FROM public.ouvrages_hydrauliques
                 UNION ALL SELECT id FROM public.equipements_mesure
-                UNION ALL SELECT id FROM public.ouvrages_franchissement
+                UNION ALL SELECT id FROM public.cheminements
                 UNION ALL SELECT id FROM public.mobilier
                 UNION ALL SELECT id FROM public.reseaux_techniques
             ) AS all_ouvrages
@@ -367,7 +410,7 @@ def validate_core_migration(
             FROM (
                 SELECT id FROM public.ouvrages_hydrauliques
                 UNION ALL SELECT id FROM public.equipements_mesure
-                UNION ALL SELECT id FROM public.ouvrages_franchissement
+                UNION ALL SELECT id FROM public.cheminements
                 UNION ALL SELECT id FROM public.mobilier
                 UNION ALL SELECT id FROM public.reseaux_techniques
             ) AS all_ouvrages
@@ -379,7 +422,7 @@ def validate_core_migration(
             for table in (
                 "ouvrages_hydrauliques",
                 "equipements_mesure",
-                "ouvrages_franchissement",
+                "cheminements",
                 "mobilier",
                 "reseaux_techniques",
             )
@@ -421,6 +464,31 @@ def validate_core_migration(
         row = cursor.fetchone()
         if not row or int(row[0]) != 0:
             ouvrage_errors.append("BorneDigue présent dans le schéma cible")
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN (
+                  'ouvrages_franchissement',
+                  'ref_types_ouvrage_franchissement'
+              )
+            """
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            ouvrage_errors.append("ancien modèle cible de franchissement présent")
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND column_name = 'ouvrage_franchissement_id'
+            """
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            ouvrage_errors.append("ancienne FK ouvrage_franchissement_id présente")
         if ouvrage_errors:
             raise MigrationValidationError(
                 "Validation du bloc Ouvrages invalide : " + "; ".join(ouvrage_errors)

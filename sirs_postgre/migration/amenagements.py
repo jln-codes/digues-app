@@ -358,7 +358,9 @@ def prepare_amenagements_migration(
             )
         ),
         associated_ouvrages=tuple(associated_ouvrages),
-        deferred_chemins=len(source_documents.get("CheminAccesDependance", ())),
+        # Les chemins d'accès techniques sont désormais migrés par le bloc
+        # Cheminements. Ils ne dépendent pas d'un aménagement hydraulique.
+        deferred_chemins=0,
         deferred_prestations=len(
             source_documents.get("PrestationAmenagementHydraulique", ())
         ),

@@ -102,6 +102,39 @@ class MediaMigrationTest(unittest.TestCase):
         self.assertEqual(len(prepared.warnings), 1)
         self.assertIn("date absente", prepared.warnings[0])
 
+    def test_direct_technical_access_photo_becomes_cheminement_media(self):
+        cheminement_id = UUID(int=20)
+        photo_id = UUID(int=21)
+        prepared = prepare_media_migration(
+            {
+                "CheminAccesDependance": [
+                    {
+                        "_id": cheminement_id.hex,
+                        "photos": [
+                            {
+                                "id": photo_id.hex,
+                                "chemin": "chemin-technique.jpg",
+                                "date": "2026-08-30",
+                                "valid": True,
+                            }
+                        ],
+                    }
+                ]
+            },
+            owner_bindings={
+                ("CheminAccesDependance", cheminement_id): OwnerBinding(
+                    "cheminement_id", cheminement_id
+                )
+            },
+            urgence_ids=set(),
+        )
+        self.assertEqual(len(prepared.observations), 1)
+        self.assertTrue(prepared.observations[0].synthetic)
+        self.assertEqual(prepared.observations[0].cheminement_id, cheminement_id)
+        self.assertEqual(prepared.photos[0].id, photo_id)
+        self.assertEqual(prepared.photos[0].observation_id, prepared.observations[0].id)
+        self.assertEqual(prepared.direct_other_photos, 1)
+
     def test_duplicate_photo_uuid_is_refused(self):
         owner_id = UUID(int=1)
         photo = {

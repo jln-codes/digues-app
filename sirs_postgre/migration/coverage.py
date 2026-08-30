@@ -175,25 +175,50 @@ _OUVRAGE_DESTINATIONS = "famille Ouvrages cible, observations, photos"
 for _class_name in OUVRAGE_SOURCE_CLASSES:
     if _class_name == "CheminAccesDependance":
         COVERAGE_REGISTRY[_class_name] = CoverageRule(
-            None,
-            "NON_MIGREE",
-            frozenset(),
+            "cheminements, observations, photos",
+            "MIGREE",
+            BASE_FIELDS | MEDIA_FIELDS | _fields(
+                "designation", "libelle", "commentaire", "date_debut",
+                "date_fin", "geometry", "largeur", "statut", "revetementId"
+            ),
             comment=(
-                "Objet d'accès technique connu, différé jusqu'à la "
-                "normalisation des voies et chemins d'accès."
+                "Accès technique migré sans parent obligatoire ; aucune "
+                "relation spatiale n'est inférée."
             ),
         )
     else:
+        destination = _OUVRAGE_DESTINATIONS
+        extra_fields = frozenset()
+        if _class_name in {
+            "OuvrageFranchissement", "OuvrageParticulier", "VoieDigue", "VoieAcces"
+        }:
+            destination = "cheminements, liens explicites, observations, photos"
+            if _class_name == "OuvrageParticulier":
+                destination = (
+                    "familles Ouvrages cibles et cheminements, liens explicites, "
+                    "observations, photos"
+                )
+            extra_fields = _fields(
+                "libelle", "date_fin", "largeur", "usageId", "statut",
+                "materiauId", "revetementId", "positionId", "coteId",
+                "securiteId", "orientationOuvrageId", "positionHautId",
+                "positionBasId", "revetementHautId", "revetementBasId",
+                "dimensionHorizontale", "dimensionVerticale", "numeroSecteur",
+                "desordreIds",
+            )
         COVERAGE_REGISTRY[_class_name] = CoverageRule(
-            _OUVRAGE_DESTINATIONS,
+            destination,
             "PARTIELLE",
             BASE_FIELDS | MEDIA_FIELDS | _fields(
                 "designation", "commentaire", "date_debut", "geometry", "linearId",
                 "typeOuvrageParticulierId", "typeOuvrageHydroAssocieId",
                 "typeOuvrageFranchissementId", "typeVoieDigueId",
                 "typeReseauTelecomEnergieId", "amenagementHydrauliqueId", "typeId"
+            ) | extra_fields,
+            comment=(
+                "Objet et médias migrés ; attributs de cheminement conservés "
+                "lorsqu'ils s'appliquent ; prestations différées."
             ),
-            comment="Objet et médias migrés ; champs spécialisés et prestations différés.",
         )
 
 for _class_name in ("ArbreVegetation", "PeuplementVegetation", "InvasiveVegetation"):
@@ -477,9 +502,8 @@ def diagnose_documents(
             "",
             "- Prestations et `GlobalPrestation` : différées jusqu'au modèle général des prestations.",
             "- `PrestationAmenagementHydraulique` : différée.",
-            "- `CheminAccesDependance` : accès technique différé jusqu'à la "
-            "normalisation des voies et chemins d'accès ; aucune relation "
-            "parent n'est supposée.",
+            "- `CheminAccesDependance` : migré dans `cheminements` sans parent "
+            "obligatoire et sans inférence spatiale.",
             "- `DesordreDependance` : différé.",
             "- Traitements et planifications végétation : différés.",
             "- Référentiels à zéro usage ou non exploités : classés `REFERENTIEL_IGNORE` dans le tableau.",

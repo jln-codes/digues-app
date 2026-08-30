@@ -130,6 +130,7 @@ REGISTER_FIELDS = (
     "source_database",
     "source_class",
     "source_id",
+    "source_document_id",
     "source_field",
     "target_table",
     "target_id",
@@ -156,6 +157,7 @@ CSV_FIELDS = (
     "category",
     "source_class",
     "source_id",
+    "source_document_id",
     *(
         field
         for field in REGISTER_FIELDS
@@ -168,6 +170,7 @@ CSV_FIELDS = (
             "category",
             "source_class",
             "source_id",
+            "source_document_id",
         }
     ),
 )
@@ -210,6 +213,7 @@ class Anomaly:
     source_database: str | None = None
     source_class: str | None = None
     source_id: str | None = None
+    source_document_id: str | None = None
     source_field: str | None = None
     target_table: str | None = None
     target_id: str | None = None
@@ -335,6 +339,13 @@ def _normal_uuid(value: Any) -> str | None:
         return str(value) if value not in (None, "") else None
 
 
+def _source_document_id(document: Mapping[str, Any]) -> str | None:
+    """Retourne le ``_id`` CouchDB brut, sans aucune normalisation UUID."""
+
+    value = document.get("_id")
+    return str(value) if value not in (None, "") else None
+
+
 def _geometry_details(document: Mapping[str, Any]) -> dict[str, Any]:
     geometry = inspect_wkt(document.get("geometry"))
     if geometry is None:
@@ -372,6 +383,7 @@ def _embedded_photo_occurrences(
     for class_name, documents in grouped.items():
         for document in documents:
             owner_id = _normal_uuid(document.get("_id"))
+            source_document_id = _source_document_id(document)
             containers: list[tuple[str, Any]] = [("photos", document.get("photos"))]
             observations = document.get("observations") or ()
             if isinstance(observations, Sequence) and not isinstance(
@@ -395,6 +407,7 @@ def _embedded_photo_occurrences(
                     occurrence = {
                         "source_class": class_name,
                         "owner_source_id": owner_id,
+                        "source_document_id": source_document_id,
                         "source_field": f"{container}[{photo_index}].id",
                     }
                     photo_id = _normal_uuid(photo.get("id") or photo.get("_id"))
@@ -459,6 +472,9 @@ def collect_anomalies(
                 source_database=source_database,
                 source_class="$sirs",
                 source_id="$sirs",
+                source_document_id=("$sirs" if any(
+                    _source_document_id(document) == "$sirs" for document in documents
+                ) else None),
                 source_field="epsgCode",
                 message=str(crs_error),
                 suggested_action=(
@@ -482,6 +498,7 @@ def collect_anomalies(
                         source_database=source_database,
                         source_class=class_name,
                         source_id=_normal_uuid(document.get("_id")) or str(document.get("_id") or ""),
+                        source_document_id=_source_document_id(document),
                         source_field="crsName",
                         message="Le crsName objet contredit le CRS global sans le remplacer.",
                         details={"authority": crs_info.source},
@@ -575,6 +592,7 @@ def collect_anomalies(
                                 source_database=source_database,
                                 source_class=source_class,
                                 source_id=source_id,
+                                source_document_id=_source_document_id(document),
                                 source_field=field,
                                 message=f"La référence obligatoire {field} est absente.",
                                 suggested_action="Renseigner le parent explicite dans CouchDB.",
@@ -592,6 +610,7 @@ def collect_anomalies(
                             source_database=source_database,
                             source_class=source_class,
                             source_id=source_id,
+                            source_document_id=_source_document_id(document),
                             source_field=field,
                             message=f"{field} référence un {target_class} absent.",
                             details={"target_source_class": target_class},
@@ -612,6 +631,7 @@ def collect_anomalies(
                     source_database=source_database,
                     source_class="Desordre",
                     source_id=source_id,
+                    source_document_id=_source_document_id(document),
                     source_field="typeDesordreId",
                     target_table="desordres",
                     target_id=source_id,
@@ -639,6 +659,7 @@ def collect_anomalies(
                         source_database=source_database,
                         source_class=row.source_class,
                         source_id=str(row.id),
+                        source_document_id=_source_document_id(document),
                         source_field="geometry",
                         target_table="vegetation",
                         target_id=str(row.id),
@@ -659,6 +680,7 @@ def collect_anomalies(
                         source_database=source_database,
                         source_class=row.source_class,
                         source_id=str(row.id),
+                        source_document_id=_source_document_id(document),
                         source_field="geometry",
                         target_table="vegetation",
                         target_id=str(row.id),
@@ -704,6 +726,7 @@ def collect_anomalies(
                         source_database=source_database,
                         source_class=source_class,
                         source_id=source_id,
+                        source_document_id=_source_document_id(document),
                         source_field="geometry",
                         message="La géométrie source est invalide et ne doit pas être corrigée silencieusement.",
                         details=_geometry_details(document),
@@ -724,6 +747,9 @@ def collect_anomalies(
                 source_database=source_database,
                 source_class="AmenagementHydraulique",
                 source_id=source_id,
+                source_document_id=_source_document_id(
+                    index[("AmenagementHydraulique", source_id or "")]
+                ),
                 source_field="type_id",
                 target_table="amenagements_hydrauliques",
                 target_id=source_id,
@@ -760,6 +786,7 @@ def collect_anomalies(
                 source_database=source_database,
                 source_class=source_class,
                 source_id=source_id,
+                source_document_id=_source_document_id(document),
                 source_field="geometry",
                 target_table="vegetation",
                 target_id=source_id,
@@ -790,6 +817,7 @@ def collect_anomalies(
                             source_database=source_database,
                             source_class=class_name,
                             source_id=photo_id,
+                            source_document_id=_source_document_id(document),
                             source_field="photos.date",
                             target_table="photos",
                             target_id=photo_id,
@@ -810,6 +838,7 @@ def collect_anomalies(
                             source_database=source_database,
                             source_class=class_name,
                             source_id=photo_id,
+                            source_document_id=_source_document_id(document),
                             source_field="photos",
                             message="La photo n'est pas migrée car son objet parent n'est pas migré.",
                             details={"owner_source_id": owner_id},
@@ -831,6 +860,7 @@ def collect_anomalies(
                 source_database=source_database,
                 source_class=occurrence["source_class"],
                 source_id=owner_id,
+                source_document_id=occurrence["source_document_id"],
                 source_field=source_field,
                 message="La photo embarquée ne possède aucun identifiant source.",
                 details={"owner_source_id": owner_id},
@@ -843,6 +873,11 @@ def collect_anomalies(
     for photo_id, occurrences in photo_occurrences.items():
         if len(occurrences) < 2:
             continue
+        source_document_ids = {
+            occurrence["source_document_id"]
+            for occurrence in occurrences
+            if occurrence["source_document_id"] is not None
+        }
         anomalies.append(
             Anomaly.create(
                 category="UNMIGRATED_MEDIA",
@@ -850,6 +885,11 @@ def collect_anomalies(
                 source_database=source_database,
                 source_class="Photo",
                 source_id=photo_id,
+                source_document_id=(
+                    next(iter(source_document_ids))
+                    if len(source_document_ids) == 1
+                    else None
+                ),
                 source_field="id",
                 message="Le même UUID photo apparaît plusieurs fois dans la source.",
                 details={"occurrences": occurrences, "occurrence_count": len(occurrences)},

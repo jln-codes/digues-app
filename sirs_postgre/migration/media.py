@@ -21,7 +21,7 @@ OWNER_FIELDS = (
     "troncon_id",
     "ouvrage_hydraulique_id",
     "equipement_mesure_id",
-    "ouvrage_franchissement_id",
+    "cheminement_id",
     "mobilier_id",
     "reseau_technique_id",
     "amenagement_hydraulique_id",
@@ -54,7 +54,7 @@ class ObservationRow:
     troncon_id: UUID | None = None
     ouvrage_hydraulique_id: UUID | None = None
     equipement_mesure_id: UUID | None = None
-    ouvrage_franchissement_id: UUID | None = None
+    cheminement_id: UUID | None = None
     mobilier_id: UUID | None = None
     reseau_technique_id: UUID | None = None
     amenagement_hydraulique_id: UUID | None = None

@@ -74,8 +74,8 @@ TABLE_DEFINITIONS = {
             valid BOOLEAN NOT NULL
         )
     """,
-    "ref_types_ouvrage_franchissement": """
-        CREATE TABLE IF NOT EXISTS public.ref_types_ouvrage_franchissement (
+    "ref_types_cheminement": """
+        CREATE TABLE IF NOT EXISTS public.ref_types_cheminement (
             id TEXT PRIMARY KEY,
             code TEXT NOT NULL UNIQUE,
             abrege TEXT NOT NULL UNIQUE,
@@ -322,22 +322,66 @@ TABLE_DEFINITIONS = {
                 REFERENCES public.troncons (id)
         )
     """,
-    "ouvrages_franchissement": """
-        CREATE TABLE IF NOT EXISTS public.ouvrages_franchissement (
+    "cheminements": """
+        CREATE TABLE IF NOT EXISTS public.cheminements (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            type_id TEXT NOT NULL,
+            type_cheminement_id TEXT NOT NULL,
             designation TEXT NULL,
+            libelle TEXT NULL,
             commentaire TEXT NULL,
             date_debut DATE NULL,
+            date_fin DATE NULL,
+            largeur DOUBLE PRECISION NULL,
+            usage_source_id TEXT NULL,
+            statut_source BOOLEAN NULL,
+            materiau_source_id TEXT NULL,
+            revetement_source_id TEXT NULL,
+            position_source_id TEXT NULL,
+            cote_source_id TEXT NULL,
+            securite_source_id TEXT NULL,
+            orientation_ouvrage_source_id TEXT NULL,
+            position_haut_source_id TEXT NULL,
+            position_bas_source_id TEXT NULL,
+            revetement_haut_source_id TEXT NULL,
+            revetement_bas_source_id TEXT NULL,
+            dimension_horizontale DOUBLE PRECISION NULL,
+            dimension_verticale DOUBLE PRECISION NULL,
+            numero_secteur INTEGER NULL,
             geometry geometry(Geometry, 3950) NULL,
-            troncon_id UUID NULL,
             valid BOOLEAN NOT NULL,
-            CONSTRAINT ouvrages_franchissement_type_fk
-                FOREIGN KEY (type_id)
-                REFERENCES public.ref_types_ouvrage_franchissement (id),
-            CONSTRAINT ouvrages_franchissement_troncons_fk
+            CONSTRAINT cheminements_type_fk
+                FOREIGN KEY (type_cheminement_id)
+                REFERENCES public.ref_types_cheminement (id)
+        )
+    """,
+    "link_cheminements_troncons": """
+        CREATE TABLE IF NOT EXISTS public.link_cheminements_troncons (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            cheminement_id UUID NOT NULL,
+            troncon_id UUID NOT NULL,
+            CONSTRAINT link_cheminements_troncons_cheminements_fk
+                FOREIGN KEY (cheminement_id)
+                REFERENCES public.cheminements (id),
+            CONSTRAINT link_cheminements_troncons_troncons_fk
                 FOREIGN KEY (troncon_id)
-                REFERENCES public.troncons (id)
+                REFERENCES public.troncons (id),
+            CONSTRAINT link_cheminements_troncons_unique
+                UNIQUE (cheminement_id, troncon_id)
+        )
+    """,
+    "link_cheminements_desordres": """
+        CREATE TABLE IF NOT EXISTS public.link_cheminements_desordres (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            cheminement_id UUID NOT NULL,
+            desordre_id UUID NOT NULL,
+            CONSTRAINT link_cheminements_desordres_cheminements_fk
+                FOREIGN KEY (cheminement_id)
+                REFERENCES public.cheminements (id),
+            CONSTRAINT link_cheminements_desordres_desordres_fk
+                FOREIGN KEY (desordre_id)
+                REFERENCES public.desordres (id),
+            CONSTRAINT link_cheminements_desordres_unique
+                UNIQUE (cheminement_id, desordre_id)
         )
     """,
     "mobilier": """
@@ -383,7 +427,7 @@ TABLE_DEFINITIONS = {
             troncon_id UUID NULL,
             ouvrage_hydraulique_id UUID NULL,
             equipement_mesure_id UUID NULL,
-            ouvrage_franchissement_id UUID NULL,
+            cheminement_id UUID NULL,
             mobilier_id UUID NULL,
             reseau_technique_id UUID NULL,
             amenagement_hydraulique_id UUID NULL,
@@ -403,9 +447,9 @@ TABLE_DEFINITIONS = {
             CONSTRAINT observations_equipements_mesure_fk
                 FOREIGN KEY (equipement_mesure_id)
                 REFERENCES public.equipements_mesure (id),
-            CONSTRAINT observations_ouvrages_franchissement_fk
-                FOREIGN KEY (ouvrage_franchissement_id)
-                REFERENCES public.ouvrages_franchissement (id),
+            CONSTRAINT observations_cheminements_fk
+                FOREIGN KEY (cheminement_id)
+                REFERENCES public.cheminements (id),
             CONSTRAINT observations_mobilier_fk
                 FOREIGN KEY (mobilier_id) REFERENCES public.mobilier (id),
             CONSTRAINT observations_reseaux_techniques_fk
@@ -422,7 +466,7 @@ TABLE_DEFINITIONS = {
                 CHECK (
                     num_nonnulls(
                         desordre_id, troncon_id, ouvrage_hydraulique_id,
-                        equipement_mesure_id, ouvrage_franchissement_id,
+                        equipement_mesure_id, cheminement_id,
                         mobilier_id, reseau_technique_id,
                         amenagement_hydraulique_id, vegetation_id
                     ) = 1

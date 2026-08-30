@@ -144,6 +144,21 @@ CORE_FIELD_MAPPINGS = {
         "RefOuvrageAssocieAH:3 → DVS",
         "UUID et WKT historiques conservés dans ouvrages_hydrauliques",
     ),
+    "cheminements": (
+        "classes/type source explicites → PNT/ESC/CHE/VAC/CAC → type_cheminement_id",
+        "_id → UUID historique → id",
+        "attributs communs et spécialisés source → colonnes nullables distinctes",
+        "geometry WKT + CRS global → assignation/reprojection centralisée → EPSG:3950",
+        "aucune géométrie ou relation spatiale n'est inventée",
+    ),
+    "link_cheminements_troncons": (
+        "linearId explicite et valide uniquement → troncon_id",
+        "UUID du cheminement source → cheminement_id",
+    ),
+    "link_cheminements_desordres": (
+        "desordreIds explicites et valides uniquement → desordre_id",
+        "UUID du cheminement source → cheminement_id",
+    ),
     "vegetation": (
         "classes source → nature structurelle ARB/PEU/INV",
         "parcelleId explicite → parcelle_gestion_id",
@@ -686,6 +701,7 @@ def prepare_core_migration(
             ouvrages = prepare_ouvrages_migration(
                 source_documents,
                 troncon_ids=troncon_ids,
+                desordre_ids={row.id for row in desordres},
                 strict_counts=False,
             )
         except Exception as exc:
@@ -732,7 +748,7 @@ def prepare_core_migration(
     ouvrage_owner_fields = {
         "ouvrages_hydrauliques": "ouvrage_hydraulique_id",
         "equipements_mesure": "equipement_mesure_id",
-        "ouvrages_franchissement": "ouvrage_franchissement_id",
+        "cheminements": "cheminement_id",
         "mobilier": "mobilier_id",
         "reseaux_techniques": "reseau_technique_id",
     }
@@ -831,7 +847,7 @@ INSERT_STATEMENTS = {
     "observations": """
         INSERT INTO public.observations
             (id, desordre_id, troncon_id, ouvrage_hydraulique_id,
-             equipement_mesure_id, ouvrage_franchissement_id, mobilier_id,
+             equipement_mesure_id, cheminement_id, mobilier_id,
              reseau_technique_id, amenagement_hydraulique_id, vegetation_id,
              urgence_id, designation, date, evolution, valid)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)

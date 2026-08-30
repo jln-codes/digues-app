@@ -200,7 +200,7 @@ class AmenagementsMigrationTest(unittest.TestCase):
         self.assertEqual(prepared.associated_ouvrages[0].type_id, "IND")
         self.assertTrue(any("ouvrage type_id=IND" in warning for warning in prepared.warnings))
 
-    def test_deferred_classes_are_counted_without_rows(self):
+    def test_only_prestations_remain_deferred_from_amenagements(self):
         source = source_fixture(
             amenagement_document(),
             CheminAccesDependance=[{"_id": UUID(int=index).hex} for index in range(1, 9)],
@@ -209,7 +209,7 @@ class AmenagementsMigrationTest(unittest.TestCase):
         prepared = prepare_amenagements_migration(
             source, troncon_ids=set(), source_database="autre_base"
         )
-        self.assertEqual(prepared.deferred_chemins, 8)
+        self.assertEqual(prepared.deferred_chemins, 0)
         self.assertEqual(prepared.deferred_prestations, 1)
         self.assertEqual(len(prepared.amenagements), 1)
 

@@ -114,7 +114,23 @@ def full_source_fixture():
                 source_type="RefReseauTelecomEnergie:1",
                 type_field="typeReseauTelecomEnergieId",
             )
+            )
+    for index in range(8):
+        chemin = document(
+            geometry=(
+                "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"
+                if index == 0
+                else "LINESTRING (1 2, 3 4)"
+            )
         )
+        chemin.pop("linearId")
+        chemin.update(
+            libelle=f"Accès technique {index}",
+            largeur=0.0,
+            statut=False,
+            revetementId="RefRevetement:5" if index == 0 else None,
+        )
+        source["CheminAccesDependance"].append(chemin)
     for source_class, count in DEFERRED_SOURCE_COUNTS.items():
         for _ in range(count):
             source[source_class].append({"_id": UUID(int=counter).hex, "valid": True})
@@ -129,7 +145,7 @@ class OuvragesMigrationTest(unittest.TestCase):
             {
                 "ref_types_ouvrage_hydraulique": 17,
                 "ref_types_equipement_mesure": 6,
-                "ref_types_ouvrage_franchissement": 11,
+                "ref_types_cheminement": 11,
                 "ref_types_mobilier": 8,
                 "ref_types_reseau_technique": 9,
             },
@@ -147,15 +163,27 @@ class OuvragesMigrationTest(unittest.TestCase):
     def test_strict_matrix_explains_all_118_objects(self):
         source = full_source_fixture()
         prepared = prepare_ouvrages_migration(source, troncon_ids={TRONCON_ID})
-        self.assertEqual(prepared.migrated_count, 109)
-        self.assertEqual(prepared.deferred_count, 9)
+        self.assertEqual(prepared.migrated_count, 117)
+        self.assertEqual(prepared.deferred_count, 1)
         self.assertEqual(prepared.explained_count, 118)
         self.assertEqual(
             {table: len(rows) for table, rows in prepared.rows.items()},
             EXPECTED_BUSINESS_COUNTS,
         )
         self.assertEqual(sum(prepared.invalid_counts.values()), 14)
-        self.assertTrue(all(row.troncon_id == TRONCON_ID for rows in prepared.rows.values() for row in rows))
+        self.assertEqual(len(prepared.cheminement_troncon_links), 20)
+        self.assertTrue(
+            all(
+                row.troncon_id == TRONCON_ID
+                for table, rows in prepared.rows.items()
+                if table != "cheminements"
+                for row in rows
+            )
+        )
+        self.assertEqual(
+            sum(row.type_cheminement_id == "CAC" for row in prepared.rows["cheminements"]),
+            8,
+        )
 
     def test_conservative_type_mapping_is_not_inferred_further(self):
         prepared = prepare_ouvrages_migration(
@@ -200,6 +228,69 @@ class OuvragesMigrationTest(unittest.TestCase):
         source["OuvrageParticulier"][0]["typeOuvrageParticulierId"] = "RefOuvrageParticulier:404"
         with self.assertRaisesRegex(OuvragesMigrationError, "Distribution des types"):
             prepare_ouvrages_migration(source, troncon_ids={TRONCON_ID})
+
+    def test_cheminements_preserve_specialized_fields_and_geometry(self):
+        source = full_source_fixture()
+        prepared = prepare_ouvrages_migration(source, troncon_ids={TRONCON_ID})
+        chemins = [
+            row
+            for row in prepared.rows["cheminements"]
+            if row.type_cheminement_id == "CAC"
+        ]
+        self.assertEqual(len(chemins), 8)
+        polygon = next(row for row in chemins if row.geometry_kind == "polygon")
+        self.assertEqual(polygon.libelle, "Accès technique 0")
+        self.assertEqual(polygon.largeur, 0.0)
+        self.assertFalse(polygon.statut_source)
+        self.assertEqual(polygon.revetement_source_id, "RefRevetement:5")
+        self.assertFalse(
+            any(
+                link.cheminement_id in {row.id for row in chemins}
+                for link in prepared.cheminement_troncon_links
+            )
+        )
+        expected_ids = {
+            UUID(str(document["_id"]))
+            for source_class in (
+                "OuvrageFranchissement",
+                "OuvrageParticulier",
+                "VoieDigue",
+                "VoieAcces",
+                "CheminAccesDependance",
+            )
+            for document in source[source_class]
+            if (
+                source_class != "OuvrageParticulier"
+                or document.get("typeOuvrageParticulierId")
+                == "RefOuvrageParticulier:3"
+            )
+        }
+        self.assertEqual({row.id for row in prepared.rows["cheminements"]}, expected_ids)
+
+    def test_explicit_desordre_link_is_preserved_without_inference(self):
+        source = full_source_fixture()
+        desordre_id = UUID(int=999)
+        source["OuvrageFranchissement"][0]["desordreIds"] = [desordre_id.hex]
+        prepared = prepare_ouvrages_migration(
+            source,
+            troncon_ids={TRONCON_ID},
+            desordre_ids={desordre_id},
+        )
+        self.assertEqual(len(prepared.cheminement_desordre_links), 1)
+        self.assertEqual(
+            prepared.cheminement_desordre_links[0].desordre_id,
+            desordre_id,
+        )
+
+    def test_broken_explicit_desordre_link_is_blocking(self):
+        source = full_source_fixture()
+        source["OuvrageFranchissement"][0]["desordreIds"] = [UUID(int=999).hex]
+        with self.assertRaisesRegex(OuvragesMigrationError, "désordre absent"):
+            prepare_ouvrages_migration(
+                source,
+                troncon_ids={TRONCON_ID},
+                desordre_ids=set(),
+            )
 
     def test_broken_troncon_is_blocking(self):
         source = copy.deepcopy(full_source_fixture())

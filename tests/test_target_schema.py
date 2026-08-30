@@ -56,7 +56,7 @@ class TargetSchemaTest(unittest.TestCase):
                 "ref_urgences",
                 "ref_types_ouvrage_hydraulique",
                 "ref_types_equipement_mesure",
-                "ref_types_ouvrage_franchissement",
+                "ref_types_cheminement",
                 "ref_types_mobilier",
                 "ref_types_reseau_technique",
                 "ref_types_amenagement_hydraulique",
@@ -74,7 +74,9 @@ class TargetSchemaTest(unittest.TestCase):
                 "vegetation",
                 "ouvrages_hydrauliques",
                 "equipements_mesure",
-                "ouvrages_franchissement",
+                "cheminements",
+                "link_cheminements_troncons",
+                "link_cheminements_desordres",
                 "mobilier",
                 "reseaux_techniques",
                 "observations",
@@ -121,7 +123,9 @@ class TargetSchemaTest(unittest.TestCase):
             "vegetation",
             "ouvrages_hydrauliques",
             "equipements_mesure",
-            "ouvrages_franchissement",
+            "cheminements",
+            "link_cheminements_troncons",
+            "link_cheminements_desordres",
             "mobilier",
             "reseaux_techniques",
         ):
@@ -147,7 +151,9 @@ class TargetSchemaTest(unittest.TestCase):
             "vegetation",
             "ouvrages_hydrauliques",
             "equipements_mesure",
-            "ouvrages_franchissement",
+            "cheminements",
+            "link_cheminements_troncons",
+            "link_cheminements_desordres",
             "mobilier",
             "reseaux_techniques",
         ):
@@ -167,7 +173,7 @@ class TargetSchemaTest(unittest.TestCase):
                 "troncon_id",
                 "ouvrage_hydraulique_id",
                 "equipement_mesure_id",
-                "ouvrage_franchissement_id",
+                "cheminement_id",
                 "mobilier_id",
                 "reseau_technique_id",
                 "amenagement_hydraulique_id",
@@ -189,7 +195,8 @@ class TargetSchemaTest(unittest.TestCase):
                 "amenagement_hydraulique_id",
             ),
             "equipements_mesure": ("troncon_id",),
-            "ouvrages_franchissement": ("troncon_id",),
+            "link_cheminements_troncons": ("cheminement_id", "troncon_id"),
+            "link_cheminements_desordres": ("cheminement_id", "desordre_id"),
             "mobilier": ("troncon_id",),
             "reseaux_techniques": ("troncon_id",),
         }
@@ -206,7 +213,7 @@ class TargetSchemaTest(unittest.TestCase):
             "ref_urgences",
             "ref_types_ouvrage_hydraulique",
             "ref_types_equipement_mesure",
-            "ref_types_ouvrage_franchissement",
+            "ref_types_cheminement",
             "ref_types_mobilier",
             "ref_types_reseau_technique",
             "ref_types_amenagement_hydraulique",
@@ -230,10 +237,14 @@ class TargetSchemaTest(unittest.TestCase):
             "urgence_id text null",
             normalized(TABLE_DEFINITIONS["observations"]),
         )
+        self.assertIn(
+            "type_cheminement_id text not null",
+            normalized(TABLE_DEFINITIONS["cheminements"]),
+        )
         for table in (
             "ref_types_ouvrage_hydraulique",
             "ref_types_equipement_mesure",
-            "ref_types_ouvrage_franchissement",
+            "ref_types_cheminement",
             "ref_types_mobilier",
             "ref_types_reseau_technique",
             "ref_types_amenagement_hydraulique",
@@ -266,7 +277,7 @@ class TargetSchemaTest(unittest.TestCase):
                 "foreign key (troncon_id) references public.troncons (id)",
                 "foreign key (ouvrage_hydraulique_id) references public.ouvrages_hydrauliques (id)",
                 "foreign key (equipement_mesure_id) references public.equipements_mesure (id)",
-                "foreign key (ouvrage_franchissement_id) references public.ouvrages_franchissement (id)",
+                "foreign key (cheminement_id) references public.cheminements (id)",
                 "foreign key (mobilier_id) references public.mobilier (id)",
                 "foreign key (reseau_technique_id) references public.reseaux_techniques (id)",
                 "foreign key (amenagement_hydraulique_id) references public.amenagements_hydrauliques (id)",
@@ -310,9 +321,16 @@ class TargetSchemaTest(unittest.TestCase):
                 "foreign key (type_id) references public.ref_types_equipement_mesure (id)",
                 "foreign key (troncon_id) references public.troncons (id)",
             ),
-            "ouvrages_franchissement": (
-                "foreign key (type_id) references public.ref_types_ouvrage_franchissement (id)",
+            "cheminements": (
+                "foreign key (type_cheminement_id) references public.ref_types_cheminement (id)",
+            ),
+            "link_cheminements_troncons": (
+                "foreign key (cheminement_id) references public.cheminements (id)",
                 "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "link_cheminements_desordres": (
+                "foreign key (cheminement_id) references public.cheminements (id)",
+                "foreign key (desordre_id) references public.desordres (id)",
             ),
             "mobilier": (
                 "foreign key (type_id) references public.ref_types_mobilier (id)",
@@ -370,6 +388,17 @@ class TargetSchemaTest(unittest.TestCase):
                 "vegetation_geometry_type_check",
             ),
             "ouvrages_hydrauliques": "ouvrages_hydrauliques_amenagements_fk",
+            "cheminements": "cheminements_type_fk",
+            "link_cheminements_troncons": (
+                "link_cheminements_troncons_cheminements_fk",
+                "link_cheminements_troncons_troncons_fk",
+                "link_cheminements_troncons_unique",
+            ),
+            "link_cheminements_desordres": (
+                "link_cheminements_desordres_cheminements_fk",
+                "link_cheminements_desordres_desordres_fk",
+                "link_cheminements_desordres_unique",
+            ),
         }
         for table, constraints in expected_constraints.items():
             if isinstance(constraints, str):
@@ -408,6 +437,22 @@ class TargetSchemaTest(unittest.TestCase):
             vegetation_link,
         )
         self.assertNotIn("unique (parcelle_gestion_id)", vegetation_link)
+        cheminement_troncon_link = normalized(
+            TABLE_DEFINITIONS["link_cheminements_troncons"]
+        )
+        self.assertIn(
+            "constraint link_cheminements_troncons_unique "
+            "unique (cheminement_id, troncon_id)",
+            cheminement_troncon_link,
+        )
+        cheminement_desordre_link = normalized(
+            TABLE_DEFINITIONS["link_cheminements_desordres"]
+        )
+        self.assertIn(
+            "constraint link_cheminements_desordres_unique "
+            "unique (cheminement_id, desordre_id)",
+            cheminement_desordre_link,
+        )
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):
         troncon = normalized(TABLE_DEFINITIONS["troncons"])
@@ -429,7 +474,7 @@ class TargetSchemaTest(unittest.TestCase):
         )
         for table in (
             "ouvrages_hydrauliques",
-            "ouvrages_franchissement",
+            "cheminements",
             "reseaux_techniques",
         ):
             self.assertIn(
@@ -447,6 +492,14 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertIn("geometry geometry(geometry, 3950) null", vegetation)
         self.assertIn("geometrytype(geometry) in ('point', 'linestring', 'polygon')", vegetation)
         self.assertNotIn("troncon_id", vegetation)
+        self.assertNotIn("troncon_id", normalized(TABLE_DEFINITIONS["cheminements"]))
+
+    def test_old_franchissement_target_vocabulary_is_absent(self):
+        self.assertNotIn("ouvrages_franchissement", TABLE_DEFINITIONS)
+        self.assertNotIn("ref_types_ouvrage_franchissement", TABLE_DEFINITIONS)
+        ddl = normalized(" ".join(SCHEMA_DDL))
+        self.assertNotIn("ouvrage_franchissement_id", ddl)
+        self.assertIn("cheminement_id uuid null", normalized(TABLE_DEFINITIONS["observations"]))
 
     def test_observation_designation_is_nullable_text(self):
         observation = normalized(TABLE_DEFINITIONS["observations"])

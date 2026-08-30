@@ -64,13 +64,20 @@ class CoverageDiagnosticTest(unittest.TestCase):
         ):
             self.assertEqual(rule_for(class_name).status, "TECHNIQUE_IGNORE")
 
-    def test_technical_access_is_deferred_without_required_parent_or_inference(self):
+    def test_technical_access_is_migrated_without_required_parent_or_inference(self):
         rule = rule_for("CheminAccesDependance")
-        self.assertEqual(rule.status, "NON_MIGREE")
-        self.assertIsNone(rule.destination)
-        self.assertEqual(rule.consumed_fields, frozenset())
-        self.assertIn("accès technique", rule.comment)
+        self.assertEqual(rule.status, "MIGREE")
+        self.assertIn("cheminements", rule.destination)
+        self.assertIn("geometry", rule.consumed_fields)
+        self.assertIn("accès technique", rule.comment.lower())
         self.assertNotIn("parent aménagement", rule.comment)
+
+    def test_cheminement_prestation_relations_remain_explicitly_deferred(self):
+        for class_name in ("OuvrageFranchissement", "VoieAcces", "VoieDigue"):
+            rule = rule_for(class_name)
+            self.assertIn("cheminements", rule.destination)
+            self.assertNotIn("prestationIds", rule.consumed_fields)
+            self.assertIn("prestations différées", rule.comment)
 
     def test_prestations_are_deferred_and_a_truly_new_class_stays_unknown(self):
         documents = [

@@ -44,17 +44,17 @@ IMMEDIATE_SOURCE_COUNTS = {
     "VoieAcces": 10,
     "VoieDigue": 2,
     "ReseauTelecomEnergie": 3,
+    "CheminAccesDependance": 8,
 }
 
 DEFERRED_SOURCE_COUNTS = {
-    "CheminAccesDependance": 8,
     "OuvrageAssocieAmenagementHydraulique": 1,
 }
 
 EXPECTED_BUSINESS_COUNTS = {
     "ouvrages_hydrauliques": 34,
     "equipements_mesure": 47,
-    "ouvrages_franchissement": 20,
+    "cheminements": 28,
     "mobilier": 1,
     "reseaux_techniques": 7,
 }
@@ -89,9 +89,54 @@ class OuvrageRow:
 
 
 @dataclass(frozen=True)
+class CheminementRow:
+    id: UUID
+    type_cheminement_id: str
+    designation: str | None
+    libelle: str | None
+    commentaire: str | None
+    date_debut: date | None
+    date_fin: date | None
+    largeur: float | None
+    usage_source_id: str | None
+    statut_source: bool | None
+    materiau_source_id: str | None
+    revetement_source_id: str | None
+    position_source_id: str | None
+    cote_source_id: str | None
+    securite_source_id: str | None
+    orientation_ouvrage_source_id: str | None
+    position_haut_source_id: str | None
+    position_bas_source_id: str | None
+    revetement_haut_source_id: str | None
+    revetement_bas_source_id: str | None
+    dimension_horizontale: float | None
+    dimension_verticale: float | None
+    numero_secteur: int | None
+    geometry_wkt: str | None
+    geometry_kind: str
+    valid: bool
+    source_class: str
+
+
+@dataclass(frozen=True)
+class LinkCheminementTronconRow:
+    cheminement_id: UUID
+    troncon_id: UUID
+
+
+@dataclass(frozen=True)
+class LinkCheminementDesordreRow:
+    cheminement_id: UUID
+    desordre_id: UUID
+
+
+@dataclass(frozen=True)
 class PreparedOuvragesMigration:
     references: Mapping[str, tuple[OuvrageTypeReferenceRow, ...]]
-    rows: Mapping[str, tuple[OuvrageRow, ...]]
+    rows: Mapping[str, tuple[OuvrageRow | CheminementRow, ...]]
+    cheminement_troncon_links: tuple[LinkCheminementTronconRow, ...]
+    cheminement_desordre_links: tuple[LinkCheminementDesordreRow, ...]
     source_counts: Mapping[str, int]
     deferred_counts: Mapping[str, int]
     enabled: bool = True
@@ -101,6 +146,8 @@ class PreparedOuvragesMigration:
         return cls(
             references={table: () for table in TARGET_REFERENCES},
             rows={table: () for table in EXPECTED_BUSINESS_COUNTS},
+            cheminement_troncon_links=(),
+            cheminement_desordre_links=(),
             source_counts={},
             deferred_counts={},
             enabled=False,
@@ -124,6 +171,12 @@ class PreparedOuvragesMigration:
             table: len(rows) for table, rows in self.references.items()
         }
         counts.update({table: len(rows) for table, rows in self.rows.items()})
+        counts["link_cheminements_troncons"] = len(
+            self.cheminement_troncon_links
+        )
+        counts["link_cheminements_desordres"] = len(
+            self.cheminement_desordre_links
+        )
         return counts
 
     @property
@@ -169,7 +222,7 @@ TARGET_REFERENCES = {
         OuvrageTypeReferenceRow("AUT", "autre", "AUT", "Autre équipement de mesure"),
         OuvrageTypeReferenceRow("IND", "indefini", "IND", "Équipement de mesure indéfini"),
     ),
-    "ref_types_ouvrage_franchissement": (
+    "ref_types_cheminement": (
         OuvrageTypeReferenceRow("PNT", "pont", "PNT", "Pont"),
         OuvrageTypeReferenceRow("RAM", "rampe", "RAM", "Rampe"),
         OuvrageTypeReferenceRow("TUN", "tunnel", "TUN", "Tunnel"),
@@ -177,10 +230,12 @@ TARGET_REFERENCES = {
         OuvrageTypeReferenceRow("ESC", "escalier_acces", "ESC", "Escalier d'accès"),
         OuvrageTypeReferenceRow("CAL", "cale", "CAL", "Cale"),
         OuvrageTypeReferenceRow("VAC", "voie_acces", "VAC", "Voie d'accès"),
-        OuvrageTypeReferenceRow("CAC", "chemin_acces", "CAC", "Chemin d'accès"),
+        OuvrageTypeReferenceRow(
+            "CAC", "chemin_acces_technique", "CAC", "Chemin d'accès technique"
+        ),
         OuvrageTypeReferenceRow("CHE", "voie_sur_digue", "CHE", "Voie sur digue"),
-        OuvrageTypeReferenceRow("AUT", "autre", "AUT", "Autre franchissement"),
-        OuvrageTypeReferenceRow("IND", "indefini", "IND", "Franchissement indéfini"),
+        OuvrageTypeReferenceRow("AUT", "autre", "AUT", "Autre cheminement"),
+        OuvrageTypeReferenceRow("IND", "indefini", "IND", "Cheminement indéfini"),
     ),
     "ref_types_mobilier": (
         OuvrageTypeReferenceRow("MRE", "mobilier_recreatif", "MRE", "Mobilier récréatif"),
@@ -216,7 +271,7 @@ class MappingRule:
 OP_RULES = {
     "RefOuvrageParticulier:9": MappingRule("equipements_mesure", "PIE", "point"),
     "RefOuvrageParticulier:5": MappingRule("equipements_mesure", "ECH", "point"),
-    "RefOuvrageParticulier:3": MappingRule("ouvrages_franchissement", "ESC", "preserve"),
+    "RefOuvrageParticulier:3": MappingRule("cheminements", "ESC", "preserve"),
     "RefOuvrageParticulier:20": MappingRule("mobilier", "MRE", "point"),
     "RefOuvrageParticulier:10": MappingRule("reseaux_techniques", "IND", "point"),
     None: MappingRule("equipements_mesure", "IND", "point"),
@@ -268,7 +323,8 @@ IMPLICIT_RULES = {
     "StationPompage": MappingRule("ouvrages_hydrauliques", "STP", "preserve"),
     "Deversoir": MappingRule("ouvrages_hydrauliques", "DEV", "preserve"),
     "OuvertureBatardable": MappingRule("ouvrages_hydrauliques", "VBT", "preserve"),
-    "VoieAcces": MappingRule("ouvrages_franchissement", "VAC", "preserve"),
+    "VoieAcces": MappingRule("cheminements", "VAC", "preserve"),
+    "CheminAccesDependance": MappingRule("cheminements", "CAC", "preserve"),
 }
 
 NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
@@ -279,7 +335,10 @@ LINESTRING_WKT = re.compile(
     rf"^\s*LINESTRING\s*\(\s*((?:{NUMBER}\s+{NUMBER}\s*,\s*)+{NUMBER}\s+{NUMBER})\s*\)\s*$",
     re.IGNORECASE,
 )
-GENERIC_WKT = re.compile(r"^\s*(POINT|LINESTRING|POLYGON)\s*\(", re.IGNORECASE)
+GENERIC_WKT = re.compile(
+    r"^\s*(POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION)\s*\(",
+    re.IGNORECASE,
+)
 
 
 def _uuid(value: Any, *, context: str) -> UUID:
@@ -315,6 +374,65 @@ def _required_bool(document: Mapping[str, Any], field: str, context: str) -> boo
     if not isinstance(value, bool):
         raise OuvragesMigrationError(f"{context}.{field} doit être un booléen")
     return value
+
+
+def _optional_bool(
+    document: Mapping[str, Any], field: str, context: str
+) -> bool | None:
+    value = document.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise OuvragesMigrationError(f"{context}.{field} doit être un booléen")
+    return value
+
+
+def _optional_float(
+    document: Mapping[str, Any], field: str, context: str
+) -> float | None:
+    value = document.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise OuvragesMigrationError(f"{context}.{field} doit être numérique")
+    return float(value)
+
+
+def _optional_int(
+    document: Mapping[str, Any], field: str, context: str
+) -> int | None:
+    value = document.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise OuvragesMigrationError(f"{context}.{field} doit être un entier")
+    return value
+
+
+def _optional_source_reference(
+    document: Mapping[str, Any], field: str, context: str
+) -> str | None:
+    value = document.get(field)
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise OuvragesMigrationError(
+            f"{context}.{field} doit être un identifiant source texte"
+        )
+    return value
+
+
+def _explicit_relation_ids(
+    document: Mapping[str, Any], field: str, context: str
+) -> tuple[UUID, ...]:
+    value = document.get(field)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise OuvragesMigrationError(f"{context}.{field} doit être une liste")
+    return tuple(
+        _uuid(item, context=f"{context}.{field}") for item in value
+    )
 
 
 def _line_coordinates(wkt: str, *, context: str) -> list[tuple[str, str]]:
@@ -389,11 +507,11 @@ def _mapping_rule(source_class: str, document: Mapping[str, Any]) -> MappingRule
     if source_class == "OuvrageFranchissement":
         if document.get(SOURCE_TYPE_FIELDS[source_class]) != "RefOuvrageFranchissement:4":
             raise OuvragesMigrationError("OuvrageFranchissement: seul le type pont est attendu")
-        return MappingRule("ouvrages_franchissement", "PNT", "preserve")
+        return MappingRule("cheminements", "PNT", "preserve")
     if source_class == "VoieDigue":
         if document.get(SOURCE_TYPE_FIELDS[source_class]) != "RefVoieDigue:2":
             raise OuvragesMigrationError("VoieDigue: seul le type voie sur digue est attendu")
-        return MappingRule("ouvrages_franchissement", "CHE", "preserve")
+        return MappingRule("cheminements", "CHE", "preserve")
     if source_class == "ReseauTelecomEnergie":
         if document.get(SOURCE_TYPE_FIELDS[source_class]) != "RefReseauTelecomEnergie:1":
             raise OuvragesMigrationError("ReseauTelecomEnergie: seul le type EFT est attendu")
@@ -405,7 +523,7 @@ def _validate_target_references() -> None:
     expected_lengths = {
         "ref_types_ouvrage_hydraulique": 17,
         "ref_types_equipement_mesure": 6,
-        "ref_types_ouvrage_franchissement": 11,
+        "ref_types_cheminement": 11,
         "ref_types_mobilier": 8,
         "ref_types_reseau_technique": 9,
     }
@@ -424,9 +542,14 @@ def prepare_ouvrages_migration(
     source_documents: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
     troncon_ids: set[UUID],
+    desordre_ids: set[UUID] | None = None,
     strict_counts: bool = True,
 ) -> PreparedOuvragesMigration:
-    """Prépare les 109 migrations et explique les 9 reports, sans accès cible."""
+    """Prépare les familles Ouvrages et Cheminements, sans accès cible.
+
+    Les liens sont créés exclusivement depuis les identifiants explicitement
+    stockés dans les documents source. Aucune opération spatiale n'intervient.
+    """
 
     _validate_target_references()
     source_counts = {
@@ -454,9 +577,12 @@ def prepare_ouvrages_migration(
                     f"Distribution des types de {source_class} inattendue : {actual!r}"
                 )
 
-    rows_by_table: dict[str, list[OuvrageRow]] = {
+    known_desordre_ids = desordre_ids or set()
+    rows_by_table: dict[str, list[OuvrageRow | CheminementRow]] = {
         table: [] for table in EXPECTED_BUSINESS_COUNTS
     }
+    cheminement_troncon_links: list[LinkCheminementTronconRow] = []
+    cheminement_desordre_links: list[LinkCheminementDesordreRow] = []
     seen_ids: set[UUID] = set()
     for source_class in IMMEDIATE_SOURCE_COUNTS:
         documents = sorted(
@@ -486,8 +612,82 @@ def prepare_ouvrages_migration(
                 raise OuvragesMigrationError(
                     f"{context}: linearId référence un tronçon absent"
                 )
-            rows_by_table[rule.table].append(
-                OuvrageRow(
+            if rule.table == "cheminements":
+                rows_by_table[rule.table].append(
+                    CheminementRow(
+                        id=object_id,
+                        type_cheminement_id=rule.type_id,
+                        designation=_optional_text(document, "designation", context),
+                        libelle=_optional_text(document, "libelle", context),
+                        commentaire=_optional_text(document, "commentaire", context),
+                        date_debut=_optional_date(document, "date_debut", context),
+                        date_fin=_optional_date(document, "date_fin", context),
+                        largeur=_optional_float(document, "largeur", context),
+                        usage_source_id=_optional_source_reference(
+                            document, "usageId", context
+                        ),
+                        statut_source=_optional_bool(document, "statut", context),
+                        materiau_source_id=_optional_source_reference(
+                            document, "materiauId", context
+                        ),
+                        revetement_source_id=_optional_source_reference(
+                            document, "revetementId", context
+                        ),
+                        position_source_id=_optional_source_reference(
+                            document, "positionId", context
+                        ),
+                        cote_source_id=_optional_source_reference(
+                            document, "coteId", context
+                        ),
+                        securite_source_id=_optional_source_reference(
+                            document, "securiteId", context
+                        ),
+                        orientation_ouvrage_source_id=_optional_source_reference(
+                            document, "orientationOuvrageId", context
+                        ),
+                        position_haut_source_id=_optional_source_reference(
+                            document, "positionHautId", context
+                        ),
+                        position_bas_source_id=_optional_source_reference(
+                            document, "positionBasId", context
+                        ),
+                        revetement_haut_source_id=_optional_source_reference(
+                            document, "revetementHautId", context
+                        ),
+                        revetement_bas_source_id=_optional_source_reference(
+                            document, "revetementBasId", context
+                        ),
+                        dimension_horizontale=_optional_float(
+                            document, "dimensionHorizontale", context
+                        ),
+                        dimension_verticale=_optional_float(
+                            document, "dimensionVerticale", context
+                        ),
+                        numero_secteur=_optional_int(
+                            document, "numeroSecteur", context
+                        ),
+                        geometry_wkt=geometry_wkt,
+                        geometry_kind=geometry_kind,
+                        valid=_required_bool(document, "valid", context),
+                        source_class=source_class,
+                    )
+                )
+                if troncon_id is not None:
+                    cheminement_troncon_links.append(
+                        LinkCheminementTronconRow(object_id, troncon_id)
+                    )
+                for desordre_id in _explicit_relation_ids(
+                    document, "desordreIds", context
+                ):
+                    if desordre_id not in known_desordre_ids:
+                        raise OuvragesMigrationError(
+                            f"{context}: desordreIds référence un désordre absent"
+                        )
+                    cheminement_desordre_links.append(
+                        LinkCheminementDesordreRow(object_id, desordre_id)
+                    )
+            else:
+                rows_by_table[rule.table].append(OuvrageRow(
                     id=object_id,
                     type_id=rule.type_id,
                     designation=_optional_text(document, "designation", context),
@@ -498,16 +698,31 @@ def prepare_ouvrages_migration(
                     troncon_id=troncon_id,
                     valid=_required_bool(document, "valid", context),
                     source_class=source_class,
-                )
-            )
+                ))
 
     rows = {
         table: tuple(sorted(table_rows, key=lambda row: row.id.int))
         for table, table_rows in rows_by_table.items()
     }
+    if len(cheminement_troncon_links) != len(
+        {(row.cheminement_id, row.troncon_id) for row in cheminement_troncon_links}
+    ):
+        raise OuvragesMigrationError("Liaisons cheminement/tronçon dupliquées")
+    if len(cheminement_desordre_links) != len(
+        {(row.cheminement_id, row.desordre_id) for row in cheminement_desordre_links}
+    ):
+        raise OuvragesMigrationError("Liaisons cheminement/désordre dupliquées")
     prepared = PreparedOuvragesMigration(
         references=TARGET_REFERENCES,
         rows=rows,
+        cheminement_troncon_links=tuple(sorted(
+            cheminement_troncon_links,
+            key=lambda row: (row.cheminement_id.int, row.troncon_id.int),
+        )),
+        cheminement_desordre_links=tuple(sorted(
+            cheminement_desordre_links,
+            key=lambda row: (row.cheminement_id.int, row.desordre_id.int),
+        )),
         source_counts=source_counts,
         deferred_counts=deferred_counts,
     )
@@ -517,8 +732,8 @@ def prepare_ouvrages_migration(
             raise OuvragesMigrationError(
                 f"Comptes cibles Ouvrages inattendus : {actual_counts!r}"
             )
-        if prepared.migrated_count != 109 or prepared.deferred_count != 9:
-            raise OuvragesMigrationError("La décomposition 118 = 109 + 9 est invalide")
+        if prepared.migrated_count != 117 or prepared.deferred_count != 1:
+            raise OuvragesMigrationError("La décomposition 118 = 117 + 1 est invalide")
     return prepared
 
 
@@ -538,8 +753,32 @@ INSERT_STATEMENTS.update(
             VALUES (%s, %s, %s, %s, %s, {geometry_sql()}, %s, %s)
         """
         for table in EXPECTED_BUSINESS_COUNTS
+        if table != "cheminements"
     }
 )
+INSERT_STATEMENTS["cheminements"] = f"""
+    INSERT INTO public.cheminements
+        (id, type_cheminement_id, designation, libelle, commentaire,
+         date_debut, date_fin, largeur, usage_source_id, statut_source,
+         materiau_source_id, revetement_source_id, position_source_id,
+         cote_source_id, securite_source_id, orientation_ouvrage_source_id,
+         position_haut_source_id, position_bas_source_id,
+         revetement_haut_source_id, revetement_bas_source_id,
+         dimension_horizontale, dimension_verticale, numero_secteur,
+         geometry, valid)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, {geometry_sql()}, %s)
+"""
+INSERT_STATEMENTS["link_cheminements_troncons"] = """
+    INSERT INTO public.link_cheminements_troncons
+        (cheminement_id, troncon_id)
+    VALUES (%s, %s)
+"""
+INSERT_STATEMENTS["link_cheminements_desordres"] = """
+    INSERT INTO public.link_cheminements_desordres
+        (cheminement_id, desordre_id)
+    VALUES (%s, %s)
+"""
 INSERT_STATEMENTS["ouvrages_hydrauliques"] = f"""
     INSERT INTO public.ouvrages_hydrauliques
         (id, type_id, designation, commentaire, date_debut,
@@ -584,6 +823,37 @@ def insert_prepared_ouvrages(
                     )
                     for row in rows
                 ]
+            elif table == "cheminements":
+                values = [
+                    (
+                        row.id,
+                        row.type_cheminement_id,
+                        row.designation,
+                        row.libelle,
+                        row.commentaire,
+                        row.date_debut,
+                        row.date_fin,
+                        row.largeur,
+                        row.usage_source_id,
+                        row.statut_source,
+                        row.materiau_source_id,
+                        row.revetement_source_id,
+                        row.position_source_id,
+                        row.cote_source_id,
+                        row.securite_source_id,
+                        row.orientation_ouvrage_source_id,
+                        row.position_haut_source_id,
+                        row.position_bas_source_id,
+                        row.revetement_haut_source_id,
+                        row.revetement_bas_source_id,
+                        row.dimension_horizontale,
+                        row.dimension_verticale,
+                        row.numero_secteur,
+                        row.geometry_wkt,
+                        row.valid,
+                    )
+                    for row in rows
+                ]
             else:
                 values = [
                     (
@@ -602,3 +872,19 @@ def insert_prepared_ouvrages(
                 statements[table],
                 values,
             )
+    if prepared.cheminement_troncon_links:
+        cursor.executemany(
+            statements["link_cheminements_troncons"],
+            [
+                (row.cheminement_id, row.troncon_id)
+                for row in prepared.cheminement_troncon_links
+            ],
+        )
+    if prepared.cheminement_desordre_links:
+        cursor.executemany(
+            statements["link_cheminements_desordres"],
+            [
+                (row.cheminement_id, row.desordre_id)
+                for row in prepared.cheminement_desordre_links
+            ],
+        )

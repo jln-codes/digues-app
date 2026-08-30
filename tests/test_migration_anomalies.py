@@ -143,6 +143,7 @@ class AnomalySerializationTest(unittest.TestCase):
             source_database=DATABASE,
             source_class="AmenagementHydraulique",
             source_id="id-1",
+            source_document_id="raw-id-1",
             source_field="geometry",
             details={"reason": "auto-intersection"},
         )
@@ -157,14 +158,16 @@ class AnomalySerializationTest(unittest.TestCase):
                 header = reader.fieldnames
                 rows = list(reader)
         self.assertEqual(decoded[0]["anomaly_id"], anomaly.anomaly_id)
+        self.assertEqual(decoded[0]["source_document_id"], "raw-id-1")
         self.assertEqual(rows[0]["category"], "INVALID_GEOMETRY")
+        self.assertEqual(rows[0]["source_document_id"], "raw-id-1")
         self.assertIn("auto-intersection", rows[0]["details"])
         self.assertEqual(rows[0]["actionable"], "TRUE")
         self.assertEqual(rows[0]["family"], "DATA")
         self.assertNotIn("actionable", decoded[0])
         self.assertNotIn("family", decoded[0])
         self.assertEqual(
-            header[:9],
+            header[:10],
             [
                 "anomaly_id",
                 "active",
@@ -175,7 +178,54 @@ class AnomalySerializationTest(unittest.TestCase):
                 "category",
                 "source_class",
                 "source_id",
+                "source_document_id",
             ],
+        )
+
+    def test_source_document_id_does_not_change_anomaly_identity(self):
+        values = dict(
+            category="INVALID_GEOMETRY",
+            severity="WARNING",
+            source_database=DATABASE,
+            source_class="Vegetation",
+            source_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
+            source_field="geometry",
+        )
+        without_document = Anomaly.create(**values)
+        with_document = Anomaly.create(
+            **values,
+            source_document_id="ca7792c06baa3f909d82ec3731153d53",
+        )
+        self.assertEqual(without_document.anomaly_id, with_document.anomaly_id)
+
+    def test_old_register_without_source_document_id_keeps_resolution(self):
+        current = Anomaly.create(
+            category="MISSING_GEOMETRY",
+            severity="WARNING",
+            source_database=DATABASE,
+            source_class="Vegetation",
+            source_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
+            source_document_id="ca7792c06baa3f909d82ec3731153d53",
+            source_field="geometry",
+        )
+        old_payload = current.to_dict()
+        old_payload.pop("source_document_id")
+        old_payload.update(
+            status="ACCEPTED_AS_IS",
+            resolution_comment="Décision historique",
+            first_detected_at="2026-01-01T00:00:00Z",
+        )
+        previous = Anomaly.from_dict(old_payload)
+        merged = merge_previous_status(
+            [current], [previous], detected_at="2026-02-01T00:00:00Z"
+        )[0]
+        self.assertEqual(merged.anomaly_id, previous.anomaly_id)
+        self.assertEqual(merged.status, "ACCEPTED_AS_IS")
+        self.assertEqual(merged.resolution_comment, "Décision historique")
+        self.assertEqual(merged.first_detected_at, "2026-01-01T00:00:00Z")
+        self.assertEqual(
+            merged.source_document_id,
+            "ca7792c06baa3f909d82ec3731153d53",
         )
 
     def test_csv_actionable_view_uses_exactly_the_shared_cli_rule(self):
@@ -387,7 +437,45 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertEqual(broken.severity, "BLOCKING")
         self.assertEqual(broken.source_field, "systemeEndiguementId")
 
-    def test_technical_access_without_amenagement_parent_is_only_deferred(self):
+    def test_direct_document_keeps_exact_compact_and_hyphenated_ids(self):
+        compact_id = UUID(int=101).hex
+        hyphenated_id = str(UUID(int=102))
+        anomalies = self.collect(
+            [
+                source_doc(
+                    "Desordre",
+                    compact_id,
+                    categorieDesordreId="RefCategorieDesordre:1",
+                    typeDesordreId=None,
+                ),
+                source_doc(
+                    "Desordre",
+                    hyphenated_id,
+                    categorieDesordreId="RefCategorieDesordre:1",
+                    typeDesordreId=None,
+                ),
+            ],
+            [coverage_row("Desordre", "MIGREE")],
+        )
+        by_source_id = {
+            item.source_id: item
+            for item in anomalies
+            if item.category == "MISSING_REFERENCE_VALUE"
+        }
+        compact = by_source_id[str(UUID(compact_id))]
+        hyphenated = by_source_id[hyphenated_id]
+        self.assertEqual(compact.source_document_id, compact_id)
+        self.assertEqual(hyphenated.source_document_id, hyphenated_id)
+
+    def test_global_coverage_anomaly_has_no_source_document(self):
+        anomalies = self.collect(
+            [source_doc("Future", "future-1")],
+            [coverage_row("Future", "NON_MIGREE", known=False)],
+        )
+        unknown = next(item for item in anomalies if item.category == "UNKNOWN_CLASS")
+        self.assertIsNone(unknown.source_document_id)
+
+    def test_migrated_technical_access_needs_no_parent_or_spatial_inference(self):
         for database in ("cabbalr", "another_sirs_database"):
             with self.subTest(database=database):
                 anomalies = self.collect(
@@ -401,14 +489,14 @@ class AnomalyCollectionTest(unittest.TestCase):
                     [
                         coverage_row(
                             "CheminAccesDependance",
-                            "NON_MIGREE",
+                            "MIGREE",
                             known=True,
                         )
                     ],
                     database=database,
                 )
                 categories = [anomaly.category for anomaly in anomalies]
-                self.assertEqual(categories.count("DEFERRED_FEATURE"), 1)
+                self.assertNotIn("DEFERRED_FEATURE", categories)
                 self.assertNotIn("AMBIGUOUS_RELATION", categories)
 
     def test_real_ambiguous_relation_category_remains_actionable_data(self):
@@ -461,6 +549,11 @@ class AnomalyCollectionTest(unittest.TestCase):
         by_category = {item.category: item for item in anomalies}
         self.assertEqual(by_category["UNMIGRATED_MEDIA"].source_id, str(UUID(future_photo_id)))
         self.assertEqual(by_category["PHOTO_WITHOUT_DATE"].source_id, str(UUID(migrated_photo_id)))
+        self.assertEqual(by_category["UNMIGRATED_MEDIA"].source_document_id, "future-1")
+        self.assertEqual(
+            by_category["PHOTO_WITHOUT_DATE"].source_document_id,
+            UUID(int=2).hex,
+        )
 
     def test_detects_duplicate_and_missing_photo_identifiers(self):
         duplicate_id = UUID(int=30).hex
@@ -493,6 +586,29 @@ class AnomalyCollectionTest(unittest.TestCase):
             str(UUID(duplicate_id)),
             {anomaly.source_id for anomaly in blocking_media},
         )
+
+    def test_nested_photo_points_to_exact_containing_document(self):
+        parent_id = UUID(int=40).hex
+        photo_id = UUID(int=41).hex
+        anomalies = self.collect(
+            [
+                source_doc(
+                    "TronconDigue",
+                    parent_id,
+                    observations=[
+                        {"photos": [{"id": photo_id}, {"id": photo_id}]}
+                    ],
+                )
+            ],
+            [coverage_row("TronconDigue", "MIGREE")],
+        )
+        duplicate = next(
+            anomaly
+            for anomaly in anomalies
+            if anomaly.category == "UNMIGRATED_MEDIA"
+            and anomaly.source_id == str(UUID(photo_id))
+        )
+        self.assertEqual(duplicate.source_document_id, parent_id)
 
     def test_detects_source_overrides_and_manual_review(self):
         amenagement_id = "496d26f14278405a4172bf66ec000321"
