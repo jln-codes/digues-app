@@ -22,6 +22,11 @@ from .amenagements import (
     prepare_amenagements_migration,
 )
 from .crs import CRSInfo, resolve_source_crs, validate_crs, geometry_sql
+from .desordre_reperage import (
+    PreparedDesordreReperageMigration,
+    insert_prepared_desordre_reperage,
+    prepare_desordre_reperage_migration,
+)
 from .ouvrages import (
     OUVRAGE_SOURCE_CLASSES,
     PreparedOuvragesMigration,
@@ -143,6 +148,14 @@ CORE_FIELD_MAPPINGS = {
         "aucune source → gen_random_uuid() PostgreSQL → id technique",
         "Desordre._id → UUID → desordre_id",
         "Desordre.linearId → UUID de TronconDigue vérifié → troncon_id",
+    ),
+    "desordre_localisations_reperage": (
+        "Desordre._id → UUID v5 déterministe → id de localisation importée",
+        "linearId/systemeRepId/bornes explicites → FK seulement si cohérentes",
+        "distance + sens SIRS → offset signé dans le sens du LineString",
+        "PR et positions historiques → colonnes source non écrasées",
+        "geometryMode/editedGeoCoordinate et valeurs brutes → trace_source JSONB",
+        "chaîne complète → contrôle explicite par les fonctions du lot 2",
     ),
     "observations": (
         "Objet.observations[].id → UUID → id",
@@ -295,6 +308,7 @@ class PreparedCoreMigration:
     digues: tuple[DigueRow, ...]
     troncons: tuple[TronconRow, ...]
     reperage: PreparedReperageMigration
+    desordre_reperage: PreparedDesordreReperageMigration
     desordres: tuple[DesordreRow, ...]
     links: tuple[LinkDesordreTronconRow, ...]
     observations: tuple[ObservationRow, ...]
@@ -325,6 +339,7 @@ class PreparedCoreMigration:
             "photos": len(self.photos),
         }
         counts.update(self.reperage.expected_counts)
+        counts.update(self.desordre_reperage.expected_counts)
         counts.update(self.ouvrages.expected_counts)
         counts.update(self.amenagements.expected_counts)
         counts.update(self.vegetation.expected_counts)
@@ -742,6 +757,19 @@ def prepare_core_migration(
     if len(links) != len({(row.desordre_id, row.troncon_id) for row in links}):
         raise CoreMigrationError("Liaisons source desordre/troncon dupliquées")
 
+    try:
+        desordre_reperage = prepare_desordre_reperage_migration(
+            source_documents.get("Desordre", ()),
+            desordre_ids={row.id for row in desordres},
+            troncon_ids=troncon_ids,
+            reperage=reperage,
+        )
+    except Exception as exc:
+        raise CoreMigrationError(
+            f"Bloc Localisation de repérage des désordres invalide : {exc}"
+        ) from exc
+    warnings.extend(desordre_reperage.warnings)
+
     if any(label in source_documents for label in OUVRAGE_SOURCE_CLASSES):
         try:
             ouvrages = prepare_ouvrages_migration(
@@ -838,6 +866,7 @@ def prepare_core_migration(
         digues=digues,
         troncons=troncons,
         reperage=reperage,
+        desordre_reperage=desordre_reperage,
         desordres=desordres,
         links=links,
         observations=media.observations,
@@ -990,6 +1019,11 @@ def _insert_prepared_core(
         if rows:
             cursor.executemany(statements[table], rows)
     insert_prepared_reperage(cursor, prepared.reperage, crs_info=crs_info)
+    insert_prepared_desordre_reperage(
+        cursor,
+        prepared.desordre_reperage,
+        crs_info=crs_info,
+    )
     insert_prepared_amenagements(cursor, prepared.amenagements, crs_info=crs_info)
     insert_prepared_ouvrages(cursor, prepared.ouvrages, crs_info=crs_info)
     insert_prepared_vegetation(cursor, prepared.vegetation, crs_info=crs_info)
@@ -1053,6 +1087,7 @@ def execute_core_migration(
                     expected_counts=prepared.expected_counts,
                     expected_desordre_geometries=prepared.desordre_geometry_counts,
                     expected_reperage=prepared.reperage,
+                    expected_desordre_reperage=prepared.desordre_reperage,
                     expected_ouvrage_geometries=prepared.ouvrages.geometry_counts,
                     expected_ouvrage_invalid=prepared.ouvrages.invalid_counts,
                     ouvrages_enabled=prepared.ouvrages.enabled,

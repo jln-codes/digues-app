@@ -1,6 +1,11 @@
 """Définition SQL du premier noyau métier PostgreSQL/PostGIS."""
 
 from .reperage import REPERAGE_FUNCTION_DDL
+from .desordre_reperage import (
+    INDEX_DEFINITIONS as DESORDRE_REPERAGE_INDEX_DEFINITIONS,
+    TABLE_DEFINITIONS as DESORDRE_REPERAGE_TABLE_DEFINITIONS,
+    VIEW_DEFINITIONS,
+)
 
 TABLE_DEFINITIONS = {
     "systemes": """
@@ -41,6 +46,8 @@ TABLE_DEFINITIONS = {
             libelle TEXT NULL,
             commentaire TEXT NULL,
             valid BOOLEAN NOT NULL,
+            CONSTRAINT systemes_reperage_id_troncon_unique
+                UNIQUE (id, troncon_id),
             CONSTRAINT systemes_reperage_troncons_fk
                 FOREIGN KEY (troncon_id)
                 REFERENCES public.troncons (id)
@@ -551,6 +558,7 @@ TABLE_DEFINITIONS = {
                 REFERENCES public.observations (id)
         )
     """,
+    **DESORDRE_REPERAGE_TABLE_DEFINITIONS,
 }
 
 EXPECTED_TABLES = tuple(TABLE_DEFINITIONS)
@@ -595,6 +603,7 @@ INDEX_DEFINITIONS = {
         CREATE INDEX IF NOT EXISTS link_systemes_reperage_bornes_borne_idx
         ON public.link_systemes_reperage_bornes (borne_id)
     """,
+    **DESORDRE_REPERAGE_INDEX_DEFINITIONS,
 }
 
 SCHEMA_DDL = tuple(
@@ -604,5 +613,6 @@ SCHEMA_DDL = tuple(
         *CONSTRAINT_DEFINITIONS.values(),
         *INDEX_DEFINITIONS.values(),
         *REPERAGE_FUNCTION_DDL,
+        *VIEW_DEFINITIONS.values(),
     )
 )

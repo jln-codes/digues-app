@@ -292,6 +292,23 @@ def run_migrate_core() -> int:
     )
     print("link_desordres_troncons :")
     print(f"  créés: {report.validation.table_counts['link_desordres_troncons']}")
+    print("Prototype de repérage des désordres :")
+    desordre_reperage = getattr(prepared, "desordre_reperage", None)
+    print(
+        "  localisations créées: "
+        f"{report.validation.table_counts.get('desordre_localisations_reperage', 0)}"
+    )
+    if desordre_reperage is not None:
+        print(
+            "  chaînes source complètes/partielles/sans repérage: "
+            f"{desordre_reperage.source_complete_count}/"
+            f"{desordre_reperage.source_partial_count}/"
+            f"{desordre_reperage.source_without_reperage_count}"
+        )
+    print(
+        "  qualité cible: "
+        f"{getattr(report.validation, 'desordre_reperage_quality_counts', {})}"
+    )
     print("Observation :")
     print(f"  migrées: {report.validation.table_counts['observations']}")
     print(f"  valid=false: {sum(not row.valid for row in prepared.observations)}")

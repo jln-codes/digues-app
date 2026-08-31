@@ -152,13 +152,26 @@ COVERAGE_REGISTRY: dict[str, CoverageRule] = {
         comment="Borne autonome ; valeurPR appartient à l'association système-borne.",
     ),
     "Desordre": CoverageRule(
-        "desordres, link_desordres_troncons, observations, photos",
+        "desordres, link_desordres_troncons, desordre_localisations_reperage, observations, photos",
         "PARTIELLE",
         BASE_FIELDS | MEDIA_FIELDS | _fields(
             "typeDesordreId", "categorieDesordreId", "designation", "commentaire",
-            "date_debut", "date_fin", "geometry", "positionDebut", "positionFin", "linearId"
+            "date_debut", "date_fin", "geometry", "positionDebut", "positionFin",
+            "linearId", "foreignParentId", "systemeRepId", "borneDebutId",
+            "borneFinId", "borne_debut_distance", "borne_fin_distance",
+            "borne_debut_aval", "borne_fin_aval", "prDebut", "prFin",
+            "editedGeoCoordinate", "geometryMode",
         ),
-        comment="Objet, rattachement, observations et photos migrés ; prestations et champs spécialisés différés.",
+        ignored_fields=COMMON_IGNORED_FIELDS - _fields(
+            "systemeRepId", "borneDebutId", "borneFinId",
+            "borne_debut_distance", "borne_fin_distance",
+            "borne_debut_aval", "borne_fin_aval", "prDebut", "prFin",
+            "editedGeoCoordinate", "geometryMode",
+        ),
+        comment=(
+            "Objet, rattachement, médias et prototype de repérage historique "
+            "migrés ; prestations et champs spécialisés différés."
+        ),
     ),
     "AmenagementHydraulique": CoverageRule(
         "amenagements_hydrauliques, link_amenagements_troncons, observations, photos",

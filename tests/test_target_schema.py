@@ -91,6 +91,7 @@ class TargetSchemaTest(unittest.TestCase):
                 "reseaux_techniques",
                 "observations",
                 "photos",
+                "desordre_localisations_reperage",
             ),
         )
         created = [
@@ -141,6 +142,7 @@ class TargetSchemaTest(unittest.TestCase):
             "link_cheminements_desordres",
             "mobilier",
             "reseaux_techniques",
+            "desordre_localisations_reperage",
         ):
             with self.subTest(table=table):
                 self.assertIn("id uuid primary key", normalized(TABLE_DEFINITIONS[table]))
@@ -169,6 +171,7 @@ class TargetSchemaTest(unittest.TestCase):
             "link_cheminements_desordres",
             "mobilier",
             "reseaux_techniques",
+            "desordre_localisations_reperage",
         ):
             with self.subTest(table=table):
                 self.assertIn(
@@ -187,6 +190,13 @@ class TargetSchemaTest(unittest.TestCase):
                 "borne_id",
             ),
             "link_desordres_troncons": ("desordre_id", "troncon_id"),
+            "desordre_localisations_reperage": (
+                "desordre_id",
+                "troncon_id",
+                "systeme_reperage_id",
+                "borne_debut_id",
+                "borne_fin_id",
+            ),
             "observations": (
                 "desordre_id",
                 "troncon_id",
@@ -301,6 +311,13 @@ class TargetSchemaTest(unittest.TestCase):
             "link_desordres_troncons": (
                 "foreign key (desordre_id) references public.desordres (id)",
                 "foreign key (troncon_id) references public.troncons (id)",
+            ),
+            "desordre_localisations_reperage": (
+                "foreign key (desordre_id) references public.desordres (id)",
+                "foreign key (desordre_id, troncon_id) references public.link_desordres_troncons (desordre_id, troncon_id)",
+                "foreign key (systeme_reperage_id, troncon_id) references public.systemes_reperage (id, troncon_id)",
+                "foreign key (systeme_reperage_id, borne_debut_id) references public.link_systemes_reperage_bornes (systeme_reperage_id, borne_id)",
+                "foreign key (systeme_reperage_id, borne_fin_id) references public.link_systemes_reperage_bornes (systeme_reperage_id, borne_id)",
             ),
             "observations": (
                 "foreign key (desordre_id) references public.desordres (id)",
@@ -516,7 +533,29 @@ class TargetSchemaTest(unittest.TestCase):
                 "troncons_systeme_reperage_defaut_idx",
                 "link_troncons_bornes_borne_idx",
                 "link_systemes_reperage_bornes_borne_idx",
+                "desordre_localisations_reperage_desordre_idx",
+                "desordre_localisations_reperage_troncon_idx",
+                "desordre_localisations_reperage_systeme_idx",
             },
+        )
+
+    def test_desordre_reperage_prototype_is_qgis_editable_and_constrained(self):
+        statement = normalized(
+            TABLE_DEFINITIONS["desordre_localisations_reperage"]
+        )
+        self.assertIn("distance_debut_m double precision null", statement)
+        self.assertIn("position_debut_relative text null", statement)
+        self.assertIn("offset_debut_m double precision generated always as", statement)
+        self.assertIn("position_debut_relative in (", statement)
+        self.assertIn("mode_saisie_source text not null default 'inconnu'", statement)
+        self.assertIn("politique_autorite text not null default 'manuelle'", statement)
+        self.assertIn("position_debut_source geometry(point, 3950) null", statement)
+        self.assertIn("trace_source jsonb not null", statement)
+        self.assertNotIn("on delete cascade", statement)
+        ddl = normalized(" ".join(SCHEMA_DDL))
+        self.assertIn(
+            "create or replace view public.view_desordre_localisations_reperage",
+            ddl,
         )
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):

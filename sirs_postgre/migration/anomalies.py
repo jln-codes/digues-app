@@ -53,6 +53,9 @@ CATEGORIES = frozenset(
         "INVALID_SOURCE_CRS",
         "CONFLICTING_SOURCE_CRS",
         "OBJECT_CRS_HINT_CONFLICT",
+        "REPERAGE_REFERENCE_MISSING",
+        "REPERAGE_SYSTEM_CONFLICT",
+        "REPERAGE_AMBIGUOUS",
     }
 )
 SEVERITIES = frozenset({"INFO", "WARNING", "ERROR", "BLOCKING"})
@@ -87,6 +90,9 @@ FAMILY_BY_CATEGORY = {
     "INVALID_SOURCE_CRS": "DATA",
     "CONFLICTING_SOURCE_CRS": "DATA",
     "OBJECT_CRS_HINT_CONFLICT": "DATA",
+    "REPERAGE_REFERENCE_MISSING": "DATA",
+    "REPERAGE_SYSTEM_CONFLICT": "DATA",
+    "REPERAGE_AMBIGUOUS": "DATA",
     "UNKNOWN_CLASS": "COVERAGE",
     "PARTIALLY_MIGRATED_CLASS": "COVERAGE",
     "UNKNOWN_FIELD": "COVERAGE",
@@ -122,6 +128,9 @@ PREFIX_BY_CATEGORY = {
     "INVALID_SOURCE_CRS": "CRS",
     "CONFLICTING_SOURCE_CRS": "CRS",
     "OBJECT_CRS_HINT_CONFLICT": "CRS",
+    "REPERAGE_REFERENCE_MISSING": "REP",
+    "REPERAGE_SYSTEM_CONFLICT": "REP",
+    "REPERAGE_AMBIGUOUS": "REP",
 }
 
 REGISTER_FIELDS = (
@@ -808,6 +817,61 @@ def collect_anomalies(
                     correction_location="EITHER",
                     detected_value=None,
                     expected_value="RefTypeDesordre compatible avec la catégorie",
+                )
+            )
+
+    prepared_desordre_reperage = getattr(
+        prepared_core, "desordre_reperage", None
+    )
+    if prepared_desordre_reperage is not None:
+        for localisation in prepared_desordre_reperage.localisations:
+            if localisation.qualite in {"A_CONTROLER", "OK"}:
+                continue
+            if localisation.qualite in {"INCOMPLETE", "REFERENCE_ABSENTE"}:
+                category = "REPERAGE_REFERENCE_MISSING"
+                source_field = "systemeRepId"
+                message = (
+                    "Le repérage historique du désordre est incomplet ou "
+                    "contient une référence absente."
+                )
+            elif localisation.qualite == "CONFLIT_SYSTEME":
+                category = "REPERAGE_SYSTEM_CONFLICT"
+                source_field = "systemeRepId"
+                message = (
+                    "Le système ou une borne historique ne correspond pas "
+                    "au tronçon explicite du désordre."
+                )
+            else:
+                category = "REPERAGE_AMBIGUOUS"
+                source_field = "repérage"
+                message = (
+                    "Le moteur ne confirme pas univoquement la chaîne de "
+                    "repérage historique du désordre."
+                )
+            anomalies.append(
+                Anomaly.create(
+                    category=category,
+                    severity="WARNING",
+                    source_database=source_database,
+                    source_class="Desordre",
+                    stable_subject_id=str(localisation.desordre_id),
+                    source_document_id=localisation.source_document_id,
+                    source_field=source_field,
+                    target_table="desordre_localisations_reperage",
+                    target_id=str(localisation.id),
+                    target_field="qualite",
+                    message=message,
+                    details={
+                        "qualite": localisation.qualite,
+                        "diagnostic": localisation.diagnostic_conversion,
+                    },
+                    suggested_action=(
+                        "Contrôler les références source sans fabriquer de "
+                        "rattachement cible."
+                    ),
+                    correction_location="MANUAL_REVIEW",
+                    detected_value=localisation.trace_source,
+                    expected_value="chaîne explicite et cohérente",
                 )
             )
 

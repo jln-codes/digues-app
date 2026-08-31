@@ -62,7 +62,7 @@ class CoverageDiagnosticTest(unittest.TestCase):
         ):
             self.assertEqual(rule_for(class_name).status, "TECHNIQUE_IGNORE")
 
-    def test_reperage_core_is_covered_but_positionable_fields_stay_deferred(self):
+    def test_reperage_core_and_desordre_prototype_are_covered(self):
         self.assertEqual(rule_for("BorneDigue").status, "MIGREE")
         systeme = rule_for("SystemeReperage")
         self.assertEqual(systeme.status, "MIGREE")
@@ -82,7 +82,12 @@ class CoverageDiagnosticTest(unittest.TestCase):
             "prDebut",
             "prFin",
         ):
-            self.assertIn(field, rule_for("Desordre").ignored_fields)
+            self.assertIn(field, rule_for("Desordre").consumed_fields)
+            self.assertNotIn(field, rule_for("Desordre").ignored_fields)
+            self.assertIn(
+                field,
+                rule_for("OuvrageFranchissement").ignored_fields,
+            )
 
     def test_technical_access_is_migrated_without_required_parent_or_inference(self):
         rule = rule_for("CheminAccesDependance")
