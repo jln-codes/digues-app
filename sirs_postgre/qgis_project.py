@@ -372,6 +372,7 @@ def _load_pyqgis() -> dict[str, Any]:
             QgsMapLayer,
             QgsProject,
             QgsRelation,
+            QgsRelationContext,
             QgsSingleSymbolRenderer,
             QgsSymbol,
             QgsVectorLayer,
@@ -632,11 +633,44 @@ def _create_groups(project: Any) -> dict[tuple[str, ...], Any]:
     return result
 
 
+def _register_layers(
+    project: Any,
+    groups: dict[tuple[str, ...], Any],
+    layers: dict[str, Any],
+) -> None:
+    """Enregistre toutes les couches avant toute résolution de relation.
+
+    Les couches privées appartiennent au registre du projet mais ne reçoivent
+    volontairement aucun nœud dans l'arbre des couches.
+    """
+
+    for spec in LAYER_SPECS:
+        layer = layers[spec.key]
+        registered = project.addMapLayer(layer, False)
+        if registered is None or project.mapLayer(spec.layer_id) is None:
+            raise QGISProjectError(
+                f"Couche non enregistrée dans QgsProject : {spec.layer_id}"
+            )
+        if project.mapLayer(spec.layer_id).id() != spec.layer_id:
+            raise QGISProjectError(
+                f"Layer ID instable après enregistrement : {spec.layer_id}"
+            )
+        if spec.group_path is not None:
+            groups[spec.group_path].addLayer(layer)
+
+    for spec in (item for item in LAYER_SPECS if item.private):
+        if project.layerTreeRoot().findLayer(spec.layer_id) is not None:
+            raise QGISProjectError(
+                f"Couche privée exposée dans le layer tree : {spec.layer_id}"
+            )
+
+
 def _create_relations(
     api: dict[str, Any], project: Any, layers: dict[str, Any]
 ) -> None:
+    relation_context = api["QgsRelationContext"](project)
     for spec in RELATION_SPECS:
-        relation = api["QgsRelation"]()
+        relation = api["QgsRelation"](relation_context)
         relation.setId(spec.relation_id)
         relation.setName(spec.name)
         relation.setReferencedLayer(layers[spec.parent_layer_key].id())
@@ -679,9 +713,30 @@ def _verify_written_project(api: dict[str, Any], output: Path) -> None:
             "Relation(s) absente(s) après relecture : "
             + ", ".join(sorted(expected_relations - actual_relations))
         )
+    invalid_relations = sorted(
+        relation_id
+        for relation_id, relation in (
+            verification.relationManager().relations().items()
+        )
+        if not relation.isValid()
+    )
+    if invalid_relations:
+        raise QGISProjectError(
+            "Relation(s) invalide(s) après relecture : "
+            + ", ".join(invalid_relations)
+        )
     for path in GROUP_PATHS:
         if verification.layerTreeRoot().findGroup(path[-1]) is None:
             raise QGISProjectError(f"Groupe QGIS absent après relecture : {path[-1]}")
+    for spec in (item for item in LAYER_SPECS if item.private):
+        if verification.mapLayer(spec.layer_id) is None:
+            raise QGISProjectError(
+                f"Couche privée absente après relecture : {spec.layer_id}"
+            )
+        if verification.layerTreeRoot().findLayer(spec.layer_id) is not None:
+            raise QGISProjectError(
+                f"Couche privée visible après relecture : {spec.layer_id}"
+            )
     drag_and_drop = api["Qgis"].AttributeFormLayout.DragAndDrop
     for key in ("desordres_point", "desordres_line", "desordres_polygon"):
         layer_id = next(spec.layer_id for spec in LAYER_SPECS if spec.key == key)
@@ -744,11 +799,7 @@ def generate_qgis_project(
                 raise QGISProjectError("Les layer IDs QGIS ne sont pas uniques")
 
             groups = _create_groups(project)
-            for spec in LAYER_SPECS:
-                layer = layers[spec.key]
-                project.addMapLayer(layer, False)
-                if spec.group_path is not None:
-                    groups[spec.group_path].addLayer(layer)
+            _register_layers(project, groups, layers)
             _create_relations(api, project, layers)
             _configure_lookup_layers(layers)
             _configure_localisation_form(

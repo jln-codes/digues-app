@@ -15,13 +15,112 @@ from sirs_postgre.qgis_project import (
     MINIMUM_QGIS_VERSION_INT,
     PyQGISUnavailableError,
     RELATION_SPECS,
+    _create_relations,
     _load_pyqgis,
+    _register_layers,
     _temporary_pgpassword,
     generate_qgis_project,
     pyqgis_available,
     qgis_connection_from_config,
 )
 from sirs_postgre.target import PostgreSQLConfig
+
+
+class FakeLayer:
+    def __init__(self, layer_id):
+        self._layer_id = layer_id
+
+    def id(self):
+        return self._layer_id
+
+
+class FakeLayerTreeRoot:
+    def __init__(self):
+        self.layer_ids = set()
+
+    def findLayer(self, layer_id):
+        return layer_id if layer_id in self.layer_ids else None
+
+
+class FakeGroup:
+    def __init__(self, root):
+        self.root = root
+
+    def addLayer(self, layer):
+        self.root.layer_ids.add(layer.id())
+
+
+class FakeRelationManager:
+    def __init__(self):
+        self.relations = []
+
+    def addRelation(self, relation):
+        self.relations.append(relation)
+
+
+class FakeProject:
+    def __init__(self):
+        self._layers = {}
+        self._root = FakeLayerTreeRoot()
+        self._relation_manager = FakeRelationManager()
+
+    def addMapLayer(self, layer, _add_to_legend):
+        self._layers[layer.id()] = layer
+        return layer
+
+    def mapLayer(self, layer_id):
+        return self._layers.get(layer_id)
+
+    def mapLayers(self):
+        return dict(self._layers)
+
+    def layerTreeRoot(self):
+        return self._root
+
+    def relationManager(self):
+        return self._relation_manager
+
+
+class FakeRelationContext:
+    def __init__(self, project):
+        self.project = project
+
+
+class FakeRelation:
+    def __init__(self, context):
+        self.context = context
+        self.relation_id = None
+        self.parent_layer_id = None
+        self.child_layer_id = None
+        self.field_pairs = []
+
+    def setId(self, relation_id):
+        self.relation_id = relation_id
+
+    def setName(self, _name):
+        pass
+
+    def setReferencedLayer(self, layer_id):
+        self.parent_layer_id = layer_id
+
+    def setReferencingLayer(self, layer_id):
+        self.child_layer_id = layer_id
+
+    def addFieldPair(self, child_field, parent_field):
+        self.field_pairs.append((child_field, parent_field))
+
+    def updateRelationStatus(self):
+        pass
+
+    def isValid(self):
+        return (
+            self.context.project.mapLayer(self.parent_layer_id) is not None
+            and self.context.project.mapLayer(self.child_layer_id) is not None
+            and bool(self.field_pairs)
+        )
+
+    def validationError(self):
+        return "relation invalide"
 
 
 class QGISProjectSpecificationTest(unittest.TestCase):
@@ -67,6 +166,20 @@ class QGISProjectSpecificationTest(unittest.TestCase):
         self.assertIn("position_debut_source", LOCALISATION_HIDDEN_FIELDS)
         self.assertIn("position_fin_source", LOCALISATION_HIDDEN_FIELDS)
 
+    def test_private_layer_ids_are_stable(self):
+        private_ids = {
+            spec.key: spec.layer_id for spec in LAYER_SPECS if spec.private
+        }
+        self.assertEqual(
+            private_ids,
+            {
+                "desordre_localisations": (
+                    "sirs_desordre_localisations_reperage"
+                ),
+                "systemes_bornes": "sirs_link_systemes_reperage_bornes",
+            },
+        )
+
     def test_relation_ids_are_deterministic_and_cover_each_parent(self):
         self.assertEqual(
             tuple(spec.relation_id for spec in RELATION_SPECS),
@@ -84,6 +197,61 @@ class QGISProjectSpecificationTest(unittest.TestCase):
             all(
                 spec.child_layer_key == "desordre_localisations"
                 for spec in RELATION_SPECS
+            )
+        )
+
+    def test_private_layers_are_registered_but_absent_from_layer_tree(self):
+        project = FakeProject()
+        layers = {
+            spec.key: FakeLayer(spec.layer_id) for spec in LAYER_SPECS
+        }
+        groups = {
+            path: FakeGroup(project.layerTreeRoot())
+            for path in GROUP_PATHS
+        }
+
+        _register_layers(project, groups, layers)
+
+        self.assertEqual(
+            set(project.mapLayers()),
+            {spec.layer_id for spec in LAYER_SPECS},
+        )
+        for spec in (item for item in LAYER_SPECS if item.private):
+            self.assertIs(project.mapLayer(spec.layer_id), layers[spec.key])
+            self.assertIsNone(project.layerTreeRoot().findLayer(spec.layer_id))
+
+    def test_relations_use_the_project_context_after_layer_registration(self):
+        project = FakeProject()
+        layers = {
+            spec.key: FakeLayer(spec.layer_id) for spec in LAYER_SPECS
+        }
+        groups = {
+            path: FakeGroup(project.layerTreeRoot())
+            for path in GROUP_PATHS
+        }
+        _register_layers(project, groups, layers)
+
+        _create_relations(
+            {
+                "QgsRelation": FakeRelation,
+                "QgsRelationContext": FakeRelationContext,
+            },
+            project,
+            layers,
+        )
+
+        relations = project.relationManager().relations
+        self.assertEqual(len(relations), 3)
+        self.assertTrue(all(relation.isValid() for relation in relations))
+        self.assertEqual(
+            {relation.relation_id for relation in relations},
+            {spec.relation_id for spec in RELATION_SPECS},
+        )
+        self.assertTrue(
+            all(
+                relation.child_layer_id
+                == "sirs_desordre_localisations_reperage"
+                for relation in relations
             )
         )
 
