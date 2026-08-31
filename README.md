@@ -396,7 +396,12 @@ qui est interpolé entre les couples système–borne. Les PR décroissants sont
 acceptés ; les systèmes ambigus, incomplets et les valeurs hors domaine sont
 signalés par des statuts, sans rabattement ni extrapolation. Aucun trigger ne
 synchronise géométrie et repérage : l'appelant choisit explicitement la
-conversion. `localisations_reperage` n'est pas encore implémentée.
+conversion. Un prototype volontairement spécialisé conserve désormais le
+repérage historique des seuls désordres dans
+`desordre_localisations_reperage` (relation 0..N). Il garde la géométrie métier
+indépendante, expose une vue lisible pour QGIS et laisse toutes les autres
+familles hors périmètre ; le modèle transversal `localisations_reperage` n'est
+donc pas encore implémenté.
 
 ### Règles génériques et overrides de source
 
