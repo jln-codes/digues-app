@@ -1,8 +1,10 @@
 # Prototype QGIS/QField — repérage des désordres
 
-Ce lot prépare un formulaire pilote ; il n'a pas été ouvert dans QGIS ou
-QField dans l'environnement de développement, où PyQGIS n'est pas disponible.
-Les étapes ci-dessous constituent donc une configuration manuelle à valider.
+Le formulaire pilote est désormais décrit de manière exécutable par
+`sirs_postgre/qgis_project.py` et généré avec `sirs-postgre qgis-project`.
+Il n'a pas été ouvert dans QGIS ou QField dans l'environnement de développement,
+où PyQGIS n'est pas disponible. Les choix ci-dessous restent donc à valider
+avec le projet généré sur un poste QGIS réel.
 
 ## Ce que voit l'utilisateur
 

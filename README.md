@@ -144,6 +144,25 @@ sirs-postgre check --target-only
 sirs-postgre diagnose
 ```
 
+### Génération du projet QGIS
+
+```bash
+sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
+```
+
+La commande génère entièrement le QGZ depuis le code et la configuration
+PostgreSQL existante. Elle nécessite PyQGIS 3.38 ou plus récent et doit être
+lancée avec le Python fourni par QGIS/OSGeo4W ; son absence produit une erreur
+explicite sans affecter les autres commandes. Le projet contient les couches,
+groupes, relations et formulaires du prototype de repérage des désordres.
+
+Le mot de passe PostgreSQL n'est jamais écrit dans le QGZ. Une configuration
+d'authentification QGIS locale peut être référencée avec `--authcfg ID`, ou
+QGIS peut utiliser `.pgpass`/une saisie interactive. Le code générateur est
+versionné ; `qgis/sirs_postgre.qgz` reste un artifact local ignoré par Git. La
+procédure Windows détaillée figure dans
+`docs/generation_projet_qgis.md`.
+
 ### `check`
 
 ```bash
@@ -615,10 +634,12 @@ table `link_desordres_troncons` doit être présente dans le projet QGIS. Cette
 table est une structure technique : elle n'est pas destinée à être manipulée
 directement par l'utilisateur métier.
 
-Le dossier `qgis/styles/` versionne progressivement les styles QML et les
-configurations de couches et de formulaires. Ces éléments existent pour le noyau
-actuel, mais leur ergonomie et leur stabilisation se poursuivent au fil des
-briques métier.
+Le projet pilote est désormais généré par `sirs-postgre qgis-project`. La table
+enfant `desordre_localisations_reperage` est enregistrée comme couche privée
+sans géométrie principale : elle reste utilisable par les relations et les
+formulaires sans exposer ses deux positions historiques comme couches dans le
+panneau. Le dossier `qgis/styles/` conserve les anciens QML comme références,
+mais le générateur ne les réutilise pas automatiquement.
 
 Après un `recreate`, QGIS peut encore référencer l'ancienne définition PostgreSQL
 des couches. Rafraîchir ou réimporter les couches évite d'utiliser ce cache
@@ -647,7 +668,8 @@ d'anomalies, la résolution du CRS source et les validations de migration.
 
 ```text
 sirs_postgre/
-├── cli.py                  # check, cycle de migration, diagnose, anomalies
+├── cli.py                  # check, migration, diagnose, QGIS, anomalies
+├── qgis_project.py         # génération reproductible du projet QGZ
 ├── source/
 │   └── couchdb.py          # configuration et client CouchDB
 ├── target/
@@ -668,7 +690,7 @@ sirs_postgre/
     └── validation.py       # contrôles exécutés avant commit
 
 qgis/
-├── sirs_postgre.qgz        # projet QGIS de travail
+├── sirs_postgre.qgz        # artifact local généré, ignoré par Git
 └── styles/                 # styles QML et configurations de formulaires
 
 tests/                      # tests unitaires

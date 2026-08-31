@@ -67,6 +67,23 @@ def build_parser() -> argparse.ArgumentParser:
         "migrate-core",
         description="Migre le noyau CouchDB vers PostgreSQL/PostGIS.",
     )
+    qgis_project = subparsers.add_parser(
+        "qgis-project",
+        description="Génère le projet QGIS reproductible depuis PostgreSQL.",
+    )
+    qgis_project.add_argument(
+        "--output",
+        type=Path,
+        default=Path("qgis/sirs_postgre.qgz"),
+        help="Fichier QGZ à générer (défaut : qgis/sirs_postgre.qgz).",
+    )
+    qgis_project.add_argument(
+        "--authcfg",
+        help=(
+            "Identifiant d'une configuration d'authentification QGIS locale ; "
+            "aucun secret n'est écrit dans le QGZ."
+        ),
+    )
     diagnose = subparsers.add_parser(
         "diagnose",
         description="Génère audits/bilan.md depuis le contenu CouchDB réel.",
@@ -206,6 +223,31 @@ def run_init_schema() -> int:
     print(f"[OK] pgcrypto disponible : {status.pgcrypto_version}")
     for table in status.tables:
         print(f"[OK] Table présente : {table}")
+    return 0
+
+
+def run_qgis_project(args: argparse.Namespace) -> int:
+    # Import volontairement local : les autres commandes restent utilisables
+    # dans un Python standard dépourvu de PyQGIS.
+    from .qgis_project import generate_qgis_project
+
+    config = PostgreSQLConfig.from_env()
+    try:
+        result = generate_qgis_project(
+            config,
+            args.output,
+            authcfg=args.authcfg,
+        )
+    except Exception as exc:
+        print(
+            "[ERREUR] Génération du projet QGIS : "
+            f"{config.redact_secrets(str(exc))}"
+        )
+        return 1
+    print(f"[OK] Projet QGIS généré : {result.output}")
+    print(f"     Connexion : {result.connection} (mot de passe non enregistré)")
+    print(f"     Couches : {len(result.layer_ids)}")
+    print(f"     Relations : {', '.join(result.relation_ids)}")
     return 0
 
 
@@ -543,6 +585,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_init_schema()
     if args.command == "migrate-core":
         return run_migrate_core()
+    if args.command == "qgis-project":
+        return run_qgis_project(args)
     if args.command == "diagnose":
         return run_diagnose(args)
     if args.command == "anomalies":

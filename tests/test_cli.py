@@ -18,6 +18,7 @@ from sirs_postgre.target import (
     PostgreSQLStatus,
 )
 from sirs_postgre.target.schema import EXPECTED_TABLES
+from sirs_postgre.qgis_project import QGISProjectResult
 
 
 class FakeSourceClient:
@@ -50,6 +51,81 @@ class FakeSourceClient:
 
 
 class CLITest(unittest.TestCase):
+    @patch("sirs_postgre.qgis_project.generate_qgis_project")
+    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    def test_qgis_project_command_uses_default_output(
+        self, target_config, generate_project
+    ):
+        config = PostgreSQLConfig()
+        target_config.return_value = config
+        output = Path("qgis/sirs_postgre.qgz").resolve()
+        generate_project.return_value = QGISProjectResult(
+            output=output,
+            layer_ids=("layer",),
+            relation_ids=("relation",),
+            groups=("SIRS",),
+            connection="postgres@127.0.0.1:5432/sirs_postgre",
+        )
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            result = main(["qgis-project"])
+        self.assertEqual(result, 0)
+        generate_project.assert_called_once_with(
+            config,
+            Path("qgis/sirs_postgre.qgz"),
+            authcfg=None,
+        )
+        self.assertIn("mot de passe non enregistré", captured.getvalue())
+
+    @patch("sirs_postgre.qgis_project.generate_qgis_project")
+    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    def test_qgis_project_accepts_output_and_authcfg(
+        self, target_config, generate_project
+    ):
+        config = PostgreSQLConfig()
+        target_config.return_value = config
+        output = Path("build/pilote.qgz")
+        generate_project.return_value = QGISProjectResult(
+            output=output.resolve(),
+            layer_ids=(),
+            relation_ids=(),
+            groups=(),
+            connection="postgres@127.0.0.1:5432/sirs_postgre",
+        )
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            result = main(
+                [
+                    "qgis-project",
+                    "--output",
+                    str(output),
+                    "--authcfg",
+                    "qgis-auth-id",
+                ]
+            )
+        self.assertEqual(result, 0)
+        generate_project.assert_called_once_with(
+            config,
+            output,
+            authcfg="qgis-auth-id",
+        )
+
+    @patch(
+        "sirs_postgre.qgis_project.generate_qgis_project",
+        side_effect=RuntimeError("PyQGIS indisponible"),
+    )
+    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    def test_qgis_project_failure_is_explicit_and_redacted(
+        self, target_config, _generate_project
+    ):
+        target_config.return_value = PostgreSQLConfig(password="secret")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["qgis-project"])
+        self.assertEqual(result, 1)
+        self.assertIn("PyQGIS indisponible", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
+
     @patch("sirs_postgre.cli.generate_coverage_report")
     @patch("sirs_postgre.cli.connect_couchdb")
     def test_diagnose_command_generates_the_expected_report(
