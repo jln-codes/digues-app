@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any, Mapping
 from uuid import UUID
 
+from sirs_postgre.migration.reperage import PreparedReperageMigration
 from sirs_postgre.target.schema import EXPECTED_TABLES
 
 
@@ -19,6 +21,8 @@ class CoreValidationResult:
     table_counts: dict[str, int]
     desordre_geometry_counts: dict[str, int]
     vegetation_geometry_counts: dict[str, int]
+    reperage_geometry_counts: dict[str, int]
+    reperage_default_count: int
 
 
 INTEGRITY_CHECKS = {
@@ -105,6 +109,53 @@ INTEGRITY_CHECKS = {
         SELECT COUNT(*) FROM public.troncons
         WHERE geometry IS NULL OR ST_SRID(geometry) <> 3950
     """,
+    "systemes_reperage → troncons": """
+        SELECT COUNT(*)
+        FROM public.systemes_reperage AS s
+        LEFT JOIN public.troncons AS t ON t.id = s.troncon_id
+        WHERE t.id IS NULL
+    """,
+    "link_troncons_bornes sans orphelins": """
+        SELECT COUNT(*)
+        FROM public.link_troncons_bornes AS l
+        LEFT JOIN public.troncons AS t ON t.id = l.troncon_id
+        LEFT JOIN public.bornes_reperage AS b ON b.id = l.borne_id
+        WHERE t.id IS NULL OR b.id IS NULL
+    """,
+    "link_systemes_reperage_bornes sans orphelins": """
+        SELECT COUNT(*)
+        FROM public.link_systemes_reperage_bornes AS l
+        LEFT JOIN public.systemes_reperage AS s
+          ON s.id = l.systeme_reperage_id
+        LEFT JOIN public.bornes_reperage AS b ON b.id = l.borne_id
+        WHERE s.id IS NULL OR b.id IS NULL
+    """,
+    "système de repérage par défaut existant": """
+        SELECT COUNT(*)
+        FROM public.troncons AS t
+        LEFT JOIN public.systemes_reperage AS s
+          ON s.id = t.systeme_reperage_defaut_id
+        WHERE t.systeme_reperage_defaut_id IS NOT NULL AND s.id IS NULL
+    """,
+    "système de repérage par défaut du même tronçon": """
+        SELECT COUNT(*)
+        FROM public.troncons AS t
+        JOIN public.systemes_reperage AS s
+          ON s.id = t.systeme_reperage_defaut_id
+        WHERE s.troncon_id <> t.id
+    """,
+    "SRID bornes_reperage": """
+        SELECT COUNT(*) FROM public.bornes_reperage
+        WHERE geometry IS NOT NULL AND ST_SRID(geometry) <> 3950
+    """,
+    "type geometry bornes_reperage": """
+        SELECT COUNT(*) FROM public.bornes_reperage
+        WHERE geometry IS NOT NULL AND GeometryType(geometry) <> 'POINT'
+    """,
+    "validité geometry bornes_reperage": """
+        SELECT COUNT(*) FROM public.bornes_reperage
+        WHERE geometry IS NOT NULL AND NOT ST_IsValid(geometry)
+    """,
     "SRID desordres": """
         SELECT COUNT(*) FROM public.desordres
         WHERE geometry IS NOT NULL AND ST_SRID(geometry) <> 3950
@@ -128,6 +179,7 @@ def validate_core_migration(
     cursor: Any,
     *,
     expected_counts: Mapping[str, int],
+    expected_reperage: PreparedReperageMigration,
     expected_desordre_geometries: Mapping[str, int],
     expected_ouvrage_geometries: Mapping[str, Mapping[str, int]],
     expected_ouvrage_invalid: Mapping[str, int],
@@ -180,6 +232,9 @@ def validate_core_migration(
         "systemes",
         "digues",
         "troncons",
+        "systemes_reperage",
+        "bornes_reperage",
+        "link_systemes_reperage_bornes",
         "desordres",
         "observations",
         "photos",
@@ -243,6 +298,145 @@ def validate_core_migration(
     ):
         raise MigrationValidationError(
             "Identifiants techniques ou couples desordre/troncon invalides"
+        )
+
+    reperage_errors: list[str] = []
+    for table, columns in (
+        ("link_troncons_bornes", "troncon_id, borne_id"),
+        (
+            "link_systemes_reperage_bornes",
+            "systeme_reperage_id, borne_id",
+        ),
+    ):
+        cursor.execute(
+            f"SELECT COUNT(*) - COUNT(DISTINCT ({columns})) FROM public.{table}"
+        )
+        row = cursor.fetchone()
+        if not row or int(row[0]) != 0:
+            reperage_errors.append(f"{table}: couple dupliqué")
+
+    cursor.execute("SELECT id, troncon_id FROM public.systemes_reperage")
+    actual_systemes = {
+        (UUID(str(systeme_id)), UUID(str(troncon_id)))
+        for systeme_id, troncon_id in cursor.fetchall()
+    }
+    expected_systemes = {
+        (row.id, row.troncon_id) for row in expected_reperage.systemes
+    }
+    if actual_systemes != expected_systemes:
+        reperage_errors.append("rattachements système-tronçon diffèrent de la source")
+
+    cursor.execute("SELECT troncon_id, borne_id FROM public.link_troncons_bornes")
+    actual_troncons_bornes = {
+        (UUID(str(troncon_id)), UUID(str(borne_id)))
+        for troncon_id, borne_id in cursor.fetchall()
+    }
+    expected_troncons_bornes = {
+        (row.troncon_id, row.borne_id) for row in expected_reperage.troncons_bornes
+    }
+    if actual_troncons_bornes != expected_troncons_bornes:
+        reperage_errors.append("relations tronçon-borne diffèrent de la source")
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM public.troncons "
+        "WHERE systeme_reperage_defaut_id IS NOT NULL"
+    )
+    row = cursor.fetchone()
+    actual_default_count = int(row[0]) if row else -1
+    if actual_default_count != expected_reperage.default_system_count:
+        reperage_errors.append(
+            "systèmes par défaut: attendu "
+            f"{expected_reperage.default_system_count}, "
+            f"obtenu {actual_default_count}"
+        )
+
+    cursor.execute(
+        "SELECT id, systeme_reperage_defaut_id FROM public.troncons "
+        "WHERE systeme_reperage_defaut_id IS NOT NULL"
+    )
+    actual_defaults = {
+        (UUID(str(troncon_id)), UUID(str(systeme_id)))
+        for troncon_id, systeme_id in cursor.fetchall()
+    }
+    expected_defaults = {
+        (row.troncon_id, row.systeme_reperage_id)
+        for row in expected_reperage.systemes_defaut
+    }
+    if actual_defaults != expected_defaults:
+        reperage_errors.append("systèmes par défaut diffèrent de la source")
+
+    cursor.execute(
+        "SELECT id, systeme_reperage_id, borne_id, valeur_pr, ordre_source "
+        "FROM public.link_systemes_reperage_bornes"
+    )
+    actual_associations = {
+        UUID(str(association_id)): (
+            UUID(str(systeme_id)),
+            UUID(str(borne_id)),
+            Decimal(str(value)),
+            int(ordre_source),
+        )
+        for association_id, systeme_id, borne_id, value, ordre_source
+        in cursor.fetchall()
+    }
+    expected_associations = {
+        row.id: (
+            row.systeme_reperage_id,
+            row.borne_id,
+            row.valeur_pr,
+            row.ordre_source,
+        )
+        for row in expected_reperage.systemes_bornes
+    }
+    if actual_associations != expected_associations:
+        reperage_errors.append(
+            "associations système-borne, valeur_pr ou ordre diffèrent de la source"
+        )
+
+    cursor.execute(
+        "SELECT COUNT(*) FILTER (WHERE geometry IS NOT NULL), "
+        "COUNT(*) FILTER (WHERE geometry IS NULL) "
+        "FROM public.bornes_reperage"
+    )
+    row = cursor.fetchone()
+    actual_reperage_geometries = {
+        "point": int(row[0]) if row else -1,
+        "null": int(row[1]) if row else -1,
+    }
+    if actual_reperage_geometries != expected_reperage.borne_geometry_counts:
+        reperage_errors.append(
+            "géométries des bornes attendues "
+            f"{expected_reperage.borne_geometry_counts}, "
+            f"obtenues {actual_reperage_geometries}"
+        )
+
+    for table, expected_invalid in (
+        (
+            "systemes_reperage",
+            sum(not row.valid for row in expected_reperage.systemes),
+        ),
+        (
+            "bornes_reperage",
+            sum(not row.valid for row in expected_reperage.bornes),
+        ),
+        (
+            "link_systemes_reperage_bornes",
+            sum(not row.valid for row in expected_reperage.systemes_bornes),
+        ),
+    ):
+        cursor.execute(f"SELECT COUNT(*) FROM public.{table} WHERE NOT valid")
+        row = cursor.fetchone()
+        actual_invalid = int(row[0]) if row else -1
+        if actual_invalid != expected_invalid:
+            reperage_errors.append(
+                f"{table}: valid=false attendus {expected_invalid}, "
+                f"obtenus {actual_invalid}"
+            )
+
+    if reperage_errors:
+        raise MigrationValidationError(
+            "Validation du noyau de repérage invalide : "
+            + "; ".join(reperage_errors)
         )
 
     cursor.execute(
@@ -453,17 +647,6 @@ def validate_core_migration(
                 "ouvrages_hydrauliques: amenagement_hydraulique_id invalide"
             )
 
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_name IN ('borne_digue', 'bornes_digue')
-            """
-        )
-        row = cursor.fetchone()
-        if not row or int(row[0]) != 0:
-            ouvrage_errors.append("BorneDigue présent dans le schéma cible")
         cursor.execute(
             """
             SELECT COUNT(*)
@@ -792,4 +975,6 @@ def validate_core_migration(
         table_counts=actual_counts,
         desordre_geometry_counts=actual_geometries,
         vegetation_geometry_counts=actual_vegetation_geometries,
+        reperage_geometry_counts=actual_reperage_geometries,
+        reperage_default_count=actual_default_count,
     )

@@ -2,7 +2,13 @@ import re
 import unittest
 
 from sirs_postgre.target.database import PostgreSQLConfig, initialize_schema
-from sirs_postgre.target.schema import EXPECTED_TABLES, SCHEMA_DDL, TABLE_DEFINITIONS
+from sirs_postgre.target.schema import (
+    CONSTRAINT_DEFINITIONS,
+    EXPECTED_TABLES,
+    INDEX_DEFINITIONS,
+    SCHEMA_DDL,
+    TABLE_DEFINITIONS,
+)
 
 
 def normalized(statement):
@@ -51,6 +57,10 @@ class TargetSchemaTest(unittest.TestCase):
                 "systemes",
                 "digues",
                 "troncons",
+                "systemes_reperage",
+                "bornes_reperage",
+                "link_troncons_bornes",
+                "link_systemes_reperage_bornes",
                 "ref_categories_desordre",
                 "ref_types_desordre",
                 "ref_urgences",
@@ -111,6 +121,9 @@ class TargetSchemaTest(unittest.TestCase):
             "systemes",
             "digues",
             "troncons",
+            "systemes_reperage",
+            "bornes_reperage",
+            "link_systemes_reperage_bornes",
             "desordres",
             "link_desordres_troncons",
             "observations",
@@ -166,7 +179,13 @@ class TargetSchemaTest(unittest.TestCase):
     def test_foreign_key_columns_are_uuid(self):
         expected_uuid_columns = {
             "digues": ("systeme_endiguement_id",),
-            "troncons": ("digue_id",),
+            "troncons": ("digue_id", "systeme_reperage_defaut_id"),
+            "systemes_reperage": ("troncon_id",),
+            "link_troncons_bornes": ("troncon_id", "borne_id"),
+            "link_systemes_reperage_bornes": (
+                "systeme_reperage_id",
+                "borne_id",
+            ),
             "link_desordres_troncons": ("desordre_id", "troncon_id"),
             "observations": (
                 "desordre_id",
@@ -268,6 +287,17 @@ class TargetSchemaTest(unittest.TestCase):
                 "references public.systemes (id)"
             ),
             "troncons": "foreign key (digue_id) references public.digues (id)",
+            "systemes_reperage": (
+                "foreign key (troncon_id) references public.troncons (id)"
+            ),
+            "link_troncons_bornes": (
+                "foreign key (troncon_id) references public.troncons (id)",
+                "foreign key (borne_id) references public.bornes_reperage (id)",
+            ),
+            "link_systemes_reperage_bornes": (
+                "foreign key (systeme_reperage_id) references public.systemes_reperage (id)",
+                "foreign key (borne_id) references public.bornes_reperage (id)",
+            ),
             "link_desordres_troncons": (
                 "foreign key (desordre_id) references public.desordres (id)",
                 "foreign key (troncon_id) references public.troncons (id)",
@@ -452,6 +482,41 @@ class TargetSchemaTest(unittest.TestCase):
             "constraint link_cheminements_desordres_unique "
             "unique (cheminement_id, desordre_id)",
             cheminement_desordre_link,
+        )
+
+    def test_reperage_core_has_explicit_keys_cycle_fk_and_indexes(self):
+        troncons = normalized(TABLE_DEFINITIONS["troncons"])
+        systemes = normalized(TABLE_DEFINITIONS["systemes_reperage"])
+        bornes = normalized(TABLE_DEFINITIONS["bornes_reperage"])
+        troncons_bornes = normalized(TABLE_DEFINITIONS["link_troncons_bornes"])
+        systemes_bornes = normalized(
+            TABLE_DEFINITIONS["link_systemes_reperage_bornes"]
+        )
+        self.assertIn("systeme_reperage_defaut_id uuid null", troncons)
+        self.assertIn("troncon_id uuid not null", systemes)
+        self.assertNotIn("geometry", systemes)
+        self.assertIn("geometry geometry(point, 3950) null", bornes)
+        self.assertNotIn("valeur_pr", bornes)
+        self.assertIn("primary key (troncon_id, borne_id)", troncons_bornes)
+        self.assertIn("valeur_pr numeric not null", systemes_bornes)
+        self.assertIn("id uuid primary key", systemes_bornes)
+        self.assertNotIn("default gen_random_uuid()", systemes_bornes)
+        cycle_fk = normalized(
+            CONSTRAINT_DEFINITIONS["troncons_systeme_reperage_defaut_fk"]
+        )
+        self.assertIn("alter table public.troncons", cycle_fk)
+        self.assertIn(
+            "foreign key (systeme_reperage_defaut_id) references public.systemes_reperage (id)",
+            cycle_fk,
+        )
+        self.assertEqual(
+            set(INDEX_DEFINITIONS),
+            {
+                "systemes_reperage_troncon_idx",
+                "troncons_systeme_reperage_defaut_idx",
+                "link_troncons_bornes_borne_idx",
+                "link_systemes_reperage_bornes_borne_idx",
+            },
         )
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):

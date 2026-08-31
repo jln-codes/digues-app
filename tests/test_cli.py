@@ -35,6 +35,8 @@ class FakeSourceClient:
             SOURCE_CLASSES["SystemeEndiguement"]: 9,
             SOURCE_CLASSES["Digue"]: 26,
             SOURCE_CLASSES["TronconDigue"]: 104,
+            SOURCE_CLASSES["SystemeReperage"]: 104,
+            SOURCE_CLASSES["BorneDigue"]: 208,
             SOURCE_CLASSES["Desordre"]: 1_598,
         }[class_name]
 
@@ -109,6 +111,11 @@ class CLITest(unittest.TestCase):
             digues=(),
             digues_without_system=0,
             troncons=(),
+            reperage=SimpleNamespace(
+                systemes=(),
+                bornes=(),
+                default_system_count=0,
+            ),
             desordres=(),
             desordre_geometry_counts={"point": 0, "linestring": 0, "null": 0},
             desordre_source_geometry_present=0,
@@ -263,6 +270,8 @@ class CLITest(unittest.TestCase):
         text = output.getvalue()
         self.assertIn("SystemeEndiguement: 9", text)
         self.assertIn("Desordre: 1598", text)
+        self.assertIn("SystemeReperage: 104", text)
+        self.assertIn("BorneDigue: 208", text)
         self.assertIn("Source CRS: EPSG:3950", text)
         self.assertIn("Target CRS: EPSG:3950", text)
         self.assertIn("Transformation: non", text)

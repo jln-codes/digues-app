@@ -47,7 +47,6 @@ class CoverageDiagnosticTest(unittest.TestCase):
         for class_name in (
             "Prestation",
             "GlobalPrestation",
-            "BorneDigue",
             "TalusDigue",
             "RapportEtude",
             "Organisme",
@@ -56,13 +55,34 @@ class CoverageDiagnosticTest(unittest.TestCase):
             self.assertEqual(rule_for(class_name).status, "NON_MIGREE")
         for class_name in (
             "PositionDocument",
-            "SystemeReperage",
             "BookMark",
             "SQLQuery",
             "ModeleRapport",
             "Utilisateur",
         ):
             self.assertEqual(rule_for(class_name).status, "TECHNIQUE_IGNORE")
+
+    def test_reperage_core_is_covered_but_positionable_fields_stay_deferred(self):
+        self.assertEqual(rule_for("BorneDigue").status, "MIGREE")
+        systeme = rule_for("SystemeReperage")
+        self.assertEqual(systeme.status, "MIGREE")
+        self.assertIn("systemeReperageBornes", systeme.consumed_fields)
+        association = rule_for("SystemeReperageBorne")
+        self.assertEqual(association.status, "MIGREE")
+        self.assertIn("valeurPR", association.consumed_fields)
+        troncon = rule_for("TronconDigue")
+        self.assertIn("borneIds", troncon.consumed_fields)
+        self.assertIn("systemeRepDefautId", troncon.consumed_fields)
+        for field in (
+            "systemeRepId",
+            "borneDebutId",
+            "borneFinId",
+            "borne_debut_distance",
+            "borne_fin_distance",
+            "prDebut",
+            "prFin",
+        ):
+            self.assertIn(field, rule_for("Desordre").ignored_fields)
 
     def test_technical_access_is_migrated_without_required_parent_or_inference(self):
         rule = rule_for("CheminAccesDependance")

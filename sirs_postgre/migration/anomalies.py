@@ -429,7 +429,11 @@ def _embedded_photo_occurrences(
 
 REFERENCE_SPECS = {
     "Digue": (("systemeEndiguementId", "SystemeEndiguement", False),),
-    "TronconDigue": (("digueId", "Digue", True),),
+    "TronconDigue": (
+        ("digueId", "Digue", True),
+        ("systemeRepDefautId", "SystemeReperage", False),
+    ),
+    "SystemeReperage": (("linearId", "TronconDigue", True),),
     "Desordre": (("linearId", "TronconDigue", True),),
     "ParcelleVegetation": (("planId", "PlanVegetation", False), ("linearId", "TronconDigue", True)),
     "ArbreVegetation": (("parcelleId", "ParcelleVegetation", True),),
@@ -629,6 +633,159 @@ def collect_anomalies(
                             expected_value=f"UUID existant de {target_class}",
                         )
                     )
+
+    borne_ids = ids_by_class.get("BorneDigue", set())
+    system_documents = {
+        _normal_uuid(document.get("_id")): document
+        for document in grouped.get("SystemeReperage", ())
+    }
+    troncon_bornes: dict[str | None, set[str]] = {}
+    for document in grouped.get("TronconDigue", ()):
+        troncon_id = _normal_uuid(document.get("_id"))
+        raw_borne_ids = document.get("borneIds") or ()
+        explicit: set[str] = set()
+        if isinstance(raw_borne_ids, Sequence) and not isinstance(
+            raw_borne_ids, (str, bytes)
+        ):
+            for index_value, raw_borne_id in enumerate(raw_borne_ids):
+                borne_id = _normal_uuid(raw_borne_id)
+                if borne_id is not None:
+                    explicit.add(borne_id)
+                if borne_id not in borne_ids:
+                    anomalies.append(
+                        Anomaly.create(
+                            category="BROKEN_REFERENCE",
+                            severity="BLOCKING",
+                            source_database=source_database,
+                            source_class="TronconDigue",
+                            stable_subject_id=troncon_id,
+                            source_document_id=_source_document_id(document),
+                            source_field=f"borneIds[{index_value}]",
+                            message="borneIds référence une BorneDigue absente.",
+                            details={"target_source_class": "BorneDigue"},
+                            suggested_action=(
+                                "Corriger la référence ou restaurer la borne dans CouchDB."
+                            ),
+                            correction_location="COUCHDB",
+                            detected_value=borne_id,
+                            expected_value="UUID existant de BorneDigue",
+                        )
+                    )
+        troncon_bornes[troncon_id] = explicit
+
+        default_id = _normal_uuid(document.get("systemeRepDefautId"))
+        default_document = system_documents.get(default_id)
+        if default_id is not None and default_document is not None:
+            owner_id = _normal_uuid(default_document.get("linearId"))
+            if owner_id != troncon_id:
+                anomalies.append(
+                    Anomaly.create(
+                        category="AMBIGUOUS_RELATION",
+                        severity="BLOCKING",
+                        source_database=source_database,
+                        source_class="TronconDigue",
+                        stable_subject_id=troncon_id,
+                        source_document_id=_source_document_id(document),
+                        source_field="systemeRepDefautId",
+                        message=(
+                            "Le système par défaut appartient à un autre tronçon."
+                        ),
+                        details={"systeme_linearId": owner_id},
+                        suggested_action=(
+                            "Corriger l'une des références explicites dans CouchDB."
+                        ),
+                        correction_location="COUCHDB",
+                        detected_value=default_id,
+                        expected_value=f"SystemeReperage.linearId={troncon_id}",
+                    )
+                )
+
+    for document in grouped.get("SystemeReperage", ()):
+        systeme_id = _normal_uuid(document.get("_id"))
+        troncon_id = _normal_uuid(document.get("linearId"))
+        raw_associations = document.get("systemeReperageBornes") or ()
+        if not isinstance(raw_associations, Sequence) or isinstance(
+            raw_associations, (str, bytes)
+        ):
+            continue
+        for index_value, association in enumerate(raw_associations):
+            if not isinstance(association, Mapping):
+                continue
+            raw_object_id = association.get("id")
+            association_id = _normal_uuid(raw_object_id)
+            stable_id = association_id or f"{systeme_id}:{index_value}"
+            borne_id = _normal_uuid(association.get("borneId"))
+            field_prefix = f"systemeReperageBornes[{index_value}]"
+            if borne_id not in borne_ids:
+                anomalies.append(
+                    Anomaly.create(
+                        category="BROKEN_REFERENCE",
+                        severity="BLOCKING",
+                        source_database=source_database,
+                        source_class="SystemeReperage",
+                        stable_subject_id=stable_id,
+                        source_document_id=_source_document_id(document),
+                        source_object_id=_source_object_id(raw_object_id),
+                        source_field=f"{field_prefix}.borneId",
+                        message="L'association référence une BorneDigue absente.",
+                        details={"target_source_class": "BorneDigue"},
+                        suggested_action=(
+                            "Corriger la référence ou restaurer la borne dans CouchDB."
+                        ),
+                        correction_location="COUCHDB",
+                        detected_value=borne_id,
+                        expected_value="UUID existant de BorneDigue",
+                    )
+                )
+            elif borne_id not in troncon_bornes.get(troncon_id, set()):
+                anomalies.append(
+                    Anomaly.create(
+                        category="AMBIGUOUS_RELATION",
+                        severity="WARNING",
+                        source_database=source_database,
+                        source_class="SystemeReperage",
+                        stable_subject_id=stable_id,
+                        source_document_id=_source_document_id(document),
+                        source_object_id=_source_object_id(raw_object_id),
+                        source_field=f"{field_prefix}.borneId",
+                        message=(
+                            "La borne du système est absente de "
+                            "TronconDigue.borneIds."
+                        ),
+                        details={"linearId": troncon_id},
+                        suggested_action=(
+                            "Vérifier les deux relations explicites sans en déduire une."
+                        ),
+                        correction_location="COUCHDB",
+                        detected_value=borne_id,
+                        expected_value="borne présente dans TronconDigue.borneIds",
+                    )
+                )
+
+    for document in grouped.get("BorneDigue", ()):
+        raw_geometry = document.get("geometry")
+        if raw_geometry in (None, ""):
+            continue
+        geometry = inspect_wkt(raw_geometry)
+        if geometry is None or not geometry.valid or geometry.kind.lower() != "point":
+            source_id = _normal_uuid(document.get("_id"))
+            anomalies.append(
+                Anomaly.create(
+                    category="INVALID_GEOMETRY",
+                    severity="BLOCKING",
+                    source_database=source_database,
+                    source_class="BorneDigue",
+                    stable_subject_id=source_id,
+                    source_document_id=_source_document_id(document),
+                    source_field="geometry",
+                    message="La géométrie de borne n'est pas un Point exploitable.",
+                    details=_geometry_details(document),
+                    suggested_action="Corriger la géométrie dans CouchDB.",
+                    correction_location="COUCHDB",
+                    detected_value=_geometry_details(document),
+                    expected_value="Point valide ou NULL explicitement admis",
+                )
+            )
 
     for document in grouped.get("Desordre", ()):
         if document.get("categorieDesordreId") not in (None, "") and document.get("typeDesordreId") in (None, ""):

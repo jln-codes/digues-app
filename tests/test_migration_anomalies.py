@@ -466,6 +466,83 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertEqual(broken.severity, "BLOCKING")
         self.assertEqual(broken.source_field, "systemeEndiguementId")
 
+    def test_detects_reperage_references_mismatch_and_borne_geometry(self):
+        troncon_id = UUID(int=501).hex
+        other_troncon_id = UUID(int=502).hex
+        systeme_id = UUID(int=503).hex
+        borne_id = UUID(int=504).hex
+        missing_borne_id = UUID(int=505).hex
+        association_id = UUID(int=506).hex
+        documents = [
+            source_doc(
+                "TronconDigue",
+                troncon_id,
+                digueId=UUID(int=507).hex,
+                borneIds=[missing_borne_id],
+                systemeRepDefautId=systeme_id,
+            ),
+            source_doc("TronconDigue", other_troncon_id, digueId=UUID(int=507).hex),
+            source_doc(
+                "SystemeReperage",
+                systeme_id,
+                linearId=other_troncon_id,
+                systemeReperageBornes=[
+                    {
+                        "id": association_id,
+                        "borneId": borne_id,
+                        "valeurPR": 12.5,
+                        "valid": True,
+                    }
+                ],
+            ),
+            source_doc(
+                "BorneDigue",
+                borne_id,
+                geometry="LINESTRING (0 0, 1 1)",
+            ),
+        ]
+        anomalies = self.collect(
+            documents,
+            [
+                coverage_row("TronconDigue", "MIGREE"),
+                coverage_row("SystemeReperage", "MIGREE"),
+                coverage_row("BorneDigue", "MIGREE"),
+            ],
+        )
+        reperage = [
+            item
+            for item in anomalies
+            if item.source_class in {"TronconDigue", "SystemeReperage", "BorneDigue"}
+        ]
+        self.assertTrue(
+            any(
+                item.category == "BROKEN_REFERENCE"
+                and item.source_field == "borneIds[0]"
+                for item in reperage
+            )
+        )
+        wrong_default = next(
+            item
+            for item in reperage
+            if item.category == "AMBIGUOUS_RELATION"
+            and item.source_field == "systemeRepDefautId"
+        )
+        self.assertEqual(wrong_default.severity, "BLOCKING")
+        mismatch = next(
+            item
+            for item in reperage
+            if item.source_object_id == association_id
+        )
+        self.assertEqual(mismatch.category, "AMBIGUOUS_RELATION")
+        self.assertEqual(mismatch.source_document_id, systeme_id)
+        self.assertTrue(
+            any(
+                item.category == "INVALID_GEOMETRY"
+                and item.source_class == "BorneDigue"
+                for item in reperage
+            )
+        )
+
     def test_direct_document_keeps_exact_compact_and_hyphenated_ids(self):
         compact_id = UUID(int=101).hex
         hyphenated_id = str(UUID(int=102))

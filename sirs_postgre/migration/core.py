@@ -36,6 +36,14 @@ from .media import (
     PhotoRow,
     prepare_media_migration,
 )
+from .reperage import (
+    BORNE_DIGUE_CLASS,
+    SYSTEME_REPERAGE_CLASS,
+    PreparedReperageMigration,
+    ReperageMigrationError,
+    insert_prepared_reperage,
+    prepare_reperage_migration,
+)
 from .vegetation import (
     VEGETATION_SOURCE_CLASSES,
     PreparedVegetationMigration,
@@ -53,6 +61,8 @@ CORE_SOURCE_CLASSES = {
     "SystemeEndiguement": "fr.sirs.core.model.SystemeEndiguement",
     "Digue": "fr.sirs.core.model.Digue",
     "TronconDigue": "fr.sirs.core.model.TronconDigue",
+    "SystemeReperage": SYSTEME_REPERAGE_CLASS,
+    "BorneDigue": BORNE_DIGUE_CLASS,
     "Desordre": "fr.sirs.core.model.Desordre",
     **OUVRAGE_SOURCE_CLASSES,
     **AMENAGEMENT_SOURCE_CLASSES,
@@ -90,8 +100,33 @@ CORE_FIELD_MAPPINGS = {
     "troncons": (
         "_id → UUID → id",
         "digueId → UUID vérifié → digue_id",
+        "systemeRepDefautId explicite → UUID vérifié → systeme_reperage_defaut_id",
+        "borneIds explicites → link_troncons_bornes, sans inférence spatiale",
         "libelle → texte inchangé → libelle",
         "geometry WKT LINESTRING + CRS global → assignation/reprojection centralisée → geometry EPSG:3950",
+        "valid → booléen inchangé → valid",
+    ),
+    "systemes_reperage": (
+        "_id → UUID historique → id",
+        "linearId → UUID de TronconDigue vérifié → troncon_id",
+        "libelle/commentaire → textes inchangés → colonnes homonymes",
+        "valid → booléen inchangé → valid",
+    ),
+    "bornes_reperage": (
+        "_id → UUID historique → id",
+        "libelle/commentaire/fictive/dates → valeurs source → colonnes homonymes",
+        "geometry Point + CRS global → assignation/reprojection centralisée → geometry EPSG:3950",
+        "valid → booléen inchangé → valid",
+    ),
+    "link_troncons_bornes": (
+        "TronconDigue._id + borneIds[] → couple explicite troncon_id/borne_id",
+        "aucune proximité ou appartenance à un système n'est inférée",
+    ),
+    "link_systemes_reperage_bornes": (
+        "SystemeReperageBorne.id → UUID historique → id",
+        "borneId → UUID de BorneDigue vérifié → borne_id",
+        "valeurPR → décimal source inchangé → valeur_pr",
+        "position dans la liste → ordre_source de traçabilité non autoritatif",
         "valid → booléen inchangé → valid",
     ),
     "desordres": (
@@ -259,6 +294,7 @@ class PreparedCoreMigration:
     systemes: tuple[SystemeEndiguementRow, ...]
     digues: tuple[DigueRow, ...]
     troncons: tuple[TronconRow, ...]
+    reperage: PreparedReperageMigration
     desordres: tuple[DesordreRow, ...]
     links: tuple[LinkDesordreTronconRow, ...]
     observations: tuple[ObservationRow, ...]
@@ -288,6 +324,7 @@ class PreparedCoreMigration:
             "observations": len(self.observations),
             "photos": len(self.photos),
         }
+        counts.update(self.reperage.expected_counts)
         counts.update(self.ouvrages.expected_counts)
         counts.update(self.amenagements.expected_counts)
         counts.update(self.vegetation.expected_counts)
@@ -615,6 +652,15 @@ def prepare_core_migration(
     _ensure_unique_ids(troncons, "troncons")
     troncon_ids = {row.id for row in troncons}
 
+    try:
+        reperage = prepare_reperage_migration(
+            source_documents,
+            troncon_ids=troncon_ids,
+        )
+    except ReperageMigrationError as exc:
+        raise CoreMigrationError(f"Bloc Repérage linéaire invalide : {exc}") from exc
+    warnings.extend(reperage.warnings)
+
     desordres_list: list[DesordreRow] = []
     links_list: list[LinkDesordreTronconRow] = []
     source_geometry_present = 0
@@ -791,6 +837,7 @@ def prepare_core_migration(
         systemes=systemes,
         digues=digues,
         troncons=troncons,
+        reperage=reperage,
         desordres=desordres,
         links=links,
         observations=media.observations,
@@ -942,6 +989,7 @@ def _insert_prepared_core(
     for table, rows in batches:
         if rows:
             cursor.executemany(statements[table], rows)
+    insert_prepared_reperage(cursor, prepared.reperage, crs_info=crs_info)
     insert_prepared_amenagements(cursor, prepared.amenagements, crs_info=crs_info)
     insert_prepared_ouvrages(cursor, prepared.ouvrages, crs_info=crs_info)
     insert_prepared_vegetation(cursor, prepared.vegetation, crs_info=crs_info)
@@ -1004,6 +1052,7 @@ def execute_core_migration(
                     cursor,
                     expected_counts=prepared.expected_counts,
                     expected_desordre_geometries=prepared.desordre_geometry_counts,
+                    expected_reperage=prepared.reperage,
                     expected_ouvrage_geometries=prepared.ouvrages.geometry_counts,
                     expected_ouvrage_invalid=prepared.ouvrages.invalid_counts,
                     ouvrages_enabled=prepared.ouvrages.enabled,

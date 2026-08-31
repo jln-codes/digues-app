@@ -33,6 +33,8 @@ SOURCE_CLASSES = {
     "SystemeEndiguement": "fr.sirs.core.model.SystemeEndiguement",
     "Digue": "fr.sirs.core.model.Digue",
     "TronconDigue": "fr.sirs.core.model.TronconDigue",
+    "SystemeReperage": "fr.sirs.core.model.SystemeReperage",
+    "BorneDigue": "fr.sirs.core.model.BorneDigue",
     "Desordre": "fr.sirs.core.model.Desordre",
 }
 
@@ -253,6 +255,26 @@ def run_migrate_core() -> int:
     print(f"  source: {len(prepared.troncons)}")
     print(f"  migrés: {report.validation.table_counts['troncons']}")
     print(f"  géométries: {len(prepared.troncons)}")
+    print("Repérage linéaire :")
+    print(f"  systèmes source: {len(prepared.reperage.systemes)}")
+    print(
+        "  systèmes migrés: "
+        f"{report.validation.table_counts['systemes_reperage']}"
+    )
+    print(f"  bornes source: {len(prepared.reperage.bornes)}")
+    print(
+        "  bornes migrées: "
+        f"{report.validation.table_counts['bornes_reperage']}"
+    )
+    print(
+        "  relations tronçon-borne: "
+        f"{report.validation.table_counts['link_troncons_bornes']}"
+    )
+    print(
+        "  relations système-borne: "
+        f"{report.validation.table_counts['link_systemes_reperage_bornes']}"
+    )
+    print(f"  systèmes par défaut: {prepared.reperage.default_system_count}")
     print("Desordre :")
     print(f"  source: {len(prepared.desordres)}")
     print(f"  migrés: {report.validation.table_counts['desordres']}")
@@ -350,9 +372,9 @@ def run_migrate_core() -> int:
     except Exception as exc:
         print(f"[ERREUR] Migration appliquée mais diagnostic incomplet : {exc}")
         return 1
-    print(f"Diagnostic : {coverage.path}")
-    print(f"Anomalies JSON : {coverage.anomalies_json_path}")
-    print(f"Anomalies CSV : {coverage.anomalies_csv_path}")
+    print(f"Diagnostic : {coverage.path.as_posix()}")
+    print(f"Anomalies JSON : {coverage.anomalies_json_path.as_posix()}")
+    print(f"Anomalies CSV : {coverage.anomalies_csv_path.as_posix()}")
     print("Résultat final :")
     print("[OK] Migration du noyau et diagnostic terminés")
     return 0
@@ -384,9 +406,9 @@ def run_diagnose(args: argparse.Namespace) -> int:
     print(f"Anomalies actives : {len(result.anomaly_register.active)}")
     for severity in ("INFO", "WARNING", "ERROR", "BLOCKING"):
         print(f"{severity} : {counts[severity]}")
-    print(f"Bilan : {result.path}")
-    print(f"Anomalies JSON : {result.anomalies_json_path}")
-    print(f"Anomalies CSV : {result.anomalies_csv_path}")
+    print(f"Bilan : {result.path.as_posix()}")
+    print(f"Anomalies JSON : {result.anomalies_json_path.as_posix()}")
+    print(f"Anomalies CSV : {result.anomalies_csv_path.as_posix()}")
     return 0
 
 

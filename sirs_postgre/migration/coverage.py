@@ -113,7 +113,44 @@ COVERAGE_REGISTRY: dict[str, CoverageRule] = {
     "RefUrgence": CoverageRule("ref_urgences", "MIGREE", BASE_FIELDS | _fields("libelle")),
     "SystemeEndiguement": CoverageRule("systemes", "MIGREE", BASE_FIELDS | _fields("libelle")),
     "Digue": CoverageRule("digues", "MIGREE", BASE_FIELDS | _fields("systemeEndiguementId", "libelle")),
-    "TronconDigue": CoverageRule("troncons, observations, photos", "MIGREE", BASE_FIELDS | MEDIA_FIELDS | _fields("digueId", "libelle", "geometry")),
+    "TronconDigue": CoverageRule(
+        "troncons, link_troncons_bornes, observations, photos",
+        "MIGREE",
+        BASE_FIELDS
+        | MEDIA_FIELDS
+        | _fields(
+            "digueId", "libelle", "geometry", "borneIds",
+            "systemeRepDefautId",
+        ),
+    ),
+    "SystemeReperage": CoverageRule(
+        "systemes_reperage, link_systemes_reperage_bornes",
+        "MIGREE",
+        BASE_FIELDS
+        | _fields(
+            "linearId", "libelle", "commentaire", "systemeReperageBornes"
+        ),
+        comment=(
+            "Système et associations embarquées borne/valeurPR migrés ; "
+            "l'ordre de liste n'est conservé qu'en traçabilité."
+        ),
+    ),
+    "SystemeReperageBorne": CoverageRule(
+        "link_systemes_reperage_bornes",
+        "MIGREE",
+        _fields("id", "borneId", "valeurPR", "valid"),
+        comment="Sous-objet embarqué couvert via SystemeReperage.systemeReperageBornes.",
+    ),
+    "BorneDigue": CoverageRule(
+        "bornes_reperage",
+        "MIGREE",
+        BASE_FIELDS
+        | _fields(
+            "libelle", "commentaire", "geometry", "fictive",
+            "date_debut", "date_fin",
+        ),
+        comment="Borne autonome ; valeurPR appartient à l'association système-borne.",
+    ),
     "Desordre": CoverageRule(
         "desordres, link_desordres_troncons, observations, photos",
         "PARTIELLE",
@@ -141,7 +178,6 @@ COVERAGE_REGISTRY: dict[str, CoverageRule] = {
 for _class_name, _comment in {
     "Prestation": "Différée jusqu'au futur modèle général des prestations.",
     "GlobalPrestation": "Différée avec le futur modèle général des prestations.",
-    "BorneDigue": "Classe connue, explicitement hors du premier lot Ouvrages.",
     "TalusDigue": "Composant patrimonial connu, non modélisé dans le périmètre courant.",
     "RapportEtude": "Fonctionnalité documentaire connue, différée.",
     "Organisme": "Acteur métier connu, différé jusqu'au bloc organismes/contacts.",
@@ -158,7 +194,6 @@ for _class_name, _comment in {
 # Ils restent visibles dans bilan.md mais ne produisent aucune anomalie actionnable.
 for _class_name, _comment in {
     "PositionDocument": "Structure technique historique de positionnement.",
-    "SystemeReperage": "Système de repérage historique remplacé par les relations cibles.",
     "BookMark": "État d'interface utilisateur sans destination métier cible.",
     "SQLQuery": "Requête enregistrée technique sans destination métier cible.",
     "ModeleRapport": "Modèle technique de génération de rapport.",
@@ -505,6 +540,11 @@ def diagnose_documents(
             "- `CheminAccesDependance` : migré dans `cheminements` sans parent "
             "obligatoire et sans inférence spatiale.",
             "- `DesordreDependance` : différé.",
+            "- Champs Positionable (`systemeRepId`, bornes début/fin, "
+            "distances, sens, PR et positions) : différés jusqu'au lot "
+            "`localisations_reperage`.",
+            "- `SystemeReperageBorne` : sous-objet embarqué migré dans "
+            "`link_systemes_reperage_bornes` avec `valeurPR` source.",
             "- Traitements et planifications végétation : différés.",
             "- Référentiels à zéro usage ou non exploités : classés `REFERENTIEL_IGNORE` dans le tableau.",
             "",

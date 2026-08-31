@@ -28,6 +28,9 @@ sont opérationnels. Ils couvrent :
 
 - les tables métier `systemes`, `digues`, `troncons`, `desordres`,
   `observations` et `photos` ;
+- le noyau de repérage linéaire `systemes_reperage`, `bornes_reperage`,
+  `link_troncons_bornes` et `link_systemes_reperage_bornes`, avec système par
+  défaut facultatif sur un tronçon ;
 - la relation N-N `link_desordres_troncons` ;
 - les référentiels `ref_categories_desordre`, `ref_types_desordre` et
   `ref_urgences` ;
@@ -330,6 +333,11 @@ systemes
   └── 1-N → digues
                └── 1-N → troncons
 
+troncons
+├── 1-N → systemes_reperage
+│          └── N-N ↔ link_systemes_reperage_bornes ↔ bornes_reperage
+└── N-N ↔ link_troncons_bornes ↔ bornes_reperage
+
 desordres
   └── N-N ↔ link_desordres_troncons ↔ troncons
 
@@ -371,6 +379,13 @@ Une ZEC représente conceptuellement un ensemble hydraulique pouvant associer
 une emprise de stockage et un ou plusieurs tronçons ; elle ne se réduit donc pas
 au seul polygone de `amenagements_hydrauliques`. Seules les relations présentes
 dans `tronconIds` sont migrées. Une intersection spatiale ne crée jamais de FK.
+
+La géométrie PostGIS et le repérage linéaire sont deux informations distinctes.
+Une borne est autonome et peut appartenir à plusieurs tronçons ou systèmes ;
+`valeur_pr` qualifie donc le couple système–borne, jamais la borne seule. L'ordre
+de la liste CouchDB est conservé uniquement comme trace non autoritative. Les
+localisations des objets `Positionable` (bornes début/fin, distances, sens, PR
+et positions) restent explicitement différées au lot suivant.
 
 ### Règles génériques et overrides de source
 
@@ -435,6 +450,11 @@ Le mapping actuel est issu de l'inspection des documents CouchDB :
 | `SystemeEndiguement` | `systemes` | UUID, `libelle`, `valid` conservés |
 | `Digue` | `digues` | `systemeEndiguementId` devient `systeme_endiguement_id`, nullable |
 | `TronconDigue` | `troncons` | `digueId`, libellé, validité et WKT conservés |
+| `TronconDigue.borneIds` | `link_troncons_bornes` | relations explicites uniquement, sans proximité |
+| `TronconDigue.systemeRepDefautId` | `troncons.systeme_reperage_defaut_id` | FK d'existence et validation du même tronçon |
+| `SystemeReperage` | `systemes_reperage` | UUID, `linearId`, libellé, commentaire et validité conservés |
+| `BorneDigue` | `bornes_reperage` | UUID, Point via le pipeline CRS, attributs et validité conservés |
+| `SystemeReperage.systemeReperageBornes[]` | `link_systemes_reperage_bornes` | UUID du sous-objet, borne, `valeurPR` exacte, ordre source et validité |
 | `Desordre` | `desordres` | champs métier, type et géométrie dérivée des positions |
 | `Desordre.linearId` | `link_desordres_troncons` | liaison N-N avec ID technique généré |
 | `*.observations[]` | `observations` | aplatissement et injection de l'unique FK métier |
@@ -463,6 +483,10 @@ Exemple de comptes obtenus lors d'une migration validée de la source live :
 | `systemes` | 9 |
 | `digues` | 26 |
 | `troncons` | 104 |
+| `systemes_reperage` | 104 |
+| `bornes_reperage` | 208 |
+| `link_troncons_bornes` | 208 |
+| `link_systemes_reperage_bornes` | 208 |
 | `desordres` | 1 597 |
 | `link_desordres_troncons` | 1 597 |
 | `observations` | 3 400 |
@@ -559,6 +583,8 @@ Le modèle général des prestations reste à construire, notamment pour
 dont `DesordreDependance`, ainsi que les traitements/planifications végétation
 restent différés. Les relations explicites entre prestations et cheminements
 sont également conservées dans le diagnostic en attente de ce futur modèle.
+Les localisations de repérage des objets `Positionable` restent elles aussi
+différées : ce lot conserve seulement le référentiel systèmes/bornes.
 Cette liste
 résume les grandes familles connues ; l'inventaire exhaustif et actualisé est
 généré dans `audits/bilan.md`.
@@ -619,6 +645,7 @@ sirs_postgre/
     ├── crs.py              # détection, validation et reprojection CRS
     ├── media.py            # normalisation objet → observation → photo
     ├── ouvrages.py         # ouvrages et équipements
+    ├── reperage.py         # systèmes, bornes et relations explicites
     ├── vegetation.py       # gestion et objets physiques de végétation
     ├── source_overrides.py # décisions isolées propres aux bases sources
     └── validation.py       # contrôles exécutés avant commit
@@ -653,6 +680,7 @@ config.example.env          # modèle de configuration sans secrets
 Le noyau actuel sera progressivement complété par :
 
 - les prestations ;
+- les localisations de repérage des objets `Positionable` ;
 - les intervenants ;
 - des vues PostgreSQL et configurations QGIS orientées métier.
 

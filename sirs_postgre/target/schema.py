@@ -23,12 +23,73 @@ TABLE_DEFINITIONS = {
         CREATE TABLE IF NOT EXISTS public.troncons (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             digue_id UUID NOT NULL,
+            systeme_reperage_defaut_id UUID NULL,
             libelle TEXT NOT NULL,
             geometry geometry(LineString, 3950),
             valid BOOLEAN NOT NULL,
             CONSTRAINT troncons_digues_fk
                 FOREIGN KEY (digue_id)
                 REFERENCES public.digues (id)
+        )
+    """,
+    "systemes_reperage": """
+        CREATE TABLE IF NOT EXISTS public.systemes_reperage (
+            id UUID PRIMARY KEY,
+            troncon_id UUID NOT NULL,
+            libelle TEXT NULL,
+            commentaire TEXT NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT systemes_reperage_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id)
+        )
+    """,
+    "bornes_reperage": """
+        CREATE TABLE IF NOT EXISTS public.bornes_reperage (
+            id UUID PRIMARY KEY,
+            libelle TEXT NULL,
+            commentaire TEXT NULL,
+            geometry geometry(Point, 3950) NULL,
+            fictive BOOLEAN NULL,
+            date_debut DATE NULL,
+            date_fin DATE NULL,
+            valid BOOLEAN NOT NULL
+        )
+    """,
+    "link_troncons_bornes": """
+        CREATE TABLE IF NOT EXISTS public.link_troncons_bornes (
+            troncon_id UUID NOT NULL,
+            borne_id UUID NOT NULL,
+            CONSTRAINT link_troncons_bornes_pk
+                PRIMARY KEY (troncon_id, borne_id),
+            CONSTRAINT link_troncons_bornes_troncons_fk
+                FOREIGN KEY (troncon_id)
+                REFERENCES public.troncons (id),
+            CONSTRAINT link_troncons_bornes_bornes_fk
+                FOREIGN KEY (borne_id)
+                REFERENCES public.bornes_reperage (id)
+        )
+    """,
+    "link_systemes_reperage_bornes": """
+        CREATE TABLE IF NOT EXISTS public.link_systemes_reperage_bornes (
+            id UUID PRIMARY KEY,
+            systeme_reperage_id UUID NOT NULL,
+            borne_id UUID NOT NULL,
+            valeur_pr NUMERIC NOT NULL,
+            ordre_source INTEGER NOT NULL,
+            valid BOOLEAN NOT NULL,
+            CONSTRAINT link_systemes_reperage_bornes_systemes_fk
+                FOREIGN KEY (systeme_reperage_id)
+                REFERENCES public.systemes_reperage (id),
+            CONSTRAINT link_systemes_reperage_bornes_bornes_fk
+                FOREIGN KEY (borne_id)
+                REFERENCES public.bornes_reperage (id),
+            CONSTRAINT link_systemes_reperage_bornes_unique
+                UNIQUE (systeme_reperage_id, borne_id),
+            CONSTRAINT link_systemes_reperage_bornes_ordre_unique
+                UNIQUE (systeme_reperage_id, ordre_source),
+            CONSTRAINT link_systemes_reperage_bornes_ordre_check
+                CHECK (ordre_source >= 0)
         )
     """,
     "ref_categories_desordre": """
@@ -491,4 +552,54 @@ TABLE_DEFINITIONS = {
 }
 
 EXPECTED_TABLES = tuple(TABLE_DEFINITIONS)
-SCHEMA_DDL = tuple(statement.strip() for statement in TABLE_DEFINITIONS.values())
+
+# Le cycle troncons <-> systemes_reperage impose d'ajouter la FK du système par
+# défaut après la création des deux tables. Le bloc reste idempotent afin que
+# `init-schema` conserve son comportement actuel.
+CONSTRAINT_DEFINITIONS = {
+    "troncons_systeme_reperage_defaut_fk": """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'troncons_systeme_reperage_defaut_fk'
+                  AND conrelid = 'public.troncons'::regclass
+            ) THEN
+                ALTER TABLE public.troncons
+                    ADD CONSTRAINT troncons_systeme_reperage_defaut_fk
+                    FOREIGN KEY (systeme_reperage_defaut_id)
+                    REFERENCES public.systemes_reperage (id);
+            END IF;
+        END
+        $$
+    """,
+}
+
+INDEX_DEFINITIONS = {
+    "systemes_reperage_troncon_idx": """
+        CREATE INDEX IF NOT EXISTS systemes_reperage_troncon_idx
+        ON public.systemes_reperage (troncon_id)
+    """,
+    "troncons_systeme_reperage_defaut_idx": """
+        CREATE INDEX IF NOT EXISTS troncons_systeme_reperage_defaut_idx
+        ON public.troncons (systeme_reperage_defaut_id)
+    """,
+    "link_troncons_bornes_borne_idx": """
+        CREATE INDEX IF NOT EXISTS link_troncons_bornes_borne_idx
+        ON public.link_troncons_bornes (borne_id)
+    """,
+    "link_systemes_reperage_bornes_borne_idx": """
+        CREATE INDEX IF NOT EXISTS link_systemes_reperage_bornes_borne_idx
+        ON public.link_systemes_reperage_bornes (borne_id)
+    """,
+}
+
+SCHEMA_DDL = tuple(
+    statement.strip()
+    for statement in (
+        *TABLE_DEFINITIONS.values(),
+        *CONSTRAINT_DEFINITIONS.values(),
+        *INDEX_DEFINITIONS.values(),
+    )
+)
