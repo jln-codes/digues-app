@@ -387,6 +387,17 @@ de la liste CouchDB est conservé uniquement comme trace non autoritative. Les
 localisations des objets `Positionable` (bornes début/fin, distances, sens, PR
 et positions) restent explicitement différées au lot suivant.
 
+Le noyau expose trois conversions PostGIS déterministes :
+`xy_vers_reperage`, `borne_offset_vers_xy` et `pr_vers_xy`. Chacune exige le
+tronçon et le système de repérage explicites ; le système par défaut du tronçon
+n'est jamais consulté par le moteur. L'abscisse est une distance géométrique
+interne depuis le début du LineString et ne doit pas être confondue avec le PR,
+qui est interpolé entre les couples système–borne. Les PR décroissants sont
+acceptés ; les systèmes ambigus, incomplets et les valeurs hors domaine sont
+signalés par des statuts, sans rabattement ni extrapolation. Aucun trigger ne
+synchronise géométrie et repérage : l'appelant choisit explicitement la
+conversion. `localisations_reperage` n'est pas encore implémentée.
+
 ### Règles génériques et overrides de source
 
 Le transformateur des aménagements ne dépend d'aucun nom, UUID ou nombre
@@ -617,11 +628,11 @@ La suite principale s'exécute avec :
 ```
 
 La majorité des tests utilisent des doubles de connexion et ne nécessitent pas
-de base CouchDB réelle. Un test d'intégration CRS utilise toutefois PostGIS pour
-vérifier qu'une reprojection modifie réellement les coordonnées et qu'un aller-
-retour vers le CRS d'origine reste cohérent. Lorsque PostgreSQL/PostGIS n'est pas
-accessible, ce test peut être ignoré ; dans l'environnement de développement
-courant, il est exécuté.
+de base CouchDB réelle. Des tests d'intégration utilisent toutefois PostGIS pour
+vérifier la reprojection et les conversions de repérage, notamment les PR
+croissants, décroissants ou non métriques, les ambiguïtés et les aller-retours.
+Lorsque PostgreSQL/PostGIS n'est pas accessible, ces tests peuvent être ignorés ;
+dans l'environnement de développement courant, ils sont exécutés.
 
 Les tests couvrent notamment la configuration, les diagnostics, la protection
 de `recreate`, le DDL, les transformations CouchDB, l'atomicité, le registre
@@ -636,6 +647,7 @@ sirs_postgre/
 │   └── couchdb.py          # configuration et client CouchDB
 ├── target/
 │   ├── database.py         # diagnostic, recréation et initialisation PostgreSQL
+│   ├── reperage.py         # fonctions PostGIS de conversion du repérage
 │   └── schema.py           # DDL du noyau courant
 └── migration/
     ├── core.py             # orchestration transactionnelle du noyau

@@ -1,5 +1,7 @@
 """Définition SQL du premier noyau métier PostgreSQL/PostGIS."""
 
+from .reperage import REPERAGE_FUNCTION_DDL
+
 TABLE_DEFINITIONS = {
     "systemes": """
         CREATE TABLE IF NOT EXISTS public.systemes (
@@ -601,5 +603,6 @@ SCHEMA_DDL = tuple(
         *TABLE_DEFINITIONS.values(),
         *CONSTRAINT_DEFINITIONS.values(),
         *INDEX_DEFINITIONS.values(),
+        *REPERAGE_FUNCTION_DDL,
     )
 )
