@@ -142,28 +142,8 @@ sirs-postgre init-schema
 sirs-postgre migrate-core
 sirs-postgre check --target-only
 sirs-postgre diagnose
-```
-
-### Génération du projet QGIS
-
-```bash
 sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
 ```
-
-La commande génère entièrement le QGZ depuis le code et la configuration
-PostgreSQL existante. Elle nécessite PyQGIS 3.38 ou plus récent et doit être
-lancée avec le Python fourni par QGIS/OSGeo4W ; son absence produit une erreur
-explicite sans affecter les autres commandes. Le projet contient les couches,
-groupes, relations et formulaires du prototype de repérage des désordres,
-ainsi qu'un unique fond XYZ OpenStreetMap connecté placé derrière les couches
-métier. Ce fond ne couvre pas l'utilisation hors connexion de QField.
-
-Le mot de passe PostgreSQL n'est jamais écrit dans le QGZ. Une configuration
-d'authentification QGIS locale peut être référencée avec `--authcfg ID`, ou
-QGIS peut utiliser `.pgpass`/une saisie interactive. Le code générateur est
-versionné ; `qgis/sirs_postgre.qgz` reste un artifact local ignoré par Git. La
-procédure Windows détaillée figure dans
-`docs/generation_projet_qgis.md`.
 
 ### `check`
 
@@ -268,6 +248,27 @@ Le bilan contient aussi une synthèse CRS : CRS source détecté, origine de cet
 détection, CRS cible et nécessité éventuelle d'une transformation. Les codes
 EPSG sont validés contre PostGIS avant d'être utilisés pour une migration
 géométrique.
+
+### Génération du projet QGIS
+
+```bash
+sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
+```
+
+La commande génère entièrement le QGZ depuis le code et la configuration
+PostgreSQL existante. Elle nécessite PyQGIS 3.38 ou plus récent et doit être
+lancée avec le Python fourni par QGIS/OSGeo4W ; son absence produit une erreur
+explicite sans affecter les autres commandes. Le projet contient les couches,
+groupes, relations et formulaires du prototype de repérage des désordres,
+ainsi qu'un unique fond XYZ OpenStreetMap connecté placé derrière les couches
+métier. Ce fond ne couvre pas l'utilisation hors connexion de QField.
+
+Le mot de passe PostgreSQL n'est jamais écrit dans le QGZ. Une configuration
+d'authentification QGIS locale peut être référencée avec `--authcfg ID`, ou
+QGIS peut utiliser `.pgpass`/une saisie interactive. Le code générateur est
+versionné ; `qgis/sirs_postgre.qgz` reste un artifact local ignoré par Git. La
+procédure Windows détaillée figure dans
+`docs/generation_projet_qgis.md`.
 
 ## Diagnostic et registre des anomalies
 
