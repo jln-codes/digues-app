@@ -154,7 +154,9 @@ La commande génère entièrement le QGZ depuis le code et la configuration
 PostgreSQL existante. Elle nécessite PyQGIS 3.38 ou plus récent et doit être
 lancée avec le Python fourni par QGIS/OSGeo4W ; son absence produit une erreur
 explicite sans affecter les autres commandes. Le projet contient les couches,
-groupes, relations et formulaires du prototype de repérage des désordres.
+groupes, relations et formulaires du prototype de repérage des désordres,
+ainsi qu'un unique fond XYZ OpenStreetMap connecté placé derrière les couches
+métier. Ce fond ne couvre pas l'utilisation hors connexion de QField.
 
 Le mot de passe PostgreSQL n'est jamais écrit dans le QGZ. Une configuration
 d'authentification QGIS locale peut être référencée avec `--authcfg ID`, ou

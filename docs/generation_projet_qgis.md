@@ -61,9 +61,19 @@ Ni `config.env`, ni un mot de passe, ni une base d'authentification QGIS ne sont
 ## Contenu généré
 
 Le panneau contient `SIRS/Patrimoine`, `SIRS/Désordres`, `SIRS/Repérage` et
-`SIRS/Diagnostic`. Les trois couches de désordres pointent vers la même table
-avec des filtres Point, LineString et Polygon. Elles ont des IDs distincts et
-chacune possède une relation stable vers la même table enfant.
+`SIRS/Diagnostic`, puis le groupe racine `Fonds de carte` placé en dessous.
+Ce dernier contient une unique couche raster XYZ native `OpenStreetMap`,
+activée par défaut et construite directement depuis l'URL publique standard :
+
+```text
+https://tile.openstreetmap.org/{z}/{x}/{y}.png
+```
+
+La couche ne dépend d'aucune connexion QGIS préexistante, d'aucun identifiant
+et d'aucun secret. Elle porte l'attribution « © OpenStreetMap contributors ».
+Les trois couches de désordres pointent vers la même table avec des filtres
+Point, LineString et Polygon. Elles ont des IDs distincts et chacune possède
+une relation stable vers la même table enfant.
 
 `desordre_localisations_reperage` est ajoutée au registre du projet avec le
 flag QGIS `Private`, sans nœud dans l'arbre et avec une source PostgreSQL sans
@@ -81,3 +91,10 @@ offsets, positions source, politiques, qualités et traces JSON sont masqués.
 Le générateur relit lui-même le QGZ et vérifie les IDs de couches, les trois
 relations et les groupes attendus. Il échoue si une couche PostgreSQL est
 invalide ou si la relecture diffère de la spécification.
+
+## Limite QField
+
+Le fond OpenStreetMap est destiné exclusivement à la consultation connectée.
+Le générateur ne précharge aucune tuile et ne produit ni MBTiles ni paquet
+offline. Le choix et la génération d'un futur fond QField hors connexion sont
+volontairement hors périmètre de ce lot.

@@ -55,6 +55,17 @@ class RelationSpec:
 
 
 @dataclass(frozen=True)
+class RasterLayerSpec:
+    key: str
+    layer_id: str
+    name: str
+    uri: str
+    provider: str
+    group_path: tuple[str, ...]
+    private: bool = False
+
+
+@dataclass(frozen=True)
 class QGISConnection:
     host: str
     port: int
@@ -82,6 +93,21 @@ GROUP_PATHS = (
     ("SIRS", "Désordres"),
     ("SIRS", "Repérage"),
     ("SIRS", "Diagnostic"),
+    ("Fonds de carte",),
+)
+
+OSM_XYZ_URI = (
+    "type=xyz&url=https://tile.openstreetmap.org/"
+    "%7Bz%7D/%7Bx%7D/%7By%7D.png&zmax=19&zmin=0&crs=EPSG3857"
+)
+
+OSM_LAYER_SPEC = RasterLayerSpec(
+    key="openstreetmap",
+    layer_id="sirs_openstreetmap",
+    name="OpenStreetMap",
+    uri=OSM_XYZ_URI,
+    provider="wms",
+    group_path=("Fonds de carte",),
 )
 
 DESORDRE_FILTERS = {
@@ -178,6 +204,8 @@ LAYER_SPECS = (
         private=True,
     ),
 )
+
+ALL_LAYER_SPECS = (*LAYER_SPECS, OSM_LAYER_SPEC)
 
 RELATION_SPECS = (
     RelationSpec(
@@ -371,6 +399,7 @@ def _load_pyqgis() -> dict[str, Any]:
             QgsEditorWidgetSetup,
             QgsMapLayer,
             QgsProject,
+            QgsRasterLayer,
             QgsRelation,
             QgsRelationContext,
             QgsSingleSymbolRenderer,
@@ -624,6 +653,28 @@ def _create_layer(
     return layer
 
 
+def _create_osm_layer(api: dict[str, Any]) -> Any:
+    layer = api["QgsRasterLayer"](
+        OSM_LAYER_SPEC.uri,
+        OSM_LAYER_SPEC.name,
+        OSM_LAYER_SPEC.provider,
+    )
+    if not layer.isValid():
+        raise QGISProjectError(
+            "Couche XYZ OpenStreetMap invalide : " + _layer_error(layer)
+        )
+    if not layer.setId(OSM_LAYER_SPEC.layer_id):
+        raise QGISProjectError(
+            f"Layer ID QGIS refusé : {OSM_LAYER_SPEC.layer_id}"
+        )
+    server_properties = layer.serverProperties()
+    server_properties.setAttribution("© OpenStreetMap contributors")
+    server_properties.setAttributionUrl(
+        "https://www.openstreetmap.org/copyright"
+    )
+    return layer
+
+
 def _create_groups(project: Any) -> dict[tuple[str, ...], Any]:
     root = project.layerTreeRoot()
     result: dict[tuple[str, ...], Any] = {(): root}
@@ -644,7 +695,7 @@ def _register_layers(
     volontairement aucun nœud dans l'arbre des couches.
     """
 
-    for spec in LAYER_SPECS:
+    for spec in ALL_LAYER_SPECS:
         layer = layers[spec.key]
         registered = project.addMapLayer(layer, False)
         if registered is None or project.mapLayer(spec.layer_id) is None:
@@ -656,7 +707,8 @@ def _register_layers(
                 f"Layer ID instable après enregistrement : {spec.layer_id}"
             )
         if spec.group_path is not None:
-            groups[spec.group_path].addLayer(layer)
+            node = groups[spec.group_path].addLayer(layer)
+            node.setItemVisibilityChecked(True)
 
     for spec in (item for item in LAYER_SPECS if item.private):
         if project.layerTreeRoot().findLayer(spec.layer_id) is not None:
@@ -690,7 +742,7 @@ def _verify_written_project(api: dict[str, Any], output: Path) -> None:
     if not verification.read(str(output)):
         raise QGISProjectError(f"Le QGZ écrit est illisible : {output}")
     actual_layers = set(verification.mapLayers())
-    expected_layers = {spec.layer_id for spec in LAYER_SPECS}
+    expected_layers = {spec.layer_id for spec in ALL_LAYER_SPECS}
     if actual_layers != expected_layers:
         raise QGISProjectError(
             "Couche(s) absente(s) après relecture : "
@@ -728,6 +780,21 @@ def _verify_written_project(api: dict[str, Any], output: Path) -> None:
     for path in GROUP_PATHS:
         if verification.layerTreeRoot().findGroup(path[-1]) is None:
             raise QGISProjectError(f"Groupe QGIS absent après relecture : {path[-1]}")
+    basemap_group = verification.layerTreeRoot().findGroup("Fonds de carte")
+    root_children = verification.layerTreeRoot().children()
+    if (
+        basemap_group is None
+        or not root_children
+        or root_children[-1].name() != "Fonds de carte"
+    ):
+        raise QGISProjectError(
+            "Le groupe Fonds de carte n'est pas en bas du layer tree"
+        )
+    osm_node = basemap_group.findLayer(OSM_LAYER_SPEC.layer_id)
+    if osm_node is None or not osm_node.itemVisibilityChecked():
+        raise QGISProjectError(
+            "Le fond OpenStreetMap n'est pas présent et activé par défaut"
+        )
     for spec in (item for item in LAYER_SPECS if item.private):
         if verification.mapLayer(spec.layer_id) is None:
             raise QGISProjectError(
@@ -795,6 +862,7 @@ def generate_qgis_project(
                 spec.key: _create_layer(api, connection, spec)
                 for spec in LAYER_SPECS
             }
+            layers[OSM_LAYER_SPEC.key] = _create_osm_layer(api)
             if len({layer.id() for layer in layers.values()}) != len(layers):
                 raise QGISProjectError("Les layer IDs QGIS ne sont pas uniques")
 
@@ -822,7 +890,7 @@ def generate_qgis_project(
 
     return QGISProjectResult(
         output=output,
-        layer_ids=tuple(spec.layer_id for spec in LAYER_SPECS),
+        layer_ids=tuple(spec.layer_id for spec in ALL_LAYER_SPECS),
         relation_ids=tuple(spec.relation_id for spec in RELATION_SPECS),
         groups=tuple(path[-1] for path in GROUP_PATHS),
         connection=connection.safe_description,

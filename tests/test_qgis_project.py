@@ -6,6 +6,7 @@ import unittest
 from dotenv import load_dotenv
 
 from sirs_postgre.qgis_project import (
+    ALL_LAYER_SPECS,
     DEFAULT_QGIS_PROJECT_PATH,
     DESORDRE_FILTERS,
     GROUP_PATHS,
@@ -13,9 +14,12 @@ from sirs_postgre.qgis_project import (
     LOCALISATION_DISPLAY_EXPRESSION,
     LOCALISATION_HIDDEN_FIELDS,
     MINIMUM_QGIS_VERSION_INT,
+    OSM_LAYER_SPEC,
+    OSM_XYZ_URI,
     PyQGISUnavailableError,
     RELATION_SPECS,
     _create_relations,
+    _create_osm_layer,
     _load_pyqgis,
     _register_layers,
     _temporary_pgpassword,
@@ -37,9 +41,10 @@ class FakeLayer:
 class FakeLayerTreeRoot:
     def __init__(self):
         self.layer_ids = set()
+        self.nodes = {}
 
     def findLayer(self, layer_id):
-        return layer_id if layer_id in self.layer_ids else None
+        return self.nodes.get(layer_id)
 
 
 class FakeGroup:
@@ -48,6 +53,49 @@ class FakeGroup:
 
     def addLayer(self, layer):
         self.root.layer_ids.add(layer.id())
+        node = FakeLayerTreeNode(layer.id())
+        self.root.nodes[layer.id()] = node
+        return node
+
+
+class FakeLayerTreeNode:
+    def __init__(self, layer_id):
+        self.layer_id = layer_id
+        self.visible = False
+
+    def setItemVisibilityChecked(self, visible):
+        self.visible = visible
+
+
+class FakeServerProperties:
+    def __init__(self):
+        self.attribution = None
+        self.attribution_url = None
+
+    def setAttribution(self, attribution):
+        self.attribution = attribution
+
+    def setAttributionUrl(self, attribution_url):
+        self.attribution_url = attribution_url
+
+
+class FakeRasterLayer(FakeLayer):
+    def __init__(self, uri, name, provider):
+        super().__init__("generated")
+        self.uri = uri
+        self.name = name
+        self.provider = provider
+        self.properties = FakeServerProperties()
+
+    def isValid(self):
+        return True
+
+    def setId(self, layer_id):
+        self._layer_id = layer_id
+        return True
+
+    def serverProperties(self):
+        return self.properties
 
 
 class FakeRelationManager:
@@ -130,7 +178,10 @@ class QGISProjectSpecificationTest(unittest.TestCase):
         self.assertEqual(MINIMUM_QGIS_VERSION_INT, 33800)
 
     def test_layer_ids_and_names_are_stable_and_unique(self):
-        self.assertEqual(len({spec.layer_id for spec in LAYER_SPECS}), len(LAYER_SPECS))
+        self.assertEqual(
+            len({spec.layer_id for spec in ALL_LAYER_SPECS}),
+            len(ALL_LAYER_SPECS),
+        )
         by_key = {spec.key: spec for spec in LAYER_SPECS}
         self.assertEqual(by_key["troncons"].name, "Tronçons")
         self.assertEqual(by_key["desordres_point"].name, "Désordres — Points")
@@ -142,6 +193,27 @@ class QGISProjectSpecificationTest(unittest.TestCase):
         self.assertEqual(
             by_key["diagnostic_reperage"].name,
             "Diagnostic repérage des désordres",
+        )
+
+    def test_openstreetmap_xyz_spec_is_self_contained_and_stable(self):
+        self.assertEqual(OSM_LAYER_SPEC.layer_id, "sirs_openstreetmap")
+        self.assertEqual(OSM_LAYER_SPEC.name, "OpenStreetMap")
+        self.assertEqual(OSM_LAYER_SPEC.provider, "wms")
+        self.assertEqual(OSM_LAYER_SPEC.group_path, ("Fonds de carte",))
+        self.assertIn("https://tile.openstreetmap.org/", OSM_XYZ_URI)
+        self.assertIn("%7Bz%7D/%7Bx%7D/%7By%7D.png", OSM_XYZ_URI)
+        self.assertNotIn("token", OSM_XYZ_URI.casefold())
+        self.assertNotIn("key=", OSM_XYZ_URI.casefold())
+
+    def test_openstreetmap_uses_a_native_xyz_raster_layer(self):
+        layer = _create_osm_layer({"QgsRasterLayer": FakeRasterLayer})
+
+        self.assertEqual(layer.id(), "sirs_openstreetmap")
+        self.assertEqual(layer.provider, "wms")
+        self.assertEqual(layer.uri, OSM_XYZ_URI)
+        self.assertEqual(
+            layer.properties.attribution,
+            "© OpenStreetMap contributors",
         )
 
     def test_disorder_instances_share_the_table_with_distinct_filters(self):
@@ -203,7 +275,7 @@ class QGISProjectSpecificationTest(unittest.TestCase):
     def test_private_layers_are_registered_but_absent_from_layer_tree(self):
         project = FakeProject()
         layers = {
-            spec.key: FakeLayer(spec.layer_id) for spec in LAYER_SPECS
+            spec.key: FakeLayer(spec.layer_id) for spec in ALL_LAYER_SPECS
         }
         groups = {
             path: FakeGroup(project.layerTreeRoot())
@@ -214,16 +286,19 @@ class QGISProjectSpecificationTest(unittest.TestCase):
 
         self.assertEqual(
             set(project.mapLayers()),
-            {spec.layer_id for spec in LAYER_SPECS},
+            {spec.layer_id for spec in ALL_LAYER_SPECS},
         )
         for spec in (item for item in LAYER_SPECS if item.private):
             self.assertIs(project.mapLayer(spec.layer_id), layers[spec.key])
             self.assertIsNone(project.layerTreeRoot().findLayer(spec.layer_id))
+        osm_node = project.layerTreeRoot().findLayer(OSM_LAYER_SPEC.layer_id)
+        self.assertIsNotNone(osm_node)
+        self.assertTrue(osm_node.visible)
 
     def test_relations_use_the_project_context_after_layer_registration(self):
         project = FakeProject()
         layers = {
-            spec.key: FakeLayer(spec.layer_id) for spec in LAYER_SPECS
+            spec.key: FakeLayer(spec.layer_id) for spec in ALL_LAYER_SPECS
         }
         groups = {
             path: FakeGroup(project.layerTreeRoot())
@@ -260,6 +335,7 @@ class QGISProjectSpecificationTest(unittest.TestCase):
         self.assertIn(("SIRS", "Désordres"), GROUP_PATHS)
         self.assertIn(("SIRS", "Repérage"), GROUP_PATHS)
         self.assertIn(("SIRS", "Diagnostic"), GROUP_PATHS)
+        self.assertEqual(GROUP_PATHS[-1], ("Fonds de carte",))
         self.assertIn("Tronçons", LOCALISATION_DISPLAY_EXPRESSION)
         self.assertIn("Bornes", LOCALISATION_DISPLAY_EXPRESSION)
         self.assertIn("format_number", LOCALISATION_DISPLAY_EXPRESSION)
