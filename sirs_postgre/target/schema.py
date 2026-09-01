@@ -2,8 +2,11 @@
 
 from .reperage import REPERAGE_FUNCTION_DDL
 from .desordre_reperage import (
+    FUNCTION_DDL as DESORDRE_REPERAGE_FUNCTION_DDL,
     INDEX_DEFINITIONS as DESORDRE_REPERAGE_INDEX_DEFINITIONS,
     TABLE_DEFINITIONS as DESORDRE_REPERAGE_TABLE_DEFINITIONS,
+    TRIGGER_DDL as DESORDRE_REPERAGE_TRIGGER_DDL,
+    VIEW_TRIGGER_DDL as DESORDRE_REPERAGE_VIEW_TRIGGER_DDL,
     VIEW_DEFINITIONS,
 )
 
@@ -85,7 +88,6 @@ TABLE_DEFINITIONS = {
             systeme_reperage_id UUID NOT NULL,
             borne_id UUID NOT NULL,
             valeur_pr NUMERIC NOT NULL,
-            ordre_source INTEGER NOT NULL,
             valid BOOLEAN NOT NULL,
             CONSTRAINT link_systemes_reperage_bornes_systemes_fk
                 FOREIGN KEY (systeme_reperage_id)
@@ -94,11 +96,7 @@ TABLE_DEFINITIONS = {
                 FOREIGN KEY (borne_id)
                 REFERENCES public.bornes_reperage (id),
             CONSTRAINT link_systemes_reperage_bornes_unique
-                UNIQUE (systeme_reperage_id, borne_id),
-            CONSTRAINT link_systemes_reperage_bornes_ordre_unique
-                UNIQUE (systeme_reperage_id, ordre_source),
-            CONSTRAINT link_systemes_reperage_bornes_ordre_check
-                CHECK (ordre_source >= 0)
+                UNIQUE (systeme_reperage_id, borne_id)
         )
     """,
     "ref_categories_desordre": """
@@ -320,7 +318,6 @@ TABLE_DEFINITIONS = {
         CREATE TABLE IF NOT EXISTS public.vegetation (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             nature_id TEXT NOT NULL,
-            type_source_code TEXT NULL,
             designation TEXT NULL,
             commentaire TEXT NULL,
             date_debut DATE NULL,
@@ -613,6 +610,9 @@ SCHEMA_DDL = tuple(
         *CONSTRAINT_DEFINITIONS.values(),
         *INDEX_DEFINITIONS.values(),
         *REPERAGE_FUNCTION_DDL,
+        *DESORDRE_REPERAGE_FUNCTION_DDL,
+        *DESORDRE_REPERAGE_TRIGGER_DDL,
         *VIEW_DEFINITIONS.values(),
+        *DESORDRE_REPERAGE_VIEW_TRIGGER_DDL,
     )
 )

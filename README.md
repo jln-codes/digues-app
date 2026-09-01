@@ -404,10 +404,10 @@ dans `tronconIds` sont migrées. Une intersection spatiale ne crée jamais de FK
 
 La géométrie PostGIS et le repérage linéaire sont deux informations distinctes.
 Une borne est autonome et peut appartenir à plusieurs tronçons ou systèmes ;
-`valeur_pr` qualifie donc le couple système–borne, jamais la borne seule. L'ordre
-de la liste CouchDB est conservé uniquement comme trace non autoritative. Les
-localisations des objets `Positionable` (bornes début/fin, distances, sens, PR
-et positions) restent explicitement différées au lot suivant.
+`valeur_pr` qualifie donc le couple système–borne, jamais la borne seule.
+L'ordre de la liste CouchDB n'est pas stocké dans le modèle opérationnel : les
+rôles début/fin sont déterminés spatialement. Les diagnostics CouchDB restent
+dans les artefacts JSON/CSV de migration.
 
 Le noyau expose trois conversions PostGIS déterministes :
 `xy_vers_reperage`, `borne_offset_vers_xy` et `pr_vers_xy`. Chacune exige le
@@ -416,14 +416,14 @@ n'est jamais consulté par le moteur. L'abscisse est une distance géométrique
 interne depuis le début du LineString et ne doit pas être confondue avec le PR,
 qui est interpolé entre les couples système–borne. Les PR décroissants sont
 acceptés ; les systèmes ambigus, incomplets et les valeurs hors domaine sont
-signalés par des statuts, sans rabattement ni extrapolation. Aucun trigger ne
-synchronise géométrie et repérage : l'appelant choisit explicitement la
-conversion. Un prototype volontairement spécialisé conserve désormais le
-repérage historique des seuls désordres dans
-`desordre_localisations_reperage` (relation 0..N). Il garde la géométrie métier
-indépendante, expose une vue lisible pour QGIS et laisse toutes les autres
-familles hors périmètre ; le modèle transversal `localisations_reperage` n'est
-donc pas encore implémenté.
+signalés par des statuts, sans rabattement ni extrapolation. Pour les désordres,
+des triggers synchronisent les deux représentations selon l'opération : une
+édition géométrique conserve exactement la géométrie et recalcule le repérage ;
+une édition explicite du repérage reconstruit la géométrie sur le tronçon.
+`desordre_localisations_reperage` contient au plus une ligne, uniquement pour
+un Point ou une LineString lié à exactement un tronçon. Avec zéro ou plusieurs
+tronçons, la géométrie reste seule autoritaire. Les autres familles restent
+hors de ce prototype spécialisé.
 
 ### Règles génériques et overrides de source
 
@@ -492,8 +492,8 @@ Le mapping actuel est issu de l'inspection des documents CouchDB :
 | `TronconDigue.systemeRepDefautId` | `troncons.systeme_reperage_defaut_id` | FK d'existence et validation du même tronçon |
 | `SystemeReperage` | `systemes_reperage` | UUID, `linearId`, libellé, commentaire et validité conservés |
 | `BorneDigue` | `bornes_reperage` | UUID, Point via le pipeline CRS, attributs et validité conservés |
-| `SystemeReperage.systemeReperageBornes[]` | `link_systemes_reperage_bornes` | UUID du sous-objet, borne, `valeurPR` exacte, ordre source et validité |
-| `Desordre` | `desordres` | champs métier, type et géométrie dérivée des positions |
+| `SystemeReperage.systemeReperageBornes[]` | `link_systemes_reperage_bornes` | UUID du sous-objet, borne, `valeurPR` exacte et validité ; ordre utilisé seulement au diagnostic |
+| `Desordre` | `desordres` | champs métier, type et géométrie source complète ; positions en fallback |
 | `Desordre.linearId` | `link_desordres_troncons` | liaison N-N avec ID technique généré |
 | `*.observations[]` | `observations` | aplatissement et injection de l'unique FK métier |
 | `Observation.urgenceId` | `observations.urgence_id` | référence `TEXT` vérifiée ou `NULL` |
@@ -554,17 +554,15 @@ uniquement lorsque le CRS source diffère.
 
 `desordres.geometry` utilise le type générique `geometry(Geometry, 3950)` avec
 une contrainte limitant les valeurs à Point, LineString, Polygon ou NULL. Pour
-les sources ponctuelles/linéaires historiques, la géométrie cible est construite
-depuis `positionDebut` et `positionFin` :
+une géométrie source Point, LineString ou Polygon valide est conservée avec tous
+ses sommets. `positionDebut` et `positionFin` servent seulement de fallback :
 
 - positions identiques : `POINT` ;
 - positions différentes : `LINESTRING` ;
 - positions absentes ou inexploitables : `NULL` avec warning.
 
-Un Polygon source explicite, compatible et valide est conservé. Aucun Polygon,
-MultiPolygon ou MultiLineString n'est fabriqué depuis des données ponctuelles ou
-linéaires. Le champ historique `Desordre.geometry` non polygonal n'est pas
-considéré comme canonique dans la migration actuelle de `cabbalr`.
+Aucun Polygon, MultiPolygon ou MultiLineString n'est fabriqué depuis des données
+ponctuelles ou linéaires.
 
 ## Évolutions du modèle par rapport au schéma initial
 
@@ -621,8 +619,9 @@ Le modèle général des prestations reste à construire, notamment pour
 dont `DesordreDependance`, ainsi que les traitements/planifications végétation
 restent différés. Les relations explicites entre prestations et cheminements
 sont également conservées dans le diagnostic en attente de ce futur modèle.
-Les localisations de repérage des objets `Positionable` restent elles aussi
-différées : ce lot conserve seulement le référentiel systèmes/bornes.
+Le repérage opérationnel est implémenté pour les désordres Point/LineString
+liés à un tronçon unique. Sa généralisation aux autres objets `Positionable`
+reste différée.
 Cette liste
 résume les grandes familles connues ; l'inventaire exhaustif et actualisé est
 généré dans `audits/bilan.md`.
@@ -637,12 +636,13 @@ table `link_desordres_troncons` doit être présente dans le projet QGIS. Cette
 table est une structure technique : elle n'est pas destinée à être manipulée
 directement par l'utilisateur métier.
 
-Le projet pilote est désormais généré par `sirs-postgre qgis-project`. La table
-enfant `desordre_localisations_reperage` est enregistrée comme couche privée
-sans géométrie principale : elle reste utilisable par les relations et les
-formulaires sans exposer ses deux positions historiques comme couches dans le
-panneau. Le dossier `qgis/styles/` conserve les anciens QML comme références,
-mais le générateur ne les réutilise pas automatiquement.
+Le projet pilote est généré par `sirs-postgre qgis-project`. Les tables privées
+`desordre_localisations_reperage` et `link_desordres_troncons` alimentent les
+relations sans encombrer le panneau. La couche ponctuelle repose sur une vue
+éditable pour X/Y et longitude/latitude ; ces valeurs réécrivent la géométrie
+et ne sont pas des colonnes indépendantes. Le dossier `qgis/styles/` conserve
+les anciens QML comme références, mais le générateur ne les réutilise pas
+automatiquement.
 
 Après un `recreate`, QGIS peut encore référencer l'ancienne définition PostgreSQL
 des couches. Rafraîchir ou réimporter les couches évite d'utiliser ce cache

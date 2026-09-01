@@ -1,86 +1,150 @@
 # Prototype QGIS/QField — repérage des désordres
 
-Le formulaire pilote est désormais décrit de manière exécutable par
-`sirs_postgre/qgis_project.py` et généré avec `sirs-postgre qgis-project`.
-Il n'a pas été ouvert dans QGIS ou QField dans l'environnement de développement,
-où PyQGIS n'est pas disponible. Les choix ci-dessous restent donc à valider
-avec le projet généré sur un poste QGIS réel.
+Le formulaire est produit automatiquement par `sirs-postgre qgis-project` à
+partir de `sirs_postgre/qgis_project.py`. Il utilise le Drag-and-Drop Designer,
+les relations natives et les widgets standards, sans fichier `.ui`, initialiseur
+Python ni plugin client obligatoire.
 
-## Ce que voit l'utilisateur
+## Règle de disponibilité
 
-La couche principale reste `desordres`, avec sa géométrie cartographique. Son
-formulaire contient un groupe **Localisations** affiché par l'éditeur de relation
-natif QGIS. Une fiche enfant montre, dans cet ordre :
+Le formulaire ne propose aucun sélecteur de mode. Il déduit le comportement du
+nombre de tronçons associés par `link_desordres_troncons` :
 
-1. mode (`Carte/GPS`, `Borne + distance` ou `Import`) ;
-2. tronçon ;
-3. système de repérage ;
-4. borne de début, distance positive et position `avant/sur/après` ;
-5. les mêmes champs de fin lorsque le désordre est linéaire ;
-6. PR source et PR courant en lecture seule ;
-7. un résumé lisible et un indicateur de cohérence.
+```text
+0 tronçon       → géométrie et coordonnées seulement
+1 tronçon       → géométrie, coordonnées et repérage
+2 tronçons ou + → géométrie, coordonnées et liste des tronçons
+                  repérage indisponible
+```
 
-Les UUID, offsets signés calculés, identifiants source, politique technique,
-qualité interne, JSON de trace et diagnostic restent masqués. Pour un polygone,
-le repérage est présenté comme une indication métier et non comme une
-description de toute l'emprise.
+Le conteneur **Repérage** porte une expression de visibilité qui exige une
+relation tronçon unique et une géométrie Point ou LineString. Un message calculé
+à la racine indique discrètement pourquoi le repérage est indisponible.
 
-## Couches et relation
+QGIS réévalue cette expression à l'ouverture et au rafraîchissement du
+formulaire. Le rafraîchissement instantané après modification d'une relation
+enfant doit encore être validé dans chaque version de QField ; fermer et rouvrir
+la fiche force toujours la réévaluation.
 
-Ajouter les tables `desordres`, `desordre_localisations_reperage`, `troncons`,
-`systemes_reperage`, `bornes_reperage` et la vue
-`view_desordre_localisations_reperage`. Déclarer une relation :
+## Géométrie et coordonnées
 
-- identifiant : `desordre_localisations_reperage` ;
-- parent : `desordres.id` ;
-- enfant : `desordre_localisations_reperage.desordre_id`.
+Les désordres ponctuels utilisent la vue éditable
+`view_desordres_points_saisie`. X/Y (EPSG:3950) et longitude/latitude
+(EPSG:4326) sont quatre expressions de vue sur `desordres.geometry` :
 
-Dans le formulaire drag-and-drop de `desordres`, insérer l'éditeur de cette
-relation. Le 0..N natif présente alors, par exemple, deux lignes « T12 — B14
-32 m après » et « T13 — B01 8 m avant », sans table de lien supplémentaire.
+- modifier X ou Y réécrit le Point en EPSG:3950 ;
+- modifier longitude ou latitude construit un Point 4326 puis le transforme en
+  3950 ;
+- déplacer le point sur la carte modifie la même géométrie ;
+- une paire de coordonnées incomplète est refusée ;
+- modifier simultanément les deux systèmes de coordonnées est refusé.
 
-## Widgets en cascade à configurer
+Le formulaire affiche X/Y à 2 décimales et longitude/latitude à 6 décimales.
+La précision de la géométrie en base n'est jamais arrondie.
 
-- `troncon_id` : Relation Reference vers `troncons`, libellé comme description ;
-- `systeme_reperage_id` : Value Relation vers `systemes_reperage`, filtrée sur
-  le `troncon_id` de la fiche enfant ; le système par défaut peut uniquement
-  préremplir ce champ ;
-- `borne_debut_id` et `borne_fin_id` : choix limité aux bornes présentes dans
-  `link_systemes_reperage_bornes` pour le système choisi ;
-- distances : plage numérique, minimum 0, unité `m` ;
-- positions relatives : liste `AVANT_BORNE`, `SUR_BORNE`, `APRES_BORNE`, avec
-  libellés humains « avant », « sur la borne », « après ».
+Pour une LineString, le formulaire affiche en lecture seule les coordonnées de
+`ST_StartPoint` et `ST_EndPoint`. La ligne elle-même reste éditable sur la carte
+avec tous ses sommets. Pour un Polygon, seule l'édition cartographique est
+proposée ; aucun repérage longitudinal éditable n'est affiché.
 
-La base calcule l'offset signé dans une colonne générée. QGIS ne demande donc
-jamais à l'utilisateur de saisir une valeur négative. Les filtres dépendants
-tronçon → système → borne doivent encore être vérifiés dans les versions QGIS
-et QField réellement déployées.
+## Tronçons concernés
 
-## Conversions explicites
+Chaque couche de désordres possède une relation native vers la couche privée
+`desordre_troncons`, qui représente `link_desordres_troncons`. Son formulaire
+utilise une Value Relation vers `troncons` : l'utilisateur sélectionne des
+tronçons existants sans saisir d'UUID.
 
-Le prototype n'ajoute aucun trigger. Deux actions explicites sont à tester dans
-le projet pilote :
+Un tronçon composite est présenté exactement comme un autre tronçon. QGIS ne
+connaît ni agrégat ni relation de composition.
 
-- **Calculer le repérage depuis la carte**, qui appelle
-  `xy_vers_reperage(troncon, systeme, point)` puis présente le résultat avant
-  enregistrement ;
-- **Placer depuis borne + distance**, qui appelle
-  `borne_offset_vers_xy(...)` et propose le point calculé.
+## Formulaire de repérage
 
-Ces actions ne sont pas configurées par ce lot. La géométrie de `desordres`
-n'est jamais reconstruite pendant la migration. Pour GPS/carte, la politique
-technique proposée est `GEOMETRIE_FIXE`; pour borne-distance,
-`REPERAGE_FIXE`; pour l'import historique ambigu, `MANUELLE`. Ce champ doit
-rester caché dans le formulaire courant.
+Lorsqu'un seul tronçon est associé, la fiche enfant présente :
 
-## Limites à mesurer sur le terrain
+1. Tronçon ;
+2. Système de repérage ;
+3. Borne de début ;
+4. Distance de début (m) ;
+5. Position de début ;
+6. PR début courant ;
+7. les champs de fin pour une LineString.
 
-- ergonomie réelle de l'éditeur 1:N sur petit écran ;
-- rafraîchissement des listes dépendantes dans QField hors connexion ;
-- pertinence d'afficher début et fin pour un point ou un polygone ;
-- besoin éventuel d'une vue ou d'un formulaire spécialisé supplémentaire pour
-  masquer la structure enfant ;
-- comportement des actions explicites sans code Python côté client.
+Les UUID, offsets signés et autres champs techniques restent masqués. Aucun PR
+source, diagnostic CouchDB, qualité de migration ou trace source n'existe dans
+le formulaire ou la table opérationnelle.
 
-Si ces points rendent la saisie confuse, simplifier le modèle ou séparer les
-parcours carte et borne-distance sera un résultat valide du prototype.
+Les distances et PR sont affichés à 2 décimales sans altérer les valeurs en
+base.
+
+### Sélections dépendantes
+
+- `troncon_id` : Value Relation vers `troncons` ;
+- `systeme_reperage_id` : Value Relation vers `systemes_reperage`, filtrée par
+  le tronçon courant ;
+- `borne_debut_id` et `borne_fin_id` : Value Relation vers
+  `view_systemes_reperage_bornes`, filtrée par le système courant.
+
+La valeur stockée pour une borne reste son UUID. La vue affiche selon sa
+position : **Début du tronçon**, **Fin du tronçon**, ou son libellé métier pour
+une borne intermédiaire. Ces rôles sont indépendants de l'ordre CouchDB et
+changent automatiquement après inversion du tronçon.
+
+Le système par défaut peut être choisi par la synchronisation initiale, mais le
+moteur reçoit toujours explicitement tronçon, système et borne. Il ne dépend
+jamais implicitement du défaut pour convertir une saisie.
+
+### Amont, aval et distance nulle
+
+La Value Map propose seulement :
+
+```text
+Amont → AVANT_BORNE
+Aval  → APRES_BORNE
+```
+
+`SUR_BORNE` reste accepté par PostgreSQL pour la compatibilité, mais n'est pas
+un choix utilisateur. Une distance égale à zéro produit un offset nul, que la
+valeur affichée soit Amont ou Aval.
+
+## Autorité selon l'opération
+
+Une modification cartographique ou numérique conserve exactement la géométrie.
+Le trigger PostgreSQL recalcule le repérage par projection seulement si le
+désordre est lié à un tronçon unique.
+
+Une modification explicite de borne, distance ou sens applique le repérage à
+la géométrie :
+
+- le Point est repositionné sur le tronçon ;
+- la LineString est remplacée par la portion correspondante du tronçon avec
+  `ST_LineSubstring`, sommets intermédiaires compris.
+
+Le groupe Repérage contient un avertissement permanent sur le caractère
+destructif du recalage d'une ligne. Les widgets standards ne fournissent pas de
+boîte de confirmation transactionnelle portable QGIS/QField ; l'avertissement
+précède donc l'enregistrement, et PostgreSQL garantit l'application atomique.
+
+## Mise en page
+
+Le générateur aplatit récursivement tout groupe qui ne contiendrait qu'un seul
+champ ou une seule relation. Les groupes conservés ont une fonction réelle :
+
+- **Général** contient plusieurs attributs métier ;
+- **Coordonnées** contient quatre coordonnées pour les Points, ou les
+  coordonnées début/fin pour les lignes ;
+- **Repérage** contient l'avertissement et la relation de localisation.
+
+La relation des tronçons concernés et le message d'état sont placés directement
+à la racine. Cette règle est vérifiée pour tous les formulaires générés.
+
+## Limites QField à valider sur appareil
+
+- réévaluation immédiate de la visibilité après ajout ou suppression d'un lien
+  tronçon dans une sous-fiche déjà ouverte ;
+- rafraîchissement en cascade des Value Relation hors connexion ;
+- présentation de l'avertissement de recalage sur petit écran ;
+- comportement de la vue ponctuelle éditable avec la version du fournisseur
+  PostgreSQL embarquée dans QField.
+
+Le projet généré reste utilisable sans ces raffinements : PostgreSQL impose la
+cardinalité et refuse tout repérage incohérent.

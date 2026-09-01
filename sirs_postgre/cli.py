@@ -348,7 +348,7 @@ def run_migrate_core() -> int:
             f"{desordre_reperage.source_without_reperage_count}"
         )
     print(
-        "  qualité cible: "
+        "  qualité de migration: "
         f"{getattr(report.validation, 'desordre_reperage_quality_counts', {})}"
     )
     print("Observation :")

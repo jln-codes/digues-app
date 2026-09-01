@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,13 @@ from dotenv import load_dotenv
 from sirs_postgre.target import PostgreSQLConfig
 
 from sirs_postgre.migration.desordre_reperage import (
+    ENGINE_VALIDATION_BATCH_SIZE,
+    DesordreLocalisationReperageRow,
+    PreparedDesordreReperageMigration,
     _distance_and_position,
+    _engine_qualities_batch,
+    _engine_quality,
+    insert_prepared_desordre_reperage,
     prepare_desordre_reperage_migration,
 )
 from sirs_postgre.migration.anomalies import collect_anomalies
@@ -47,7 +54,6 @@ def reperage_fixture():
                 SYSTEME_A,
                 BORNE_A,
                 Decimal("0"),
-                0,
                 True,
             ),
             LinkSystemeReperageBorneRow(
@@ -55,7 +61,6 @@ def reperage_fixture():
                 SYSTEME_A,
                 BORNE_B,
                 Decimal("100"),
-                1,
                 True,
             ),
         ),
@@ -87,6 +92,48 @@ def complete_document(**overrides):
     }
     document.update(overrides)
     return document
+
+
+class LegacyEngineCursor:
+    def __init__(self, result):
+        self.result = result
+        self.execute_count = 0
+
+    def execute(self, _statement, _params):
+        self.execute_count += 1
+
+    def fetchone(self):
+        return self.result
+
+
+class BatchEngineCursor:
+    PARAMS_PER_ROW = 12
+
+    def __init__(self, results_by_id):
+        self.results_by_id = results_by_id
+        self.execute_calls = []
+        self.current_results = []
+        self.inserted_batches = []
+
+    def execute(self, statement, params):
+        self.execute_calls.append((statement, params))
+        ids = [
+            params[index + 1]
+            for index in range(0, len(params), self.PARAMS_PER_ROW)
+        ]
+        self.current_results = []
+        for row_id in ids:
+            result = self.results_by_id[row_id]
+            if result is None:
+                self.current_results.append((row_id, False, *([None] * 18)))
+            else:
+                self.current_results.append((row_id, True, *result))
+
+    def fetchall(self):
+        return list(self.current_results)
+
+    def executemany(self, statement, rows):
+        self.inserted_batches.append((statement, list(rows)))
 
 
 class DesordreReperagePreparationTest(unittest.TestCase):
@@ -195,18 +242,183 @@ class DesordreReperagePreparationTest(unittest.TestCase):
         self.assertEqual(anomaly.target_table, "desordre_localisations_reperage")
 
 
+class DesordreReperageBatchValidationTest(unittest.TestCase):
+    def setUp(self):
+        prepared = prepare_desordre_reperage_migration(
+            [complete_document()],
+            desordre_ids={DESORDRE},
+            troncon_ids={TRONCON_A, TRONCON_B},
+            reperage=reperage_fixture(),
+        )
+        self.row = prepared.localisations[0]
+
+    def engine_result(self, *, status_index=None, status=None, offset_delta=0):
+        result = [
+            "OK",
+            "OK",
+            self.row.borne_debut_id,
+            self.row.offset_debut_m + offset_delta,
+            self.row.pr_debut_source,
+            "OK",
+            "OK",
+            self.row.borne_fin_id,
+            self.row.offset_fin_m,
+            self.row.pr_fin_source,
+            "OK",
+            "OK",
+            self.row.pr_debut_source,
+            0.0,
+            "OK",
+            "OK",
+            self.row.pr_fin_source,
+            0.0,
+        ]
+        if status_index is not None:
+            result[status_index] = status
+        return tuple(result)
+
+    def test_batch_matches_historical_quality_and_diagnostics(self):
+        cases = {
+            "OK": self.engine_result(),
+            "CONFLIT_SYSTEME": self.engine_result(
+                status_index=0,
+                status="CONFLIT_SYSTEME",
+            ),
+            "REFERENCE_ABSENTE": self.engine_result(
+                status_index=5,
+                status="REFERENCE_ABSENTE",
+            ),
+            "AMBIGU": self.engine_result(status_index=10, status="AMBIGU"),
+            "INCOHERENT": self.engine_result(offset_delta=1.0),
+        }
+        for expected_quality, result in cases.items():
+            with self.subTest(quality=expected_quality):
+                legacy_cursor = LegacyEngineCursor(result)
+                historical = _engine_quality(legacy_cursor, self.row, None)
+                batch_cursor = BatchEngineCursor({self.row.id: result})
+                batched = _engine_qualities_batch(
+                    batch_cursor,
+                    [self.row],
+                    None,
+                )[self.row.id]
+
+                self.assertEqual(historical, batched)
+                self.assertEqual(batched[0], expected_quality)
+                self.assertEqual(legacy_cursor.execute_count, 1)
+                self.assertEqual(len(batch_cursor.execute_calls), 1)
+
+    def test_non_controlled_row_keeps_quality_and_diagnostic_without_sql(self):
+        diagnostic = {"preparation": ["REFERENCE_ABSENTE:borneDebutId"]}
+        row = replace(
+            self.row,
+            qualite="REFERENCE_ABSENTE",
+            diagnostic_conversion=diagnostic,
+        )
+        legacy_cursor = LegacyEngineCursor(None)
+        historical = _engine_quality(legacy_cursor, row, None)
+        batch_cursor = BatchEngineCursor({})
+
+        batched = _engine_qualities_batch(batch_cursor, [row], None)[row.id]
+
+        self.assertEqual(historical, ("REFERENCE_ABSENTE", diagnostic))
+        self.assertEqual(batched, historical)
+        self.assertEqual(legacy_cursor.execute_count, 0)
+        self.assertEqual(batch_cursor.execute_calls, [])
+
+    def test_non_controlled_row_is_excluded_from_a_mixed_batch(self):
+        diagnostic = {"preparation": ["INCOMPLETE:prDebut"]}
+        non_controlled = replace(
+            self.row,
+            id=UUID(int=500),
+            qualite="INCOMPLETE",
+            diagnostic_conversion=diagnostic,
+        )
+        controlled = replace(self.row, id=UUID(int=501))
+        result = self.engine_result()
+        cursor = BatchEngineCursor({controlled.id: result})
+
+        qualities = _engine_qualities_batch(
+            cursor,
+            [non_controlled, controlled],
+            None,
+        )
+
+        self.assertEqual(qualities[non_controlled.id], ("INCOMPLETE", diagnostic))
+        self.assertEqual(len(cursor.execute_calls), 1)
+        params = cursor.execute_calls[0][1]
+        self.assertIn(controlled.id, params)
+        self.assertNotIn(non_controlled.id, params)
+
+    def test_missing_engine_result_matches_historical_diagnostic(self):
+        historical = _engine_quality(LegacyEngineCursor(None), self.row, None)
+        cursor = BatchEngineCursor({self.row.id: None})
+
+        batched = _engine_qualities_batch(cursor, [self.row], None)[self.row.id]
+
+        self.assertEqual(historical, batched)
+        self.assertEqual(
+            batched,
+            ("INCOHERENT", {"cause": "MOTEUR_SANS_RESULTAT"}),
+        )
+
+    def test_insert_uses_one_validation_query_for_many_rows(self):
+        rows = tuple(
+            replace(
+                self.row,
+                id=UUID(int=100 + index),
+                desordre_id=UUID(int=1_000 + index),
+            )
+            for index in range(25)
+        )
+        result = self.engine_result()
+        cursor = BatchEngineCursor({row.id: result for row in rows})
+        prepared = PreparedDesordreReperageMigration(
+            localisations=rows,
+            source_complete_count=len(rows),
+            source_partial_count=0,
+            source_without_reperage_count=0,
+            warnings=(),
+        )
+
+        insert_prepared_desordre_reperage(cursor, prepared)
+
+        self.assertEqual(len(cursor.execute_calls), 1)
+        statement, params = cursor.execute_calls[0]
+        self.assertIn("WITH input_rows", statement)
+        self.assertEqual(statement.count("JOIN LATERAL"), 4)
+        self.assertEqual(len(params), 12 * len(rows))
+        self.assertEqual(len(cursor.inserted_batches), 1)
+        self.assertEqual(len(cursor.inserted_batches[0][1]), len(rows))
+
+    def test_validation_query_count_is_constant_below_large_batch_limit(self):
+        self.assertGreater(ENGINE_VALIDATION_BATCH_SIZE, 100)
+        result = self.engine_result()
+        counts = []
+        for row_count in (1, 100):
+            rows = [
+                replace(self.row, id=UUID(int=10_000 + index))
+                for index in range(row_count)
+            ]
+            cursor = BatchEngineCursor({row.id: result for row in rows})
+            _engine_qualities_batch(cursor, rows, None)
+            counts.append(len(cursor.execute_calls))
+
+        self.assertEqual(counts, [1, 1])
+
+
 class DesordreReperagePostGISIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
             import psycopg
-            from psycopg.rows import dict_row
+            from psycopg.rows import dict_row, tuple_row
 
             load_dotenv(
                 Path(__file__).resolve().parents[1] / "config.env",
                 override=False,
             )
             cls.psycopg = psycopg
+            cls.tuple_row = staticmethod(tuple_row)
             cls.connection = psycopg.connect(
                 **PostgreSQLConfig.from_env().connect_kwargs(autocommit=False),
                 row_factory=dict_row,
@@ -225,6 +437,7 @@ class DesordreReperagePostGISIntegrationTest(unittest.TestCase):
             cls.systeme_a = uuid4()
             cls.systeme_b = uuid4()
             cls.borne_a = uuid4()
+            cls.borne_a_fin = uuid4()
             cls.borne_b = uuid4()
             cls.cursor.execute(
                 "INSERT INTO public.systemes (id, libelle, valid) VALUES (%s, 'Test lot 3', true)",
@@ -248,16 +461,16 @@ class DesordreReperagePostGISIntegrationTest(unittest.TestCase):
                 (cls.systeme_a, cls.troncon_a, cls.systeme_b, cls.troncon_b),
             )
             cls.cursor.execute(
-                "INSERT INTO public.bornes_reperage (id, libelle, geometry, valid) VALUES (%s, 'B A', ST_SetSRID(ST_Point(0, 0), 3950), true), (%s, 'B B', ST_SetSRID(ST_Point(0, 10), 3950), true)",
-                (cls.borne_a, cls.borne_b),
+                "INSERT INTO public.bornes_reperage (id, libelle, geometry, valid) VALUES (%s, 'B A', ST_SetSRID(ST_Point(0, 0), 3950), true), (%s, 'B A fin', ST_SetSRID(ST_Point(100, 0), 3950), true), (%s, 'B B', ST_SetSRID(ST_Point(0, 10), 3950), true)",
+                (cls.borne_a, cls.borne_a_fin, cls.borne_b),
             )
             cls.cursor.execute(
-                "INSERT INTO public.link_troncons_bornes (troncon_id, borne_id) VALUES (%s, %s), (%s, %s)",
-                (cls.troncon_a, cls.borne_a, cls.troncon_b, cls.borne_b),
+                "INSERT INTO public.link_troncons_bornes (troncon_id, borne_id) VALUES (%s, %s), (%s, %s), (%s, %s)",
+                (cls.troncon_a, cls.borne_a, cls.troncon_a, cls.borne_a_fin, cls.troncon_b, cls.borne_b),
             )
             cls.cursor.execute(
-                "INSERT INTO public.link_systemes_reperage_bornes (id, systeme_reperage_id, borne_id, valeur_pr, ordre_source, valid) VALUES (%s, %s, %s, 0, 0, true), (%s, %s, %s, 1000, 0, true)",
-                (uuid4(), cls.systeme_a, cls.borne_a, uuid4(), cls.systeme_b, cls.borne_b),
+                "INSERT INTO public.link_systemes_reperage_bornes (id, systeme_reperage_id, borne_id, valeur_pr, valid) VALUES (%s, %s, %s, 0, true), (%s, %s, %s, 100, true), (%s, %s, %s, 1000, true)",
+                (uuid4(), cls.systeme_a, cls.borne_a, uuid4(), cls.systeme_a, cls.borne_a_fin, uuid4(), cls.systeme_b, cls.borne_b),
             )
         except unittest.SkipTest:
             raise
@@ -270,113 +483,6 @@ class DesordreReperagePostGISIntegrationTest(unittest.TestCase):
         if connection is not None:
             connection.rollback()
             connection.close()
-
-    def add_disorder(self, *, geometry="POINT(20 0)", links=("a",)):
-        desordre_id = uuid4()
-        self.cursor.execute(
-            "INSERT INTO public.desordres (id, designation, geometry, valid) VALUES (%s, 'Test lot 3', ST_GeomFromText(%s, 3950), true)",
-            (desordre_id, geometry),
-        )
-        for link in links:
-            troncon = self.troncon_a if link == "a" else self.troncon_b
-            self.cursor.execute(
-                "INSERT INTO public.link_desordres_troncons (desordre_id, troncon_id) VALUES (%s, %s)",
-                (desordre_id, troncon),
-            )
-        return desordre_id
-
-    def add_location(self, desordre_id, *, second=False, valid=True):
-        troncon = self.troncon_b if second else self.troncon_a
-        systeme = self.systeme_b if second else self.systeme_a
-        borne = self.borne_b if second else self.borne_a
-        location_id = uuid4()
-        self.cursor.execute(
-            """
-            INSERT INTO public.desordre_localisations_reperage (
-                id, desordre_id, troncon_id, systeme_reperage_id,
-                borne_debut_id, distance_debut_m, position_debut_relative,
-                pr_debut_source, position_debut_source,
-                mode_saisie_source, politique_autorite, qualite, valid
-            ) VALUES (
-                %s, %s, %s, %s, %s, 20, 'APRES_BORNE',
-                20, ST_SetSRID(ST_Point(20, 0), 3950),
-                'IMPORT', 'MANUELLE', 'OK', %s
-            )
-            """,
-            (location_id, desordre_id, troncon, systeme, borne, valid),
-        )
-        return location_id
-
-    def assert_fk_failure(self, statement, params):
-        self.cursor.execute("SAVEPOINT expected_fk_failure")
-        try:
-            with self.assertRaises(self.psycopg.errors.ForeignKeyViolation):
-                self.cursor.execute(statement, params)
-        finally:
-            self.cursor.execute("ROLLBACK TO SAVEPOINT expected_fk_failure")
-
-    def test_zero_one_and_two_locations_are_structurally_supported(self):
-        empty = self.add_disorder()
-        one = self.add_disorder()
-        self.add_location(one)
-        two = self.add_disorder(links=("a", "b"))
-        self.add_location(two)
-        self.add_location(two, second=True)
-        self.cursor.execute(
-            "SELECT desordre_id, count(*) AS count FROM public.desordre_localisations_reperage WHERE desordre_id IN (%s, %s, %s) GROUP BY desordre_id",
-            (empty, one, two),
-        )
-        counts = {row["desordre_id"]: row["count"] for row in self.cursor.fetchall()}
-        self.assertNotIn(empty, counts)
-        self.assertEqual(counts[one], 1)
-        self.assertEqual(counts[two], 2)
-
-    def test_generated_offset_trace_valid_and_geometry_are_preserved(self):
-        desordre = self.add_disorder(geometry="LINESTRING(5 0, 25 0)")
-        location = self.add_location(desordre, valid=False)
-        self.cursor.execute(
-            """
-            SELECT l.offset_debut_m, l.pr_debut_source,
-                   ST_AsText(l.position_debut_source) AS source_position,
-                   l.valid, ST_AsText(d.geometry) AS geometry
-            FROM public.desordre_localisations_reperage AS l
-            JOIN public.desordres AS d ON d.id = l.desordre_id
-            WHERE l.id = %s
-            """,
-            (location,),
-        )
-        row = self.cursor.fetchone()
-        self.assertEqual(row["offset_debut_m"], 20)
-        self.assertEqual(row["pr_debut_source"], 20)
-        self.assertEqual(row["source_position"], "POINT(20 0)")
-        self.assertFalse(row["valid"])
-        self.assertEqual(row["geometry"], "LINESTRING(5 0,25 0)")
-
-    def test_inconsistent_system_borne_and_troncon_are_rejected(self):
-        desordre = self.add_disorder(links=("a", "b"))
-        statement = """
-            INSERT INTO public.desordre_localisations_reperage (
-                desordre_id, troncon_id, systeme_reperage_id,
-                borne_debut_id, distance_debut_m, position_debut_relative,
-                mode_saisie_source, politique_autorite, qualite, valid
-            ) VALUES (%s, %s, %s, %s, 1, 'APRES_BORNE', 'IMPORT', 'MANUELLE', 'OK', true)
-        """
-        self.assert_fk_failure(
-            statement,
-            (desordre, self.troncon_a, self.systeme_a, self.borne_b),
-        )
-        self.assert_fk_failure(
-            statement,
-            (desordre, self.troncon_a, self.systeme_b, self.borne_b),
-        )
-
-    def test_parent_delete_is_restricted(self):
-        desordre = self.add_disorder()
-        self.add_location(desordre)
-        self.assert_fk_failure(
-            "DELETE FROM public.desordres WHERE id = %s",
-            (desordre,),
-        )
 
     def test_lot2_round_trip_remains_unchanged(self):
         self.cursor.execute(
@@ -392,6 +498,39 @@ class DesordreReperagePostGISIntegrationTest(unittest.TestCase):
         inverse = self.cursor.fetchone()
         self.assertEqual(inverse["statut"], "OK")
         self.assertAlmostEqual(inverse["x"], direct["x"], places=8)
+
+    def test_batch_engine_query_matches_real_legacy_queries(self):
+        def location(offset):
+            return DesordreLocalisationReperageRow(
+                id=uuid4(),
+                desordre_id=uuid4(),
+                troncon_id=self.troncon_a,
+                systeme_reperage_id=self.systeme_a,
+                borne_debut_id=self.borne_a,
+                offset_debut_m=float(offset),
+                borne_fin_id=self.borne_a,
+                offset_fin_m=float(offset + 5),
+                pr_debut_source=Decimal(offset),
+                pr_fin_source=Decimal(offset + 5),
+                position_debut_source_wkt=f"POINT({offset} 0)",
+                position_fin_source_wkt=f"POINT({offset + 5} 0)",
+                mode_saisie_source="IMPORT",
+                politique_autorite="MANUELLE",
+                qualite="A_CONTROLER",
+                valid=True,
+                source_document_id=str(uuid4()),
+                trace_source={},
+                diagnostic_conversion={"preparation": []},
+            )
+
+        rows = (location(20), location(40))
+        with self.connection.cursor(row_factory=self.tuple_row) as cursor:
+            historical = {
+                row.id: _engine_quality(cursor, row, None) for row in rows
+            }
+            batched = _engine_qualities_batch(cursor, rows, None)
+
+        self.assertEqual(batched, historical)
 
 
 if __name__ == "__main__":

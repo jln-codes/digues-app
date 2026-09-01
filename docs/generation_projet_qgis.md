@@ -18,10 +18,8 @@ local sans inscrire son secret dans le projet.
 
 ## Windows et OSGeo4W
 
-Aucune installation QGIS, `qgis_process`, `python-qgis` ou OSGeo4W n'était
-accessible dans l'environnement ayant produit ce lot. Les chemins exacts
-dépendent donc de l'installation locale. Après installation de QGIS 3.38 ou
-plus récent, ouvrir **OSGeo4W Shell**, puis exécuter :
+Après installation de QGIS 3.38 ou plus récent, ouvrir **OSGeo4W Shell**, puis
+exécuter :
 
 ```bat
 cd /d C:\Users\julien.lorion\sirs-postgre
@@ -40,6 +38,21 @@ cd /d C:\Users\julien.lorion\sirs-postgre
 
 Le `config.env` courant reste la seule configuration sirs-postgre : aucune
 configuration PostgreSQL parallèle n'est créée.
+
+## Linux
+
+Utiliser le Python qui voit les modules PyQGIS du système. Selon la
+distribution, il s'agit du Python système ou d'un environnement dont les
+chemins de paquets et bibliothèques QGIS ont été configurés. En environnement
+sans affichage :
+
+```text
+QT_QPA_PLATFORM=offscreen python -m sirs_postgre.cli qgis-project
+```
+
+Le projet de ce lot a été généré et relu avec PyQGIS 3.44 sous Linux. Le
+générateur détruit explicitement projets, couches et relations avant
+`exitQgis()` afin d'éviter la destruction tardive de wrappers SIP.
 
 ## Connexion et secrets
 
@@ -71,26 +84,48 @@ https://tile.openstreetmap.org/{z}/{x}/{y}.png
 
 La couche ne dépend d'aucune connexion QGIS préexistante, d'aucun identifiant
 et d'aucun secret. Elle porte l'attribution « © OpenStreetMap contributors ».
-Les trois couches de désordres pointent vers la même table avec des filtres
-Point, LineString et Polygon. Elles ont des IDs distincts et chacune possède
-une relation stable vers la même table enfant.
+Les couches LineString et Polygon pointent vers `desordres` avec un filtre
+géométrique. La couche Point utilise la vue éditable
+`view_desordres_points_saisie`, afin que X/Y et longitude/latitude réécrivent
+la géométrie unique. Les trois couches ont des IDs distincts et possèdent des
+relations stables vers le repérage et vers les tronçons concernés.
 
-`desordre_localisations_reperage` est ajoutée au registre du projet avec le
-flag QGIS `Private`, sans nœud dans l'arbre et avec une source PostgreSQL sans
-colonne géométrique principale. Les colonnes `position_debut_source` et
-`position_fin_source` restent donc des attributs historiques masqués du
-formulaire ; elles ne créent pas deux couches cartographiques visibles.
+`desordre_localisations_reperage` et `link_desordres_troncons` sont ajoutées au
+registre du projet avec le flag QGIS `Private`, sans nœud dans l'arbre. Les
+diagnostics et positions CouchDB ne sont pas des colonnes du modèle
+opérationnel ; ils restent dans les artefacts de migration.
 
-Le formulaire parent utilise le Drag-and-Drop Designer avec les groupes
-**Général** et **Localisation / Repérage**. Le formulaire enfant utilise des
-widgets standards QGIS/QField : Value Relation, Value Map et Range. Les UUID,
-offsets, positions source, politiques, qualités et traces JSON sont masqués.
+Le formulaire parent utilise le Drag-and-Drop Designer. Le groupe **Général**
+est conservé car il contient plusieurs champs. Sur la couche ponctuelle, un
+groupe **Coordonnées** rassemble quatre champs éditables : X et Y en EPSG:3950,
+longitude et latitude en EPSG:4326. La couche LineString affiche en lecture
+seule les coordonnées de ses deux extrémités. Polygon reste cartographique.
+La relation des tronçons et le message de disponibilité sont à la racine ; le
+groupe **Repérage**, visible seulement avec un tronçon unique pour Point ou
+LineString, contient l'avertissement et la relation de localisation.
+
+Le formulaire enfant utilise uniquement des widgets standards QGIS/QField :
+Value Relation, Value Map et Range. Tronçon filtre les systèmes de repérage,
+puis le système filtre les bornes via `view_systemes_reperage_bornes`. Les
+bornes stockent toujours leur UUID mais affichent leur rôle spatial « Début du
+tronçon » ou « Fin du tronçon », sinon leur libellé métier. Le choix de
+position est limité à **Amont** (`AVANT_BORNE`) et **Aval**
+(`APRES_BORNE`) ; une distance nulle est présentée comme « sur la borne » et
+donne dans les deux cas un offset nul. `SUR_BORNE` reste compatible avec les
+données existantes, mais n'est plus proposé à la saisie.
+
+Les PR courants sont calculés par PostgreSQL et affichés à 2 décimales. Les
+UUID techniques et offsets signés restent masqués. Les coordonnées sont
+exposées par une vue, sans colonne indépendante dans `desordres`. Les champs
+de traçabilité CouchDB ont été retirés du schéma métier.
 
 ## Contrôle après génération
 
-Le générateur relit lui-même le QGZ et vérifie les IDs de couches, les trois
-relations et les groupes attendus. Il échoue si une couche PostgreSQL est
-invalide ou si la relecture diffère de la spécification.
+Le générateur relit lui-même le QGZ et vérifie les IDs de couches, les six
+relations, les groupes attendus, les widgets de borne et de position, les
+expressions de coordonnées et l'absence de groupe de formulaire ne contenant
+qu'un seul élément. Il échoue si une couche PostgreSQL est invalide ou si la
+relecture diffère de la spécification.
 
 ## Limite QField
 
@@ -98,3 +133,10 @@ Le fond OpenStreetMap est destiné exclusivement à la consultation connectée.
 Le générateur ne précharge aucune tuile et ne produit ni MBTiles ni paquet
 offline. Le choix et la génération d'un futur fond QField hors connexion sont
 volontairement hors périmètre de ce lot.
+
+Les filtres `current_value(...)`, la visibilité conditionnelle et la
+présentation des relations doivent encore être validés sur la version QField
+réellement déployée. En particulier, une sous-fiche déjà ouverte peut nécessiter
+un rafraîchissement après modification du nombre de tronçons. Le système par
+défaut n'est qu'une commodité de synchronisation ; toutes les conversions
+reçoivent explicitement tronçon, système et borne.

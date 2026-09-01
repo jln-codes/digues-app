@@ -91,7 +91,6 @@ class LinkParcelleGestionTronconRow:
 class VegetationRow:
     id: UUID
     nature_id: str
-    type_source_code: str | None
     designation: str | None
     commentaire: str | None
     date_debut: date | None
@@ -633,19 +632,6 @@ def _mapped_reference(
     return target
 
 
-def _type_source_code(document: Mapping[str, Any], context: str) -> str | None:
-    values = [
-        document[field]
-        for field in ("typeVegetationId", "typeArbreVegetationId", "typeArbreId")
-        if document.get(field) not in (None, "")
-    ]
-    if not values:
-        return None
-    if not all(isinstance(value, str) for value in values) or len(set(values)) != 1:
-        raise VegetationMigrationError(f"{context}: type source contradictoire")
-    return str(values[0])
-
-
 def prepare_vegetation_migration(
     source_documents: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
@@ -779,7 +765,6 @@ def prepare_vegetation_migration(
                 VegetationRow(
                     id=object_id,
                     nature_id=NATURE_BY_SOURCE_CLASS[source_class],
-                    type_source_code=_type_source_code(document, context),
                     designation=_optional_text(document, "designation", context),
                     commentaire=_optional_text(document, "commentaire", context),
                     date_debut=_optional_date(document, "date_debut", context),
@@ -874,10 +859,10 @@ INSERT_STATEMENTS.update(
         """,
         TARGET_VEGETATION_TABLE: f"""
             INSERT INTO public.{TARGET_VEGETATION_TABLE}
-                (id, nature_id, type_source_code, designation, commentaire,
+                (id, nature_id, designation, commentaire,
                  date_debut, etat_sanitaire_id, classe_hauteur_id,
                  classe_diametre_id, geometry, parcelle_gestion_id, valid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
                     {geometry_sql()}, %s, %s)
         """,
     }
@@ -941,7 +926,6 @@ def insert_prepared_vegetation(
                 (
                     row.id,
                     row.nature_id,
-                    row.type_source_code,
                     row.designation,
                     row.commentaire,
                     row.date_debut,

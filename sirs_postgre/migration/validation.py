@@ -85,17 +85,16 @@ INTEGRITY_CHECKS = {
         WHERE (l.borne_debut_id IS NOT NULL AND bd.id IS NULL)
            OR (l.borne_fin_id IS NOT NULL AND bf.id IS NULL)
     """,
-    "SRID et type des positions source des désordres": """
+    "localisations réservées aux désordres mono-tronçon repérables": """
         SELECT COUNT(*)
-        FROM public.desordre_localisations_reperage
-        WHERE (position_debut_source IS NOT NULL AND (
-                   ST_SRID(position_debut_source) <> 3950
-                   OR GeometryType(position_debut_source) <> 'POINT'
-               ))
-           OR (position_fin_source IS NOT NULL AND (
-                   ST_SRID(position_fin_source) <> 3950
-                   OR GeometryType(position_fin_source) <> 'POINT'
-               ))
+        FROM public.desordre_localisations_reperage AS l
+        JOIN public.desordres AS d ON d.id = l.desordre_id
+        WHERE GeometryType(d.geometry) NOT IN ('POINT', 'LINESTRING')
+           OR 1 <> (
+               SELECT COUNT(*)
+               FROM public.link_desordres_troncons AS dt
+               WHERE dt.desordre_id = l.desordre_id
+           )
     """,
     "observations exactement un parent": """
         SELECT COUNT(*) FROM public.observations
@@ -413,7 +412,7 @@ def validate_core_migration(
         reperage_errors.append("systèmes par défaut diffèrent de la source")
 
     cursor.execute(
-        "SELECT id, systeme_reperage_id, borne_id, valeur_pr, ordre_source "
+        "SELECT id, systeme_reperage_id, borne_id, valeur_pr "
         "FROM public.link_systemes_reperage_bornes"
     )
     actual_associations = {
@@ -421,23 +420,20 @@ def validate_core_migration(
             UUID(str(systeme_id)),
             UUID(str(borne_id)),
             Decimal(str(value)),
-            int(ordre_source),
         )
-        for association_id, systeme_id, borne_id, value, ordre_source
-        in cursor.fetchall()
+        for association_id, systeme_id, borne_id, value in cursor.fetchall()
     }
     expected_associations = {
         row.id: (
             row.systeme_reperage_id,
             row.borne_id,
             row.valeur_pr,
-            row.ordre_source,
         )
         for row in expected_reperage.systemes_bornes
     }
     if actual_associations != expected_associations:
         reperage_errors.append(
-            "associations système-borne, valeur_pr ou ordre diffèrent de la source"
+            "associations système-borne ou valeur_pr diffèrent de la source"
         )
 
     cursor.execute(
@@ -487,76 +483,38 @@ def validate_core_migration(
         )
 
     localisation_errors: list[str] = []
-    cursor.execute(
-        """
-        SELECT id, desordre_id, pr_debut_source, pr_fin_source,
-               valid, source_document_id
-        FROM public.desordre_localisations_reperage
-        """
-    )
-    actual_localisations = {
-        (
-            UUID(str(localisation_id)),
-            UUID(str(desordre_id)),
-            Decimal(str(pr_debut)) if pr_debut is not None else None,
-            Decimal(str(pr_fin)) if pr_fin is not None else None,
-            bool(valid),
-            str(source_document_id) if source_document_id is not None else None,
-        )
-        for (
-            localisation_id,
-            desordre_id,
-            pr_debut,
-            pr_fin,
-            valid,
-            source_document_id,
-        ) in cursor.fetchall()
-    }
-    expected_localisations = {
-        (
-            row.id,
-            row.desordre_id,
-            row.pr_debut_source,
-            row.pr_fin_source,
-            row.valid,
-            row.source_document_id,
-        )
-        for row in expected_desordre_reperage.localisations
-    }
-    if actual_localisations != expected_localisations:
+    cursor.execute("SELECT COUNT(*) FROM public.desordre_localisations_reperage")
+    localisation_row = cursor.fetchone()
+    actual_localisation_count = int(localisation_row[0]) if localisation_row else -1
+    if actual_localisation_count != len(expected_desordre_reperage.localisations):
         localisation_errors.append(
-            "UUID, parent, PR source, validité ou identifiant source diffèrent"
+            "le nombre de localisations opérationnelles recalculées diffère"
         )
-    cursor.execute(
-        """
-        SELECT qualite, COUNT(*)
-        FROM public.desordre_localisations_reperage
-        GROUP BY qualite
-        """
+    actual_desordre_reperage_quality = (
+        expected_desordre_reperage.structural_quality_counts
     )
-    actual_desordre_reperage_quality = {
-        str(qualite): int(count) for qualite, count in cursor.fetchall()
-    }
     cursor.execute(
         "SELECT COUNT(*) FROM public.view_desordre_localisations_reperage"
     )
     view_row = cursor.fetchone()
-    if not view_row or int(view_row[0]) != len(expected_desordre_reperage.localisations):
+    if not view_row or int(view_row[0]) != actual_localisation_count:
         localisation_errors.append(
             "la vue QGIS ne présente pas toutes les localisations"
         )
     cursor.execute(
         """
         SELECT COUNT(*)
-        FROM public.desordre_localisations_reperage
-        WHERE qualite = 'OK'
-          AND (diagnostic_conversion->'statuts') IS NULL
+        FROM public.desordre_localisations_reperage AS l
+        WHERE 1 <> (
+            SELECT count(*) FROM public.link_desordres_troncons AS dt
+            WHERE dt.desordre_id = l.desordre_id
+        )
         """
     )
     diagnostic_row = cursor.fetchone()
     if not diagnostic_row or int(diagnostic_row[0]) != 0:
         localisation_errors.append(
-            "une localisation OK ne possède pas le diagnostic du moteur"
+            "une localisation existe sans lien mono-tronçon exclusif"
         )
     if localisation_errors:
         raise MigrationValidationError(

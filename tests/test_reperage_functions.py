@@ -182,10 +182,10 @@ class ReperageFunctionPostGISIntegrationTest(unittest.TestCase):
                 """
                 INSERT INTO public.link_systemes_reperage_bornes
                     (id, systeme_reperage_id, borne_id,
-                     valeur_pr, ordre_source, valid)
-                VALUES (%s, %s, %s, %s, %s, true)
+                     valeur_pr, valid)
+                VALUES (%s, %s, %s, %s, true)
                 """,
-                (uuid.uuid4(), system_id, borne_id, Decimal(str(pr)), order),
+                (uuid.uuid4(), system_id, borne_id, Decimal(str(pr))),
             )
         return system_id, borne_ids
 

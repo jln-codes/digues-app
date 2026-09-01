@@ -131,7 +131,7 @@ CORE_FIELD_MAPPINGS = {
         "SystemeReperageBorne.id → UUID historique → id",
         "borneId → UUID de BorneDigue vérifié → borne_id",
         "valeurPR → décimal source inchangé → valeur_pr",
-        "position dans la liste → ordre_source de traçabilité non autoritatif",
+        "position dans la liste → utilisée uniquement pour diagnostiquer la source",
         "valid → booléen inchangé → valid",
     ),
     "desordres": (
@@ -140,9 +140,9 @@ CORE_FIELD_MAPPINGS = {
         "categorieDesordreId → contrôle de cohérence uniquement, non stocké",
         "designation/commentaire → textes inchangés → colonnes homonymes",
         "date_debut/date_fin ISO → DATE → colonnes homonymes",
-        "positionDebut/positionFin + CRS global → POINT ou LINESTRING reprojeté en 3950 → geometry",
+        "geometry WKT valide + CRS global → géométrie complète reprojetée en 3950",
         "valid → booléen inchangé → valid",
-        "geometry source Polygon valide → conservée ; autres formes historiques → positions",
+        "positionDebut/positionFin → fallback si geometry est inexploitable",
     ),
     "link_desordres_troncons": (
         "aucune source → gen_random_uuid() PostgreSQL → id technique",
@@ -150,12 +150,8 @@ CORE_FIELD_MAPPINGS = {
         "Desordre.linearId → UUID de TronconDigue vérifié → troncon_id",
     ),
     "desordre_localisations_reperage": (
-        "Desordre._id → UUID v5 déterministe → id de localisation importée",
-        "linearId/systemeRepId/bornes explicites → FK seulement si cohérentes",
-        "distance + sens SIRS → offset signé dans le sens du LineString",
-        "PR et positions historiques → colonnes source non écrasées",
-        "geometryMode/editedGeoCoordinate et valeurs brutes → trace_source JSONB",
-        "chaîne complète → contrôle explicite par les fonctions du lot 2",
+        "géométrie + unique lien tronçon → localisation opérationnelle recalculée",
+        "chaîne historique → contrôle de migration et rapport d'anomalies seulement",
     ),
     "observations": (
         "Objet.observations[].id → UUID → id",
@@ -421,22 +417,26 @@ def desordre_geometry_from_source(
     *,
     desordre_id: Any,
 ) -> tuple[str | None, str, str | None]:
-    """Préserve un Polygon source valide, sinon applique le repérage historique.
+    """Préserve la géométrie source exploitable, sinon utilise les positions.
 
-    Les sources cabbalr ponctuelles et linéaires restent reconstruites depuis
-    leurs positions, conformément à la migration historique. Un Polygon SIRS
-    explicite et valide est en revanche une géométrie métier autonome.
+    Les anciennes positions ne sont qu'un fallback : elles ne doivent jamais
+    réduire une LineString source valide à son segment début/fin.
     """
 
-    if isinstance(source_geometry, str) and source_geometry.lstrip().upper().startswith("POLYGON"):
+    if isinstance(source_geometry, str):
         geometry = inspect_wkt(source_geometry)
-        if geometry is not None and geometry.kind == "POLYGON" and geometry.valid:
-            return source_geometry, "polygon", None
-        return (
-            None,
-            "null",
-            f"Desordre {desordre_id}: Polygon source invalide ; geometry cible NULL",
-        )
+        if (
+            geometry is not None
+            and geometry.valid
+            and geometry.kind.lower() in {"point", "linestring", "polygon"}
+        ):
+            return source_geometry, geometry.kind.lower(), None
+        if source_geometry.lstrip().upper().startswith("POLYGON"):
+            return (
+                None,
+                "null",
+                f"Desordre {desordre_id}: Polygon source invalide ; geometry cible NULL",
+            )
     return desordre_geometry_from_positions(
         position_debut,
         position_fin,

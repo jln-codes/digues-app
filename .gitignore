@@ -1,6 +1,7 @@
 .env
 config.env
 .venv/
+.venv-qgis/
 __pycache__/
 *.py[cod]
 .pytest_cache/

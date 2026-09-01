@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import gc
 import os
 from pathlib import Path
 from typing import Any, Iterator
@@ -87,6 +88,16 @@ class QGISProjectResult:
     connection: str
 
 
+@dataclass(frozen=True)
+class VirtualFieldSpec:
+    """Champ calculé uniquement dans QGIS, sans modification de PostgreSQL."""
+
+    name: str
+    alias: str
+    expression: str
+    variant: str = "Double"
+
+
 GROUP_PATHS = (
     ("SIRS",),
     ("SIRS", "Patrimoine"),
@@ -131,9 +142,8 @@ LAYER_SPECS = (
         "desordres_point",
         "sirs_desordres_points",
         "Désordres — Points",
-        "desordres",
+        "view_desordres_points_saisie",
         "geometry",
-        subset=DESORDRE_FILTERS["point"],
         wkb_type="Point",
         group_path=("SIRS", "Désordres"),
         color="#d73027",
@@ -195,13 +205,21 @@ LAYER_SPECS = (
         "desordre_localisations_reperage",
         private=True,
     ),
-    # Table privée requise uniquement par le filtre borne dépendant du système.
+    LayerSpec(
+        "desordre_troncons",
+        "sirs_link_desordres_troncons",
+        "Tronçons concernés par les désordres",
+        "link_desordres_troncons",
+        private=True,
+    ),
+    # Vue privée fournissant les rôles spatiaux début/fin dans le système.
     LayerSpec(
         "systemes_bornes",
-        "sirs_link_systemes_reperage_bornes",
+        "sirs_view_systemes_reperage_bornes",
         "Liens systèmes–bornes (technique)",
-        "link_systemes_reperage_bornes",
+        "view_systemes_reperage_bornes",
         private=True,
+        read_only=True,
     ),
 )
 
@@ -226,6 +244,24 @@ RELATION_SPECS = (
         "desordres_polygon",
         "desordre_localisations",
     ),
+    RelationSpec(
+        "desordre_point_troncons",
+        "Tronçons concernés — désordre ponctuel",
+        "desordres_point",
+        "desordre_troncons",
+    ),
+    RelationSpec(
+        "desordre_ligne_troncons",
+        "Tronçons concernés — désordre linéaire",
+        "desordres_line",
+        "desordre_troncons",
+    ),
+    RelationSpec(
+        "desordre_polygone_troncons",
+        "Tronçons concernés — désordre surfacique",
+        "desordres_polygon",
+        "desordre_troncons",
+    ),
 )
 
 DESORDRE_GENERAL_FIELDS = (
@@ -237,19 +273,47 @@ DESORDRE_GENERAL_FIELDS = (
     "valid",
 )
 
+POINT_COORDINATE_FIELDS = (
+    VirtualFieldSpec("coord_x_3950", "X", "x($geometry)"),
+    VirtualFieldSpec("coord_y_3950", "Y", "y($geometry)"),
+    VirtualFieldSpec(
+        "longitude_4326",
+        "Longitude",
+        "x(transform($geometry, 'EPSG:3950', 'EPSG:4326'))",
+    ),
+    VirtualFieldSpec(
+        "latitude_4326",
+        "Latitude",
+        "y(transform($geometry, 'EPSG:3950', 'EPSG:4326'))",
+    ),
+)
+
+LINE_COORDINATE_FIELDS = (
+    VirtualFieldSpec(
+        "debut_x_3950", "X début", "x(start_point($geometry))"
+    ),
+    VirtualFieldSpec(
+        "debut_y_3950", "Y début", "y(start_point($geometry))"
+    ),
+    VirtualFieldSpec(
+        "fin_x_3950", "X fin", "x(end_point($geometry))"
+    ),
+    VirtualFieldSpec(
+        "fin_y_3950", "Y fin", "y(end_point($geometry))"
+    ),
+)
+
 LOCALISATION_VISIBLE_FIELDS = (
-    "mode_saisie_source",
     "troncon_id",
     "systeme_reperage_id",
     "borne_debut_id",
     "distance_debut_m",
     "position_debut_relative",
+    "pr_debut",
     "borne_fin_id",
     "distance_fin_m",
     "position_fin_relative",
-    "pr_debut_source",
-    "pr_fin_source",
-    "valid",
+    "pr_fin",
 )
 
 LOCALISATION_HIDDEN_FIELDS = (
@@ -257,31 +321,28 @@ LOCALISATION_HIDDEN_FIELDS = (
     "desordre_id",
     "offset_debut_m",
     "offset_fin_m",
-    "position_debut_source",
-    "position_fin_source",
-    "politique_autorite",
-    "qualite",
-    "source_document_id",
-    "source_object_id",
-    "trace_source",
-    "diagnostic_conversion",
-    "geometryMode",
-    "editedGeoCoordinate",
+    "valid",
 )
 
 FIELD_ALIASES = {
-    "mode_saisie_source": "Mode",
     "troncon_id": "Tronçon",
     "systeme_reperage_id": "Système de repérage",
     "borne_debut_id": "Borne de début",
-    "distance_debut_m": "Distance début (m)",
-    "position_debut_relative": "Position début",
+    "distance_debut_m": "Distance (m)",
+    "position_debut_relative": "Position",
     "borne_fin_id": "Borne de fin",
     "distance_fin_m": "Distance fin (m)",
     "position_fin_relative": "Position fin",
-    "pr_debut_source": "PR début source",
-    "pr_fin_source": "PR fin source",
+    "pr_debut": "PR début",
+    "pr_fin": "PR fin",
     "valid": "Valide",
+}
+
+POSITION_VALUE_MAP = {
+    "map": [
+        {"Amont": "AVANT_BORNE"},
+        {"Aval": "APRES_BORNE"},
+    ]
 }
 
 LOCALISATION_DISPLAY_EXPRESSION = """
@@ -299,10 +360,10 @@ with_variable(
         WHEN "distance_debut_m" IS NULL THEN ''
         ELSE concat(' ', format_number("distance_debut_m", 2), ' m')
       END,
-      CASE "position_debut_relative"
-        WHEN 'AVANT_BORNE' THEN ' avant'
-        WHEN 'SUR_BORNE' THEN ' sur la borne'
-        WHEN 'APRES_BORNE' THEN ' après'
+      CASE
+        WHEN "distance_debut_m" = 0 THEN ' sur la borne'
+        WHEN "position_debut_relative" = 'AVANT_BORNE' THEN ' amont'
+        WHEN "position_debut_relative" = 'APRES_BORNE' THEN ' aval'
         ELSE ''
       END
     )
@@ -387,6 +448,7 @@ def _temporary_pgpassword(password: str | None) -> Iterator[None]:
 
 def _load_pyqgis() -> dict[str, Any]:
     try:
+        from qgis.PyQt.QtCore import QVariant  # type: ignore
         from qgis.PyQt.QtGui import QColor  # type: ignore
         from qgis.core import (  # type: ignore
             Qgis,
@@ -397,7 +459,10 @@ def _load_pyqgis() -> dict[str, Any]:
             QgsCoordinateReferenceSystem,
             QgsDataSourceUri,
             QgsEditorWidgetSetup,
+            QgsExpression,
+            QgsField,
             QgsMapLayer,
+            QgsOptionalExpression,
             QgsProject,
             QgsRasterLayer,
             QgsRelation,
@@ -408,9 +473,10 @@ def _load_pyqgis() -> dict[str, Any]:
         )
     except (ImportError, ModuleNotFoundError) as exc:
         raise PyQGISUnavailableError(
-            "PyQGIS est indisponible dans ce Python. Sous Windows, lancez la "
-            "commande depuis ‘OSGeo4W Shell’ avec python-qgis.bat, ou depuis "
-            "le shell fourni par l’installation QGIS. Aucun QGZ n’a été créé."
+            "PyQGIS est indisponible dans ce Python. Sous Windows, utilisez "
+            "l’environnement QGIS/OSGeo4W (par exemple python-qgis.bat). "
+            "Sous Linux, utilisez un Python ayant accès aux bindings PyQGIS "
+            "système de l’installation QGIS. Aucun QGZ n’a été créé."
         ) from exc
     if Qgis.QGIS_VERSION_INT < MINIMUM_QGIS_VERSION_INT:
         raise PyQGISUnavailableError(
@@ -449,22 +515,138 @@ def _add_fields_to_container(
             container.addChildElement(editor_field(field_name, index, container))
 
 
-def _configure_desordre_form(
-    api: dict[str, Any], layer: Any, relation_id: str
+def _add_virtual_fields(
+    api: dict[str, Any], layer: Any, specs: tuple[VirtualFieldSpec, ...]
 ) -> None:
+    """Ajoute des expressions déterministes et explicitement non modifiables."""
+
+    for spec in specs:
+        index = layer.fields().indexFromName(spec.name)
+        if index < 0:
+            index = layer.addExpressionField(
+                spec.expression,
+                api["QgsField"](spec.name, getattr(api["QVariant"], spec.variant)),
+            )
+        if index < 0:
+            raise QGISProjectError(f"Champ virtuel QGIS refusé : {spec.name}")
+        layer.setFieldAlias(index, spec.alias)
+
+
+def _add_group(
+    api: dict[str, Any],
+    layer: Any,
+    root: Any,
+    name: str,
+    field_names: tuple[str, ...],
+) -> None:
+    """Crée seulement les groupes contenant réellement plusieurs champs."""
+
+    present = tuple(
+        field_name
+        for field_name in field_names
+        if layer.fields().indexFromName(field_name) >= 0
+    )
+    if len(present) < 2:
+        _add_fields_to_container(api, layer, root, present)
+        return
+    container = api["QgsAttributeEditorContainer"](name, root)
+    root.addChildElement(container)
+    _add_fields_to_container(api, layer, container, present)
+
+
+def _configure_desordre_form(
+    api: dict[str, Any],
+    layer: Any,
+    localisation_relation_id: str,
+    troncons_relation_id: str,
+    *,
+    coordinate_fields: tuple[VirtualFieldSpec, ...] = (),
+    coordinates_editable: bool = False,
+) -> None:
+    if coordinate_fields:
+        _add_virtual_fields(api, layer, coordinate_fields)
+    status_fields = (
+        VirtualFieldSpec(
+            "statut_reperage_formulaire",
+            "Disponibilité du repérage",
+            "with_variable('n', relation_aggregate("
+            f"'{troncons_relation_id}', 'count', \"id\"), "
+            "CASE WHEN @n = 0 THEN 'Repérage indisponible : aucun tronçon associé.' "
+            "WHEN @n > 1 THEN 'Repérage indisponible : plusieurs tronçons sont associés au désordre.' "
+            "ELSE 'Repérage disponible.' END)",
+            "String",
+        ),
+        VirtualFieldSpec(
+            "avertissement_recalage",
+            "Attention",
+            "CASE WHEN geometry_type($geometry) = 'LineString' THEN "
+            "'Modifier le repérage remplacera la ligne par la portion du tronçon.' "
+            "ELSE 'Modifier le repérage repositionnera le point sur le tronçon.' END",
+            "String",
+        ),
+    )
+    _add_virtual_fields(api, layer, status_fields)
     config = layer.editFormConfig()
+    for spec in coordinate_fields:
+        index = layer.fields().indexFromName(spec.name)
+        if index >= 0 and not coordinates_editable:
+            config.setReadOnly(index, True)
+    for spec in status_fields:
+        index = layer.fields().indexFromName(spec.name)
+        if index >= 0:
+            config.setReadOnly(index, True)
+    if coordinates_editable:
+        for spec in coordinate_fields:
+            precision = 6 if spec.name in {"longitude_4326", "latitude_4326"} else 2
+            _set_widget(
+                layer,
+                spec.name,
+                api["QgsEditorWidgetSetup"](
+                    "Range",
+                    {
+                        "Min": -1_000_000_000.0,
+                        "Max": 1_000_000_000.0,
+                        "Step": 10 ** (-precision),
+                        "Precision": precision,
+                        "Style": "SpinBox",
+                        "AllowNull": False,
+                    },
+                ),
+            )
     config.clearTabs()
     config.setLayout(api["Qgis"].AttributeFormLayout.DragAndDrop)
     root = config.invisibleRootContainer()
-    general = api["QgsAttributeEditorContainer"]("Général", root)
-    root.addChildElement(general)
-    _add_fields_to_container(api, layer, general, DESORDRE_GENERAL_FIELDS)
-    localisation = api["QgsAttributeEditorContainer"](
-        "Localisation / Repérage", root
+    _add_group(api, layer, root, "Général", DESORDRE_GENERAL_FIELDS)
+    if coordinate_fields:
+        _add_group(
+            api,
+            layer,
+            root,
+            "Coordonnées",
+            tuple(spec.name for spec in coordinate_fields),
+        )
+    root.addChildElement(
+        api["QgsAttributeEditorRelation"](troncons_relation_id, root)
     )
-    root.addChildElement(localisation)
-    localisation.addChildElement(
-        api["QgsAttributeEditorRelation"](relation_id, localisation)
+    _add_fields_to_container(
+        api, layer, root, ("statut_reperage_formulaire",)
+    )
+    # Deux éléments cohérents justifient ce groupe conditionnel : avertissement
+    # et formulaire de repérage. QField réévalue l'expression à l'ouverture.
+    reperage = api["QgsAttributeEditorContainer"]("Repérage", root)
+    root.addChildElement(reperage)
+    _add_fields_to_container(api, layer, reperage, ("avertissement_recalage",))
+    reperage.addChildElement(
+        api["QgsAttributeEditorRelation"](localisation_relation_id, reperage)
+    )
+    reperage.setVisibilityExpression(
+        api["QgsOptionalExpression"](
+            api["QgsExpression"](
+                "relation_aggregate("
+                f"'{troncons_relation_id}', 'count', \"id\") = 1 "
+                "AND geometry_type($geometry) IN ('Point', 'LineString')"
+            )
+        )
     )
     layer.setEditFormConfig(config)
     layer.setDisplayExpression(
@@ -515,12 +697,6 @@ def _configure_localisation_form(
             },
         ),
     )
-    borne_filter = (
-        "array_contains(aggregate("
-        f"'{layers['systemes_bornes'].id()}', 'array_agg', \"borne_id\", "
-        '"systeme_reperage_id" = current_value(\'systeme_reperage_id\')'
-        '), "id")'
-    )
     for field_name in ("borne_debut_id", "borne_fin_id"):
         _set_widget(
             layer,
@@ -528,42 +704,26 @@ def _configure_localisation_form(
             value_relation(
                 "ValueRelation",
                 {
-                    "Layer": layers["bornes_reperage"].id(),
-                    "Key": "id",
-                    "Value": "libelle",
+                    "Layer": layers["systemes_bornes"].id(),
+                    "Key": "borne_id",
+                    "Value": "libelle_affichage",
                     "AllowNull": True,
                     "OrderByValue": True,
                     "UseCompleter": True,
-                    "FilterExpression": borne_filter,
+                    "FilterExpression": (
+                        '"systeme_reperage_id" = '
+                        "current_value('systeme_reperage_id')"
+                    ),
                 },
             ),
         )
     value_map = api["QgsEditorWidgetSetup"]
-    position_map = {
-        "map": [
-            {"Avant la borne": "AVANT_BORNE"},
-            {"Sur la borne": "SUR_BORNE"},
-            {"Après la borne": "APRES_BORNE"},
-        ]
-    }
     for field_name in ("position_debut_relative", "position_fin_relative"):
-        _set_widget(layer, field_name, value_map("ValueMap", position_map))
-    _set_widget(
-        layer,
-        "mode_saisie_source",
-        value_map(
-            "ValueMap",
-            {
-                "map": [
-                    {"GPS": "GPS"},
-                    {"Carte": "CARTE"},
-                    {"Borne + distance": "BORNE_DISTANCE"},
-                    {"Import": "IMPORT"},
-                    {"Inconnu": "INCONNU"},
-                ]
-            },
-        ),
-    )
+        _set_widget(
+            layer,
+            field_name,
+            value_map("ValueMap", POSITION_VALUE_MAP),
+        )
     for field_name in ("distance_debut_m", "distance_fin_m"):
         _set_widget(
             layer,
@@ -580,20 +740,70 @@ def _configure_localisation_form(
                 },
             ),
         )
+    for field_name in ("pr_debut", "pr_fin"):
+        _set_widget(
+            layer,
+            field_name,
+            api["QgsEditorWidgetSetup"](
+                "Range",
+                {
+                    "Min": -1_000_000_000.0,
+                    "Max": 1_000_000_000.0,
+                    "Step": 0.01,
+                    "Precision": 2,
+                    "Style": "SpinBox",
+                    "AllowNull": True,
+                },
+            ),
+        )
 
+    config = layer.editFormConfig()
+    read_only_fields = ("troncon_id", "pr_debut", "pr_fin")
+    for field_name in read_only_fields:
+        index = layer.fields().indexFromName(field_name)
+        if index >= 0:
+            config.setReadOnly(index, True)
+    config.clearTabs()
+    config.setLayout(api["Qgis"].AttributeFormLayout.DragAndDrop)
+    root = config.invisibleRootContainer()
+    _add_group(
+        api, layer, root, "Repérage", LOCALISATION_VISIBLE_FIELDS
+    )
+    layer.setEditFormConfig(config)
+    layer.setDisplayExpression(LOCALISATION_DISPLAY_EXPRESSION)
+
+
+def _configure_desordre_troncons_form(
+    api: dict[str, Any], layer: Any, layers: dict[str, Any]
+) -> None:
+    hidden = api["QgsEditorWidgetSetup"]("Hidden", {})
+    for field_name in ("id", "desordre_id"):
+        _set_widget(layer, field_name, hidden)
+    _set_alias(layer, "troncon_id", "Tronçon concerné")
+    _set_widget(
+        layer,
+        "troncon_id",
+        api["QgsEditorWidgetSetup"](
+            "ValueRelation",
+            {
+                "Layer": layers["troncons"].id(),
+                "Key": "id",
+                "Value": "libelle",
+                "AllowNull": False,
+                "OrderByValue": True,
+                "UseCompleter": True,
+            },
+        ),
+    )
     config = layer.editFormConfig()
     config.clearTabs()
     config.setLayout(api["Qgis"].AttributeFormLayout.DragAndDrop)
     root = config.invisibleRootContainer()
-    localisation = api["QgsAttributeEditorContainer"](
-        "Localisation / Repérage", root
-    )
-    root.addChildElement(localisation)
-    _add_fields_to_container(
-        api, layer, localisation, LOCALISATION_VISIBLE_FIELDS
-    )
+    _add_fields_to_container(api, layer, root, ("troncon_id",))
     layer.setEditFormConfig(config)
-    layer.setDisplayExpression(LOCALISATION_DISPLAY_EXPRESSION)
+    layer.setDisplayExpression(
+        "attribute(get_feature('Tronçons', 'id', \"troncon_id\"), 'libelle')"
+    )
 
 
 def _configure_lookup_layers(layers: dict[str, Any]) -> None:
@@ -737,8 +947,24 @@ def _create_relations(
         project.relationManager().addRelation(relation)
 
 
-def _verify_written_project(api: dict[str, Any], output: Path) -> None:
-    verification = api["QgsProject"]()
+def _clear_qgis_project(
+    project: Any,
+    *reference_containers: dict[Any, Any] | None,
+) -> None:
+    """Libère les wrappers Python avant les objets C++ possédés par le projet."""
+
+    for container in reference_containers:
+        if container is not None:
+            container.clear()
+    gc.collect()
+    if project is not None:
+        project.clear()
+    gc.collect()
+
+
+def _inspect_written_project(
+    api: dict[str, Any], verification: Any, output: Path
+) -> None:
     if not verification.read(str(output)):
         raise QGISProjectError(f"Le QGZ écrit est illisible : {output}")
     actual_layers = set(verification.mapLayers())
@@ -811,6 +1037,7 @@ def _verify_written_project(api: dict[str, Any], output: Path) -> None:
             raise QGISProjectError(
                 f"Formulaire Drag-and-Drop absent après relecture : {layer_id}"
             )
+        _verify_no_single_item_groups(api, verification.mapLayer(layer_id))
     child_id = next(
         spec.layer_id for spec in LAYER_SPECS
         if spec.key == "desordre_localisations"
@@ -820,12 +1047,88 @@ def _verify_written_project(api: dict[str, Any], output: Path) -> None:
         raise QGISProjectError(
             "Formulaire enfant Drag-and-Drop absent après relecture"
         )
-    for field_name in ("position_debut_source", "position_fin_source"):
+    _verify_no_single_item_groups(api, child)
+    for field_name in ("pr_debut", "pr_fin"):
         index = child.fields().indexFromName(field_name)
-        if index < 0 or child.editorWidgetSetup(index).type() != "Hidden":
+        if index < 0 or not child.editFormConfig().readOnly(index):
             raise QGISProjectError(
-                f"Champ historique non masqué après relecture : {field_name}"
+                f"PR modifiable après relecture : {field_name}"
             )
+    for field_name in ("borne_debut_id", "borne_fin_id"):
+        index = child.fields().indexFromName(field_name)
+        setup = child.editorWidgetSetup(index) if index >= 0 else None
+        if setup is None or setup.type() != "ValueRelation":
+            raise QGISProjectError(
+                f"Borne modifiable en texte libre après relecture : {field_name}"
+            )
+        if setup.config().get("Value") != "libelle_affichage":
+            raise QGISProjectError(
+                f"Libellé métier absent du widget de borne : {field_name}"
+            )
+    for field_name in ("position_debut_relative", "position_fin_relative"):
+        index = child.fields().indexFromName(field_name)
+        setup = child.editorWidgetSetup(index) if index >= 0 else None
+        if setup is None or setup.type() != "ValueMap":
+            raise QGISProjectError(
+                f"Widget de position invalide après relecture : {field_name}"
+            )
+        if setup.config() != POSITION_VALUE_MAP:
+            raise QGISProjectError(
+                f"Vocabulaire Amont/Aval altéré après relecture : {field_name}"
+            )
+    point = verification.mapLayer("sirs_desordres_points")
+    for spec in POINT_COORDINATE_FIELDS:
+        index = point.fields().indexFromName(spec.name)
+        if index < 0 or point.editFormConfig().readOnly(index):
+            raise QGISProjectError(
+                f"Coordonnée éditable absente après relecture : {spec.name}"
+            )
+    line = verification.mapLayer("sirs_desordres_lignes")
+    for spec in LINE_COORDINATE_FIELDS:
+        index = line.fields().indexFromName(spec.name)
+        if index < 0 or not line.editFormConfig().readOnly(index):
+            raise QGISProjectError(
+                f"Coordonnée de ligne absente après relecture : {spec.name}"
+            )
+
+
+def _verify_written_project(api: dict[str, Any], output: Path) -> None:
+    """Relit le QGZ puis détruit explicitement son projet et ses couches."""
+
+    verification = api["QgsProject"]()
+    error: Exception | None = None
+    try:
+        _inspect_written_project(api, verification, output)
+    except Exception as exc:
+        # Ne pas conserver une traceback contenant des wrappers SIP jusqu'à
+        # l'arrêt éventuel de QgsApplication dans l'appelant.
+        error = exc.with_traceback(None)
+    finally:
+        _clear_qgis_project(verification)
+        verification = None
+        gc.collect()
+    if error is not None:
+        raise error
+
+
+def _verify_no_single_item_groups(api: dict[str, Any], layer: Any) -> None:
+    """Refuse les groupes artificiels d'un champ ou d'une relation."""
+
+    container_type = api["QgsAttributeEditorContainer"]
+
+    def visit(parent: Any) -> None:
+        for child in parent.children():
+            if not isinstance(child, container_type):
+                continue
+            count = len(child.children())
+            if count < 2:
+                raise QGISProjectError(
+                    f"Groupe de formulaire artificiel ({child.name()}) "
+                    f"dans {layer.id()}"
+                )
+            visit(child)
+
+    visit(layer.editFormConfig().invisibleRootContainer())
 
 
 def generate_qgis_project(
@@ -851,6 +1154,10 @@ def generate_qgis_project(
         application = api["QgsApplication"]([], False)
         application.initQgis()
 
+    project = None
+    layers: dict[str, Any] | None = None
+    groups: dict[tuple[str, ...], Any] | None = None
+    generation_error: Exception | None = None
     try:
         project = api["QgsProject"]()
         project.setTitle("SIRS PostgreSQL — prototype repérage des désordres")
@@ -873,20 +1180,55 @@ def generate_qgis_project(
             _configure_localisation_form(
                 api, layers["desordre_localisations"], layers
             )
-            relation_by_parent = {
+            _configure_desordre_troncons_form(
+                api, layers["desordre_troncons"], layers
+            )
+            localisation_relations = {
                 spec.parent_layer_key: spec.relation_id
                 for spec in RELATION_SPECS
+                if spec.child_layer_key == "desordre_localisations"
             }
-            for parent_key, relation_id in relation_by_parent.items():
-                _configure_desordre_form(api, layers[parent_key], relation_id)
+            troncon_relations = {
+                spec.parent_layer_key: spec.relation_id
+                for spec in RELATION_SPECS
+                if spec.child_layer_key == "desordre_troncons"
+            }
+            for parent_key, relation_id in localisation_relations.items():
+                coordinate_fields = (
+                    POINT_COORDINATE_FIELDS if parent_key == "desordres_point"
+                    else LINE_COORDINATE_FIELDS if parent_key == "desordres_line"
+                    else ()
+                )
+                _configure_desordre_form(
+                    api,
+                    layers[parent_key],
+                    relation_id,
+                    troncon_relations[parent_key],
+                    coordinate_fields=coordinate_fields,
+                    coordinates_editable=(parent_key == "desordres_point"),
+                )
 
             output.parent.mkdir(parents=True, exist_ok=True)
             if not project.write(str(output)):
                 raise QGISProjectError(f"Écriture QGZ refusée : {output}")
             _verify_written_project(api, output)
+    except Exception as exc:
+        # Une traceback peut garder vivants project/layers et d'autres wrappers
+        # SIP au-delà de exitQgis(). La décision d'erreur est conservée sans elle.
+        generation_error = exc.with_traceback(None)
     finally:
+        _clear_qgis_project(project, groups, layers)
+        groups = None
+        layers = None
+        project = None
+        gc.collect()
         if owns_application and application is not None:
             application.exitQgis()
+            application = None
+            gc.collect()
+
+    if generation_error is not None:
+        raise generation_error
 
     return QGISProjectResult(
         output=output,

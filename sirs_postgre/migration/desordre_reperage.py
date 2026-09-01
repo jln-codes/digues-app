@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
-import json
 import re
 from typing import Any
 from uuid import UUID, uuid5
@@ -16,6 +15,7 @@ from .reperage import PreparedReperageMigration
 
 LOCALISATION_NAMESPACE = UUID("0479851b-c924-5c55-b1b8-49dbb20ee803")
 COHERENCE_TOLERANCE = 1e-3
+ENGINE_VALIDATION_BATCH_SIZE = 4_000
 NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?"
 POINT_WKT = re.compile(
     rf"^\s*POINT\s*\(\s*{NUMBER}\s+{NUMBER}\s*\)\s*$",
@@ -67,7 +67,7 @@ class DesordreLocalisationReperageRow:
     diagnostic_conversion: Mapping[str, Any]
 
 
-@dataclass(frozen=True)
+@dataclass
 class PreparedDesordreReperageMigration:
     localisations: tuple[DesordreLocalisationReperageRow, ...]
     source_complete_count: int
@@ -318,7 +318,52 @@ def prepare_desordre_reperage_migration(
     )
 
 
-def _engine_quality(cursor: Any, row: DesordreLocalisationReperageRow, crs_info: CRSInfo | None) -> tuple[str, Mapping[str, Any]]:
+def _quality_from_engine_result(
+    row: DesordreLocalisationReperageRow,
+    result: Sequence[Any] | None,
+) -> tuple[str, Mapping[str, Any]]:
+    """Applique sans changement les décisions historiques du moteur."""
+
+    if not result:
+        return "INCOHERENT", {"cause": "MOTEUR_SANS_RESULTAT"}
+
+    statuses = tuple(result[index] for index in (0, 1, 5, 6, 10, 11, 14, 15))
+    diagnostics = {
+        "statuts": statuses,
+        "tolerance": COHERENCE_TOLERANCE,
+        "borne_debut_calculee": str(result[2]) if result[2] else None,
+        "borne_fin_calculee": str(result[7]) if result[7] else None,
+        "ecart_position_debut_m": result[13],
+        "ecart_position_fin_m": result[17],
+    }
+    for status in ("CONFLIT_SYSTEME", "REFERENCE_ABSENTE", "AMBIGU"):
+        if status in statuses:
+            return status, diagnostics
+    if any(status != "OK" for status in statuses):
+        return "INCOHERENT", diagnostics
+
+    coherent = (
+        UUID(str(result[2])) == row.borne_debut_id
+        and UUID(str(result[7])) == row.borne_fin_id
+        and abs(float(result[3]) - float(row.offset_debut_m)) <= COHERENCE_TOLERANCE
+        and abs(float(result[8]) - float(row.offset_fin_m)) <= COHERENCE_TOLERANCE
+        and abs(float(result[4]) - float(row.pr_debut_source)) <= COHERENCE_TOLERANCE
+        and abs(float(result[9]) - float(row.pr_fin_source)) <= COHERENCE_TOLERANCE
+        and abs(float(result[12]) - float(row.pr_debut_source)) <= COHERENCE_TOLERANCE
+        and abs(float(result[16]) - float(row.pr_fin_source)) <= COHERENCE_TOLERANCE
+        and float(result[13]) <= COHERENCE_TOLERANCE
+        and float(result[17]) <= COHERENCE_TOLERANCE
+    )
+    return ("OK" if coherent else "INCOHERENT"), diagnostics
+
+
+def _engine_quality(
+    cursor: Any,
+    row: DesordreLocalisationReperageRow,
+    crs_info: CRSInfo | None,
+) -> tuple[str, Mapping[str, Any]]:
+    """Implémentation historique unitaire, conservée pour la non-régression."""
+
     if row.qualite != "A_CONTROLER":
         return row.qualite, row.diagnostic_conversion
 
@@ -356,55 +401,130 @@ def _engine_quality(cursor: Any, row: DesordreLocalisationReperageRow, crs_info:
             row.offset_fin_m,
         ),
     )
-    result = cursor.fetchone()
-    if not result:
-        return "INCOHERENT", {"cause": "MOTEUR_SANS_RESULTAT"}
+    return _quality_from_engine_result(row, cursor.fetchone())
 
-    statuses = tuple(result[index] for index in (0, 1, 5, 6, 10, 11, 14, 15))
-    diagnostics = {
-        "statuts": statuses,
-        "tolerance": COHERENCE_TOLERANCE,
-        "borne_debut_calculee": str(result[2]) if result[2] else None,
-        "borne_fin_calculee": str(result[7]) if result[7] else None,
-        "ecart_position_debut_m": result[13],
-        "ecart_position_fin_m": result[17],
+
+def _engine_validation_statement(row_count: int, crs_info: CRSInfo | None) -> str:
+    values = ",\n".join(
+        "(%s::integer, %s::uuid, %s::uuid, %s::uuid, %s::uuid, "
+        "%s::double precision, %s::uuid, %s::double precision, "
+        "%s::numeric, %s::numeric, %s::text, %s::text)"
+        for _ in range(row_count)
+    )
+    point_debut = geometry_sql(
+        crs_info,
+        placeholder="i.position_debut_source_wkt",
+    )
+    point_fin = geometry_sql(
+        crs_info,
+        placeholder="i.position_fin_source_wkt",
+    )
+    return f"""
+        WITH input_rows (
+            ordinal, id, troncon_id, systeme_reperage_id,
+            borne_debut_id, offset_debut_m,
+            borne_fin_id, offset_fin_m,
+            pr_debut_source, pr_fin_source,
+            position_debut_source_wkt, position_fin_source_wkt
+        ) AS (VALUES
+            {values}
+        )
+        SELECT
+            i.id,
+            xd.present IS TRUE AND xf.present IS TRUE
+                AND bd.present IS TRUE AND bf.present IS TRUE,
+            xd.statut, xd.statut_pr, xd.borne_id,
+            xd.offset_borne_m, xd.pr,
+            xf.statut, xf.statut_pr, xf.borne_id,
+            xf.offset_borne_m, xf.pr,
+            bd.statut, bd.statut_pr, bd.pr,
+            ST_Distance(xd.point_projete, bd.point_xy),
+            bf.statut, bf.statut_pr, bf.pr,
+            ST_Distance(xf.point_projete, bf.point_xy)
+        FROM input_rows AS i
+        LEFT JOIN LATERAL (
+            SELECT true AS present, engine.*
+            FROM public.xy_vers_reperage(
+                i.troncon_id, i.systeme_reperage_id, {point_debut}
+            ) AS engine
+        ) AS xd ON true
+        LEFT JOIN LATERAL (
+            SELECT true AS present, engine.*
+            FROM public.xy_vers_reperage(
+                i.troncon_id, i.systeme_reperage_id, {point_fin}
+            ) AS engine
+        ) AS xf ON true
+        LEFT JOIN LATERAL (
+            SELECT true AS present, engine.*
+            FROM public.borne_offset_vers_xy(
+                i.troncon_id, i.systeme_reperage_id,
+                i.borne_debut_id, i.offset_debut_m
+            ) AS engine
+        ) AS bd ON true
+        LEFT JOIN LATERAL (
+            SELECT true AS present, engine.*
+            FROM public.borne_offset_vers_xy(
+                i.troncon_id, i.systeme_reperage_id,
+                i.borne_fin_id, i.offset_fin_m
+            ) AS engine
+        ) AS bf ON true
+        ORDER BY i.ordinal
+    """
+
+
+def _engine_qualities_batch(
+    cursor: Any,
+    rows: Sequence[DesordreLocalisationReperageRow],
+    crs_info: CRSInfo | None,
+) -> dict[UUID, tuple[str, Mapping[str, Any]]]:
+    """Valide les lignes complètes par grands lots, jamais ligne par ligne."""
+
+    qualities = {
+        row.id: (row.qualite, row.diagnostic_conversion)
+        for row in rows
+        if row.qualite != "A_CONTROLER"
     }
-    for status in ("CONFLIT_SYSTEME", "REFERENCE_ABSENTE", "AMBIGU"):
-        if status in statuses:
-            return status, diagnostics
-    if any(status != "OK" for status in statuses):
-        return "INCOHERENT", diagnostics
+    to_check = [row for row in rows if row.qualite == "A_CONTROLER"]
+    for start in range(0, len(to_check), ENGINE_VALIDATION_BATCH_SIZE):
+        batch = to_check[start : start + ENGINE_VALIDATION_BATCH_SIZE]
+        params: list[Any] = []
+        for ordinal, row in enumerate(batch):
+            params.extend(
+                (
+                    ordinal,
+                    row.id,
+                    row.troncon_id,
+                    row.systeme_reperage_id,
+                    row.borne_debut_id,
+                    row.offset_debut_m,
+                    row.borne_fin_id,
+                    row.offset_fin_m,
+                    row.pr_debut_source,
+                    row.pr_fin_source,
+                    row.position_debut_source_wkt,
+                    row.position_fin_source_wkt,
+                )
+            )
+        cursor.execute(
+            _engine_validation_statement(len(batch), crs_info),
+            tuple(params),
+        )
+        returned_ids: set[UUID] = set()
+        rows_by_id = {row.id: row for row in batch}
+        for result in cursor.fetchall():
+            row_id = UUID(str(result[0]))
+            row = rows_by_id[row_id]
+            returned_ids.add(row_id)
+            engine_result = result[2:] if result[1] else None
+            qualities[row_id] = _quality_from_engine_result(row, engine_result)
+        for row in batch:
+            if row.id not in returned_ids:
+                qualities[row.id] = _quality_from_engine_result(row, None)
+    return qualities
 
-    coherent = (
-        UUID(str(result[2])) == row.borne_debut_id
-        and UUID(str(result[7])) == row.borne_fin_id
-        and abs(float(result[3]) - float(row.offset_debut_m)) <= COHERENCE_TOLERANCE
-        and abs(float(result[8]) - float(row.offset_fin_m)) <= COHERENCE_TOLERANCE
-        and abs(float(result[4]) - float(row.pr_debut_source)) <= COHERENCE_TOLERANCE
-        and abs(float(result[9]) - float(row.pr_fin_source)) <= COHERENCE_TOLERANCE
-        and abs(float(result[12]) - float(row.pr_debut_source)) <= COHERENCE_TOLERANCE
-        and abs(float(result[16]) - float(row.pr_fin_source)) <= COHERENCE_TOLERANCE
-        and float(result[13]) <= COHERENCE_TOLERANCE
-        and float(result[17]) <= COHERENCE_TOLERANCE
-    )
-    return ("OK" if coherent else "INCOHERENT"), diagnostics
 
-
-INSERT_STATEMENT = f"""
-    INSERT INTO public.desordre_localisations_reperage (
-        id, desordre_id, troncon_id, systeme_reperage_id,
-        borne_debut_id, distance_debut_m, position_debut_relative,
-        borne_fin_id, distance_fin_m, position_fin_relative,
-        pr_debut_source, pr_fin_source,
-        position_debut_source, position_fin_source,
-        mode_saisie_source, politique_autorite, qualite, valid,
-        source_document_id, trace_source, diagnostic_conversion
-    )
-    VALUES (
-        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-        {geometry_sql()}, {geometry_sql()},
-        %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb
-    )
+SYNCHRONIZE_STATEMENT = """
+    SELECT public.synchroniser_desordre_reperage(%s, %s)
 """
 
 
@@ -414,50 +534,32 @@ def insert_prepared_desordre_reperage(
     *,
     crs_info: CRSInfo | None = None,
 ) -> None:
-    """Contrôle chaque chaîne avec le moteur du lot 2 puis l'insère."""
+    """Contrôle les chaînes en batch avec le moteur du lot 2 puis les insère."""
 
-    statement = INSERT_STATEMENT.replace(geometry_sql(), geometry_sql(crs_info))
-    rows = []
+    engine_qualities = _engine_qualities_batch(
+        cursor,
+        prepared.localisations,
+        crs_info,
+    )
+    validated_rows = []
+    synchronizations = []
     for source_row in prepared.localisations:
-        qualite, diagnostic = _engine_quality(cursor, source_row, crs_info)
+        qualite, diagnostic = engine_qualities[source_row.id]
         row = replace(
             source_row,
             qualite=qualite,
             diagnostic_conversion=diagnostic,
         )
-        distance_debut, position_debut = _distance_and_position(
-            row.offset_debut_m
-        )
-        distance_fin, position_fin = _distance_and_position(row.offset_fin_m)
-        rows.append(
+        validated_rows.append(row)
+        # Les références historiques ne sélectionnent le système opérationnel
+        # que lorsqu'elles ont été confirmées. La géométrie reste toujours la
+        # source du repérage inséré.
+        synchronizations.append(
             (
-                row.id,
                 row.desordre_id,
-                row.troncon_id,
-                row.systeme_reperage_id,
-                row.borne_debut_id,
-                distance_debut,
-                position_debut,
-                row.borne_fin_id,
-                distance_fin,
-                position_fin,
-                row.pr_debut_source,
-                row.pr_fin_source,
-                row.position_debut_source_wkt,
-                row.position_fin_source_wkt,
-                row.mode_saisie_source,
-                row.politique_autorite,
-                row.qualite,
-                row.valid,
-                row.source_document_id,
-                json.dumps(row.trace_source, ensure_ascii=False, sort_keys=True),
-                json.dumps(
-                    row.diagnostic_conversion,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                ),
+                row.systeme_reperage_id if row.qualite == "OK" else None,
             )
         )
-    if rows:
-        cursor.executemany(statement, rows)
+    prepared.localisations = tuple(validated_rows)
+    if synchronizations:
+        cursor.executemany(SYNCHRONIZE_STATEMENT, synchronizations)

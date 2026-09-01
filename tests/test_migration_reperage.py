@@ -130,10 +130,6 @@ class ReperageMigrationTest(unittest.TestCase):
             prepared.valeur_pr_by_id[UUID(ASSOCIATION_IDS[2])],
             Decimal("9876543210.123456789"),
         )
-        self.assertEqual(
-            [row.ordre_source for row in prepared.systemes_bornes[:3]],
-            [0, 1, 2],
-        )
         self.assertEqual(prepared.inconsistencies, ())
 
     def test_does_not_invent_troncon_borne_relation_from_system(self):

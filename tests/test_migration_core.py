@@ -178,6 +178,19 @@ class FakeMigrationConnection:
 
 
 class CoreTransformationTest(unittest.TestCase):
+    def test_multivertex_desordre_geometry_is_preserved_before_positions_fallback(self):
+        source = "LINESTRING (0 0, 10 4, 20 -2, 30 8, 40 0)"
+        wkt, kind, warning = desordre_geometry_from_source(
+            source,
+            "POINT (0 0)",
+            "POINT (40 0)",
+            desordre_id="multi-sommets",
+        )
+        self.assertEqual(wkt, source)
+        self.assertEqual(kind, "linestring")
+        self.assertIsNone(warning)
+        self.assertEqual(wkt.count(",") + 1, 5)
+
     def test_urgency_uses_the_observed_couchdb_class(self):
         self.assertEqual(
             CORE_SOURCE_CLASSES["RefUrgence"],
@@ -346,7 +359,7 @@ class CoreTransformationTest(unittest.TestCase):
             ["commun/photo.jpg", "commun/photo.jpg"],
         )
 
-    def test_desordre_source_geometry_is_not_used(self):
+    def test_invalid_degenerate_source_geometry_uses_position_fallback(self):
         prepared = prepare_core_migration(source_fixture())
         self.assertEqual(prepared.desordres[0].geometry_wkt, "POINT (10 20)")
         self.assertNotEqual(

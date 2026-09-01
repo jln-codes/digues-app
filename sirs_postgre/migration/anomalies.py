@@ -858,8 +858,8 @@ def collect_anomalies(
                     source_document_id=localisation.source_document_id,
                     source_field=source_field,
                     target_table="desordre_localisations_reperage",
-                    target_id=str(localisation.id),
-                    target_field="qualite",
+                    target_id=None,
+                    target_field=None,
                     message=message,
                     details={
                         "qualite": localisation.qualite,

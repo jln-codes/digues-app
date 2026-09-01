@@ -65,7 +65,6 @@ class LinkSystemeReperageBorneRow:
     systeme_reperage_id: UUID
     borne_id: UUID
     valeur_pr: Decimal
-    ordre_source: int
     valid: bool
 
 
@@ -354,7 +353,6 @@ def prepare_reperage_migration(
                     valeur_pr=_decimal(
                         association.get("valeurPR"), context=f"{context}.valeurPR"
                     ),
-                    ordre_source=ordre_source,
                     valid=_required_bool(association, "valid", context=context),
                 )
             )
@@ -401,8 +399,8 @@ INSERT_STATEMENTS = {
     """,
     "link_systemes_reperage_bornes": """
         INSERT INTO public.link_systemes_reperage_bornes
-            (id, systeme_reperage_id, borne_id, valeur_pr, ordre_source, valid)
-        VALUES (%s, %s, %s, %s, %s, %s)
+            (id, systeme_reperage_id, borne_id, valeur_pr, valid)
+        VALUES (%s, %s, %s, %s, %s)
     """,
     "troncons_systeme_reperage_defaut": """
         UPDATE public.troncons
@@ -460,7 +458,6 @@ def insert_prepared_reperage(
                     row.systeme_reperage_id,
                     row.borne_id,
                     row.valeur_pr,
-                    row.ordre_source,
                     row.valid,
                 )
                 for row in prepared.systemes_bornes

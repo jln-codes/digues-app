@@ -543,20 +543,35 @@ class TargetSchemaTest(unittest.TestCase):
         statement = normalized(
             TABLE_DEFINITIONS["desordre_localisations_reperage"]
         )
-        self.assertIn("distance_debut_m double precision null", statement)
-        self.assertIn("position_debut_relative text null", statement)
+        self.assertIn("distance_debut_m double precision not null", statement)
+        self.assertIn("position_debut_relative text not null", statement)
         self.assertIn("offset_debut_m double precision generated always as", statement)
         self.assertIn("position_debut_relative in (", statement)
-        self.assertIn("mode_saisie_source text not null default 'inconnu'", statement)
-        self.assertIn("politique_autorite text not null default 'manuelle'", statement)
-        self.assertIn("position_debut_source geometry(point, 3950) null", statement)
-        self.assertIn("trace_source jsonb not null", statement)
+        self.assertIn("unique (desordre_id)", statement)
+        for migration_field in (
+            "pr_debut_source", "pr_fin_source", "position_debut_source",
+            "position_fin_source", "mode_saisie_source", "politique_autorite",
+            "qualite", "source_document_id", "trace_source",
+            "diagnostic_conversion",
+        ):
+            self.assertNotIn(migration_field, statement)
         self.assertNotIn("on delete cascade", statement)
         ddl = normalized(" ".join(SCHEMA_DDL))
         self.assertIn(
             "create or replace view public.view_desordre_localisations_reperage",
             ddl,
         )
+        self.assertIn("create or replace function public.synchroniser_desordre_reperage", ddl)
+        self.assertIn("st_linesubstring", ddl)
+        self.assertIn("create or replace view public.view_desordres_points_saisie", ddl)
+
+    def test_source_only_order_and_vegetation_type_are_not_operational_columns(self):
+        system_bornes = normalized(
+            TABLE_DEFINITIONS["link_systemes_reperage_bornes"]
+        )
+        vegetation = normalized(TABLE_DEFINITIONS["vegetation"])
+        self.assertNotIn("ordre_source", system_bornes)
+        self.assertNotIn("type_source_code", vegetation)
 
     def test_geometries_keep_srid_and_desordre_is_generic(self):
         troncon = normalized(TABLE_DEFINITIONS["troncons"])
