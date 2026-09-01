@@ -134,7 +134,9 @@ Cycle complet actuel :
 
 ```bash
 cd /home/julien/Projects/sirs-postgre
-source .venv/bin/activate
+
+source .venv/bin/activate (Linux)
+source .venv/Scripts/activate (windows)
 
 sirs-postgre check
 sirs-postgre recreate

@@ -2,6 +2,7 @@ import re
 import unittest
 
 from sirs_postgre.target.database import PostgreSQLConfig, initialize_schema
+from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
 from sirs_postgre.target.schema import (
     CONSTRAINT_DEFINITIONS,
     EXPECTED_TABLES,
@@ -564,6 +565,19 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertIn("create or replace function public.synchroniser_desordre_reperage", ddl)
         self.assertIn("st_linesubstring", ddl)
         self.assertIn("create or replace view public.view_desordres_points_saisie", ddl)
+
+    def test_point_edit_trigger_arbitrates_all_coordinate_families(self):
+        statement = normalized(FUNCTION_DEFINITIONS["editer_desordre_point"])
+        self.assertIn("v_geometry_modifiee", statement)
+        self.assertIn("v_xy_modifie", statement)
+        self.assertIn("v_lonlat_modifie", statement)
+        self.assertIn("v_nombre_familles > 1", statement)
+        self.assertIn("v_nombre_familles = 0", statement)
+        self.assertIn("x et y sont obligatoires ensemble", statement)
+        self.assertIn("longitude et latitude sont obligatoires ensemble", statement)
+        self.assertIn("st_point(new.coord_x_3950, new.coord_y_3950)", statement)
+        self.assertIn("st_point(new.longitude_4326, new.latitude_4326)", statement)
+        self.assertIn("st_transform(", statement)
 
     def test_source_only_order_and_vegetation_type_are_not_operational_columns(self):
         system_bornes = normalized(

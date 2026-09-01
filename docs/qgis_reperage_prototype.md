@@ -23,8 +23,9 @@ relation tronçon unique et une géométrie Point ou LineString. Un message calc
 
 QGIS réévalue cette expression à l'ouverture et au rafraîchissement du
 formulaire. Le rafraîchissement instantané après modification d'une relation
-enfant doit encore être validé dans chaque version de QField ; fermer et rouvrir
-la fiche force toujours la réévaluation.
+enfant n'est pas garanti par les formulaires standards QGIS/QField ; fermer et
+rouvrir la fiche force toujours la réévaluation. PostgreSQL applique entre-temps
+la règle 0/1/N et protège la base indépendamment de l'état visuel de la fiche.
 
 ## Géométrie et coordonnées
 
@@ -37,7 +38,16 @@ Les désordres ponctuels utilisent la vue éditable
   3950 ;
 - déplacer le point sur la carte modifie la même géométrie ;
 - une paire de coordonnées incomplète est refusée ;
-- modifier simultanément les deux systèmes de coordonnées est refusé.
+- une insertion accepte exactement une famille parmi géométrie, X/Y et
+  longitude/latitude ;
+- une modification simultanée de plusieurs de ces familles est refusée.
+
+QGIS/QField n'est pas l'autorité des conversions. La vue et ses triggers
+valident la famille saisie, réécrivent `desordres.geometry`, puis PostGIS
+recalcule les valeurs dérivées lors de l'écriture. Le formulaire peut donc
+nécessiter une relecture après sauvegarde pour afficher les nouvelles valeurs.
+Une consigne courte rappelle dans la fiche de n'utiliser qu'une famille de
+saisie par opération et d'appliquer puis relire avant d'en commencer une autre.
 
 Le formulaire affiche X/Y à 2 décimales et longitude/latitude à 6 décimales.
 La précision de la géométrie en base n'est jamais arrondie.
@@ -123,6 +133,40 @@ Le groupe Repérage contient un avertissement permanent sur le caractère
 destructif du recalage d'une ligne. Les widgets standards ne fournissent pas de
 boîte de confirmation transactionnelle portable QGIS/QField ; l'avertissement
 précède donc l'enregistrement, et PostgreSQL garantit l'application atomique.
+
+Une opération utilisateur doit utiliser une seule famille autoritaire :
+
+```text
+géométrie
+ou X/Y
+ou longitude/latitude
+ou repérage
+```
+
+Les trois premières familles sont arbitrées dans le trigger de la vue
+ponctuelle. Le repérage est une table enfant et une requête distincte : aucune
+machinerie transactionnelle cliente n'est ajoutée pour l'interdire avec une
+autre famille. L'interface demande donc d'appliquer et relire une opération
+avant d'en saisir une autre ; les guards PostgreSQL existants conservent
+l'autorité correcte de chaque écriture.
+
+## Cycle d'application et de relecture
+
+Le projet reste volontairement fondé sur les capacités standards communes à
+QGIS Desktop et QField, sans initialiseur Python ni plugin :
+
+```text
+modifier
+→ appliquer ou enregistrer
+→ PostGIS arbitre et recalcule
+→ rafraîchir ou rouvrir la fiche si elle affiche encore l'ancien état
+```
+
+Il n'existe pas dans cette configuration standard de hook portable garantissant
+la relecture automatique du formulaire parent après un trigger ou la sauvegarde
+d'une relation enfant. Le message de disponibilité et le groupe Repérage sont
+corrects dès la réévaluation. Un ajout de deuxième tronçon supprime le repérage
+en base ; sa suppression recrée le repérage depuis la géométrie sans la déplacer.
 
 ## Mise en page
 

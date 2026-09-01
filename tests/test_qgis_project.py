@@ -12,6 +12,7 @@ from sirs_postgre.qgis_project import (
     DEFAULT_QGIS_PROJECT_PATH,
     DESORDRE_FILTERS,
     DESORDRE_GENERAL_FIELDS,
+    FORM_SYNCHRONIZATION_MESSAGE,
     GROUP_PATHS,
     LAYER_SPECS,
     LINE_COORDINATE_FIELDS,
@@ -612,7 +613,25 @@ class QGISProjectSpecificationTest(unittest.TestCase):
         groups = [item for item in root_items if isinstance(item, FakeAttributeContainer)]
         self.assertEqual([group.name for group in groups], ["Général", "Coordonnées", "Repérage"])
         self.assertTrue(all(len(group.children) >= 2 for group in groups))
-        self.assertIsNotNone(groups[-1].visibility_expression)
+        visibility = groups[-1].visibility_expression.expression.expression
+        self.assertIn("relation_aggregate", visibility)
+        self.assertIn("count", visibility)
+        self.assertIn("= 1", visibility)
+        self.assertIn("geometry_type", visibility)
+        self.assertEqual(
+            layer.expressions["synchronisation_formulaire"],
+            repr(FORM_SYNCHRONIZATION_MESSAGE),
+        )
+        self.assertIn(
+            "Repérage indisponible : plusieurs tronçons sont associés au désordre.",
+            layer.expressions["statut_reperage_formulaire"],
+        )
+        self.assertIn("après application", FORM_SYNCHRONIZATION_MESSAGE)
+        self.assertIn("une seule famille", FORM_SYNCHRONIZATION_MESSAGE.casefold())
+        self.assertIn(
+            "synchronisation_formulaire",
+            [item.name for item in root_items],
+        )
 
     def test_line_has_endpoint_coordinates_and_polygon_does_not(self):
         for layer_id, coordinate_fields in (

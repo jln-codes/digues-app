@@ -104,6 +104,12 @@ La relation des tronçons et le message de disponibilité sont à la racine ; le
 groupe **Repérage**, visible seulement avec un tronçon unique pour Point ou
 LineString, contient l'avertissement et la relation de localisation.
 
+Une consigne calculée courte rappelle que chaque opération utilise une seule
+famille autoritaire — géométrie, X/Y, longitude/latitude ou repérage — et que
+les valeurs dérivées sont affichées après application et relecture. Cette
+présentation reste une information d'interface : QGIS/QField n'effectue aucune
+conversion métier.
+
 Le formulaire enfant utilise uniquement des widgets standards QGIS/QField :
 Value Relation, Value Map et Range. Tronçon filtre les systèmes de repérage,
 puis le système filtre les bornes via `view_systemes_reperage_bornes`. Les
@@ -118,6 +124,28 @@ Les PR courants sont calculés par PostgreSQL et affichés à 2 décimales. Les
 UUID techniques et offsets signés restent masqués. Les coordonnées sont
 exposées par une vue, sans colonne indépendante dans `desordres`. Les champs
 de traçabilité CouchDB ont été retirés du schéma métier.
+
+## Sauvegarde et relecture des valeurs calculées
+
+La vue ponctuelle accepte une seule famille parmi `geometry`, X/Y et
+longitude/latitude lors d'un `INSERT` ou d'un `UPDATE`. Les familles concurrentes
+et les couples de coordonnées incomplets sont refusés explicitement. Les
+coordonnées, la géométrie et le repérage sont ensuite validés ou recalculés par
+PostgreSQL/PostGIS lors de l'écriture :
+
+```text
+modifier
+→ appliquer ou enregistrer
+→ PostGIS arbitre et recalcule
+→ QGIS/QField relit la feature
+```
+
+Un formulaire standard ne garantit pas la relecture automatique d'une feature
+après les effets d'un trigger, ni la réévaluation immédiate du parent après la
+sauvegarde d'une relation enfant. Si les anciennes valeurs restent affichées,
+rafraîchir ou rouvrir la fiche présente l'état calculé en base. Aucun
+initialiseur Python, plugin QGIS/QField, champ de coordonnées redondant ou
+copie cliente des fonctions PostGIS n'est ajouté pour simuler un temps réel.
 
 ## Contrôle après génération
 
@@ -137,6 +165,8 @@ volontairement hors périmètre de ce lot.
 Les filtres `current_value(...)`, la visibilité conditionnelle et la
 présentation des relations doivent encore être validés sur la version QField
 réellement déployée. En particulier, une sous-fiche déjà ouverte peut nécessiter
-un rafraîchissement après modification du nombre de tronçons. Le système par
-défaut n'est qu'une commodité de synchronisation ; toutes les conversions
-reçoivent explicitement tronçon, système et borne.
+un rafraîchissement après modification du nombre de tronçons. À la réouverture,
+le comptage 0/1/N masque ou réaffiche correctement le groupe Repérage ; la base
+a déjà supprimé ou recréé sa localisation. Le système par défaut n'est qu'une
+commodité de synchronisation ; toutes les conversions reçoivent explicitement
+tronçon, système et borne.

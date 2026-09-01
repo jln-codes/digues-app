@@ -45,6 +45,10 @@ La géométrie saisie fait foi :
 4. avec zéro ou plusieurs tronçons, aucun repérage n'est conservé.
 
 Un point hors axe reste hors axe. Une ligne libre conserve tous ses sommets.
+Pour la vue ponctuelle, géométrie, X/Y et longitude/latitude constituent trois
+familles d'entrée exclusives par `INSERT` ou `UPDATE`. La famille fournie est
+seule autoritaire ; plusieurs familles ou un couple de coordonnées incomplet
+sont refusés avant toute écriture.
 
 ### 1.2 Édition explicite borne, distance et sens
 
@@ -239,7 +243,8 @@ normalisée et seulement explicatif de la classe CouchDB, est retiré.
 ## 8. Vues et opérations SQL
 
 - `view_desordres_points_saisie` expose les quatre coordonnées dérivées et les
-  réécrit atomiquement dans `desordres.geometry` ;
+  réécrit atomiquement dans `desordres.geometry`, y compris un `INSERT` par
+  longitude/latitude, après arbitrage exclusif de la famille saisie ;
 - `view_systemes_reperage_bornes` fournit les rôles et libellés spatiaux des
   bornes ;
 - `view_desordre_localisations_reperage` fournit un affichage lisible du

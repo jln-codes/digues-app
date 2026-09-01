@@ -5,6 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from sirs_postgre.target import PostgreSQLConfig
+from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
 
 
 class DesordreLocalisationOperationsTest(unittest.TestCase):
@@ -14,6 +15,7 @@ class DesordreLocalisationOperationsTest(unittest.TestCase):
             import psycopg
             from psycopg.rows import dict_row
 
+            cls.DatabaseError = psycopg.DatabaseError
             load_dotenv(Path(__file__).resolve().parents[1] / "config.env", override=False)
             cls.connection = psycopg.connect(
                 **PostgreSQLConfig.from_env().connect_kwargs(autocommit=False),
@@ -25,6 +27,9 @@ class DesordreLocalisationOperationsTest(unittest.TestCase):
             )
             if not cls.cursor.fetchone()["available"]:
                 raise unittest.SkipTest("Schéma de synchronisation absent")
+            # Le remplacement est transactionnel et annulé en fin de classe. Il
+            # permet de tester la définition courante sans migrer la base locale.
+            cls.cursor.execute(FUNCTION_DEFINITIONS["editer_desordre_point"])
             cls.systeme_endiguement = uuid.uuid4()
             cls.digue = uuid.uuid4()
             cls.troncon = uuid.uuid4()
@@ -129,6 +134,66 @@ class DesordreLocalisationOperationsTest(unittest.TestCase):
             (desordre, troncon),
         )
 
+    def test_insert_point_with_xy_builds_geometry(self):
+        desordre = self.insert_point_view(
+            "coord_x_3950, coord_y_3950", "%s, %s", (12.5, 9.25)
+        )
+        self.assertEqual(self.geometry(desordre)["wkt"], "POINT(12.5 9.25)")
+
+    def test_insert_point_with_lonlat_transforms_geometry(self):
+        desordre = self.insert_point_view(
+            "longitude_4326, latitude_4326", "%s, %s", (2.25, 48.75)
+        )
+        coordinates = self.point_coordinates(desordre)
+        self.assertAlmostEqual(coordinates["longitude_4326"], 2.25, places=8)
+        self.assertAlmostEqual(coordinates["latitude_4326"], 48.75, places=8)
+
+    def test_insert_point_with_geometry_keeps_geometry(self):
+        desordre = self.insert_point_view(
+            "geometry", "ST_SetSRID(ST_Point(%s, %s), 3950)", (14.5, 3.75)
+        )
+        self.assertEqual(self.geometry(desordre)["wkt"], "POINT(14.5 3.75)")
+
+    def test_insert_point_rejects_xy_and_lonlat(self):
+        with self.assertRaisesRegex(self.DatabaseError, "soit la géométrie"):
+            self.insert_point_view(
+                "coord_x_3950, coord_y_3950, longitude_4326, latitude_4326",
+                "%s, %s, %s, %s",
+                (12, 9, 2.25, 48.75),
+            )
+
+    def test_insert_point_rejects_geometry_and_xy(self):
+        with self.assertRaisesRegex(self.DatabaseError, "soit la géométrie"):
+            self.insert_point_view(
+                "geometry, coord_x_3950, coord_y_3950",
+                "ST_SetSRID(ST_Point(%s, %s), 3950), %s, %s",
+                (12, 9, 13, 10),
+            )
+
+    def test_insert_point_rejects_geometry_and_lonlat(self):
+        with self.assertRaisesRegex(self.DatabaseError, "soit la géométrie"):
+            self.insert_point_view(
+                "geometry, longitude_4326, latitude_4326",
+                "ST_SetSRID(ST_Point(%s, %s), 3950), %s, %s",
+                (12, 9, 2.25, 48.75),
+            )
+
+    def test_insert_point_rejects_x_without_y(self):
+        with self.assertRaisesRegex(self.DatabaseError, "X et Y"):
+            self.insert_point_view("coord_x_3950", "%s", (12,))
+
+    def test_insert_point_rejects_y_without_x(self):
+        with self.assertRaisesRegex(self.DatabaseError, "X et Y"):
+            self.insert_point_view("coord_y_3950", "%s", (9,))
+
+    def test_insert_point_rejects_longitude_without_latitude(self):
+        with self.assertRaisesRegex(self.DatabaseError, "Longitude et latitude"):
+            self.insert_point_view("longitude_4326", "%s", (2.25,))
+
+    def test_insert_point_rejects_latitude_without_longitude(self):
+        with self.assertRaisesRegex(self.DatabaseError, "Longitude et latitude"):
+            self.insert_point_view("latitude_4326", "%s", (48.75,))
+
     def localisation(self, desordre):
         self.cursor.execute(
             "SELECT * FROM public.desordre_localisations_reperage WHERE desordre_id = %s",
@@ -142,6 +207,30 @@ class DesordreLocalisationOperationsTest(unittest.TestCase):
             (desordre,),
         )
         return self.cursor.fetchone()
+
+    def point_coordinates(self, desordre):
+        self.cursor.execute(
+            """
+            SELECT coord_x_3950, coord_y_3950,
+                   longitude_4326, latitude_4326
+            FROM public.view_desordres_points_saisie
+            WHERE id = %s
+            """,
+            (desordre,),
+        )
+        return self.cursor.fetchone()
+
+    def insert_point_view(self, fields_sql, values_sql, params):
+        self.cursor.execute(
+            f"""
+            INSERT INTO public.view_desordres_points_saisie
+                (designation, valid, {fields_sql})
+            VALUES ('Insertion', true, {values_sql})
+            RETURNING id
+            """,
+            params,
+        )
+        return self.cursor.fetchone()["id"]
 
     def test_zero_one_many_then_one_recomputes_without_moving_point(self):
         desordre = self.add_desordre("POINT(10 7)")
@@ -177,15 +266,29 @@ class DesordreLocalisationOperationsTest(unittest.TestCase):
             (desordre, self.troncon),
         )
         self.assertAlmostEqual(self.cursor.fetchone()["distance"], 0.0)
+        coordinates = self.point_coordinates(desordre)
+        self.assertAlmostEqual(coordinates["coord_x_3950"], 10.0)
+        self.assertAlmostEqual(coordinates["coord_y_3950"], 0.0)
+        self.assertIsNotNone(coordinates["longitude_4326"])
+        self.assertIsNotNone(coordinates["latitude_4326"])
 
     def test_point_xy_and_lonlat_edits_update_the_single_geometry(self):
         desordre = self.add_desordre("POINT(10 7)")
         self.link(desordre, self.troncon)
+        initial_localisation = self.localisation(desordre)
         self.cursor.execute(
             "UPDATE public.view_desordres_points_saisie SET coord_x_3950 = 12, coord_y_3950 = 9 WHERE id = %s",
             (desordre,),
         )
         self.assertEqual(self.geometry(desordre)["wkt"], "POINT(12 9)")
+        xy_coordinates = self.point_coordinates(desordre)
+        self.assertAlmostEqual(xy_coordinates["coord_x_3950"], 12.0)
+        self.assertAlmostEqual(xy_coordinates["coord_y_3950"], 9.0)
+        after_xy = self.localisation(desordre)
+        self.assertNotEqual(
+            initial_localisation["distance_debut_m"],
+            after_xy["distance_debut_m"],
+        )
         self.cursor.execute(
             """
             UPDATE public.view_desordres_points_saisie
@@ -205,7 +308,79 @@ class DesordreLocalisationOperationsTest(unittest.TestCase):
         result = self.cursor.fetchone()
         self.assertAlmostEqual(result["lon"], 2.25, places=8)
         self.assertAlmostEqual(result["lat"], 48.75, places=8)
+        lonlat_coordinates = self.point_coordinates(desordre)
+        self.assertAlmostEqual(
+            lonlat_coordinates["longitude_4326"], 2.25, places=8
+        )
+        self.assertAlmostEqual(
+            lonlat_coordinates["latitude_4326"], 48.75, places=8
+        )
+        self.cursor.execute(
+            """
+            SELECT ST_X(geometry) AS x, ST_Y(geometry) AS y
+            FROM public.desordres WHERE id = %s
+            """,
+            (desordre,),
+        )
+        stored_xy = self.cursor.fetchone()
+        self.assertAlmostEqual(
+            lonlat_coordinates["coord_x_3950"], stored_xy["x"], places=8
+        )
+        self.assertAlmostEqual(
+            lonlat_coordinates["coord_y_3950"], stored_xy["y"], places=8
+        )
         self.assertIsNotNone(self.localisation(desordre))
+
+    def test_point_geometry_only_edit_is_accepted(self):
+        desordre = self.add_desordre("POINT(10 7)")
+        self.cursor.execute(
+            """
+            UPDATE public.view_desordres_points_saisie
+            SET geometry = ST_SetSRID(ST_Point(15, 11), 3950)
+            WHERE id = %s
+            """,
+            (desordre,),
+        )
+        self.assertEqual(self.geometry(desordre)["wkt"], "POINT(15 11)")
+
+    def test_point_update_rejects_xy_and_lonlat(self):
+        desordre = self.add_desordre("POINT(10 7)")
+        with self.assertRaisesRegex(self.DatabaseError, "soit la géométrie"):
+            self.cursor.execute(
+                """
+                UPDATE public.view_desordres_points_saisie
+                SET coord_x_3950 = 12, coord_y_3950 = 9,
+                    longitude_4326 = 2.25, latitude_4326 = 48.75
+                WHERE id = %s
+                """,
+                (desordre,),
+            )
+
+    def test_point_update_rejects_geometry_and_xy(self):
+        desordre = self.add_desordre("POINT(10 7)")
+        with self.assertRaisesRegex(self.DatabaseError, "soit la géométrie"):
+            self.cursor.execute(
+                """
+                UPDATE public.view_desordres_points_saisie
+                SET geometry = ST_SetSRID(ST_Point(15, 11), 3950),
+                    coord_x_3950 = 12, coord_y_3950 = 9
+                WHERE id = %s
+                """,
+                (desordre,),
+            )
+
+    def test_point_update_rejects_geometry_and_lonlat(self):
+        desordre = self.add_desordre("POINT(10 7)")
+        with self.assertRaisesRegex(self.DatabaseError, "soit la géométrie"):
+            self.cursor.execute(
+                """
+                UPDATE public.view_desordres_points_saisie
+                SET geometry = ST_SetSRID(ST_Point(15, 11), 3950),
+                    longitude_4326 = 2.25, latitude_4326 = 48.75
+                WHERE id = %s
+                """,
+                (desordre,),
+            )
 
     def test_polygon_never_gets_an_editable_reperage(self):
         desordre = self.add_desordre("POLYGON((0 0,20 0,20 20,0 20,0 0))")

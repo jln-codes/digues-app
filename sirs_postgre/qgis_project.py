@@ -288,6 +288,11 @@ POINT_COORDINATE_FIELDS = (
     ),
 )
 
+FORM_SYNCHRONIZATION_MESSAGE = (
+    "Une seule famille de saisie par opération. Les valeurs dérivées sont "
+    "actualisées après application et relecture."
+)
+
 LINE_COORDINATE_FIELDS = (
     VirtualFieldSpec(
         "debut_x_3950", "X début", "x(start_point($geometry))"
@@ -577,6 +582,12 @@ def _configure_desordre_form(
             "String",
         ),
         VirtualFieldSpec(
+            "synchronisation_formulaire",
+            "Saisie",
+            repr(FORM_SYNCHRONIZATION_MESSAGE),
+            "String",
+        ),
+        VirtualFieldSpec(
             "avertissement_recalage",
             "Attention",
             "CASE WHEN geometry_type($geometry) = 'LineString' THEN "
@@ -629,7 +640,10 @@ def _configure_desordre_form(
         api["QgsAttributeEditorRelation"](troncons_relation_id, root)
     )
     _add_fields_to_container(
-        api, layer, root, ("statut_reperage_formulaire",)
+        api,
+        layer,
+        root,
+        ("statut_reperage_formulaire", "synchronisation_formulaire"),
     )
     # Deux éléments cohérents justifient ce groupe conditionnel : avertissement
     # et formulaire de repérage. QField réévalue l'expression à l'ouverture.
@@ -1083,6 +1097,18 @@ def _inspect_written_project(
             raise QGISProjectError(
                 f"Coordonnée éditable absente après relecture : {spec.name}"
             )
+    synchronization_index = point.fields().indexFromName(
+        "synchronisation_formulaire"
+    )
+    if (
+        synchronization_index < 0
+        or not point.editFormConfig().readOnly(synchronization_index)
+        or point.expressionField(synchronization_index)
+        != repr(FORM_SYNCHRONIZATION_MESSAGE)
+    ):
+        raise QGISProjectError(
+            "Consigne de synchronisation absente après relecture"
+        )
     line = verification.mapLayer("sirs_desordres_lignes")
     for spec in LINE_COORDINATE_FIELDS:
         index = line.fields().indexFromName(spec.name)

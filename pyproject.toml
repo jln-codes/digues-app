@@ -9,9 +9,11 @@ description = "Prototype autonome de migration de SIRS Digues vers PostgreSQL/Po
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115,<1",
     "psycopg[binary]>=3.2,<4",
     "python-dotenv>=1.0,<2",
     "requests>=2.31,<3",
+    "uvicorn>=0.34,<1",
 ]
 
 [project.scripts]

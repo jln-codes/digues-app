@@ -392,18 +392,56 @@ FUNCTION_DEFINITIONS = {
         AS $function$
         DECLARE
             v_geometry geometry(Point, 3950);
+            v_geometry_modifiee BOOLEAN;
             v_xy_modifie BOOLEAN;
             v_lonlat_modifie BOOLEAN;
+            v_xy_fourni BOOLEAN;
+            v_lonlat_fourni BOOLEAN;
+            v_nombre_familles INTEGER;
         BEGIN
             IF TG_OP = 'DELETE' THEN
                 DELETE FROM public.desordres WHERE id = OLD.id;
                 RETURN OLD;
             END IF;
             IF TG_OP = 'INSERT' THEN
-                v_geometry := coalesce(
-                    NEW.geometry,
-                    ST_SetSRID(ST_Point(NEW.coord_x_3950, NEW.coord_y_3950), 3950)
-                );
+                v_xy_fourni := NEW.coord_x_3950 IS NOT NULL
+                    OR NEW.coord_y_3950 IS NOT NULL;
+                v_lonlat_fourni := NEW.longitude_4326 IS NOT NULL
+                    OR NEW.latitude_4326 IS NOT NULL;
+                IF v_xy_fourni AND (
+                    NEW.coord_x_3950 IS NULL OR NEW.coord_y_3950 IS NULL
+                ) THEN
+                    RAISE EXCEPTION 'X et Y sont obligatoires ensemble.';
+                END IF;
+                IF v_lonlat_fourni AND (
+                    NEW.longitude_4326 IS NULL OR NEW.latitude_4326 IS NULL
+                ) THEN
+                    RAISE EXCEPTION
+                        'Longitude et latitude sont obligatoires ensemble.';
+                END IF;
+                v_nombre_familles :=
+                    CASE WHEN NEW.geometry IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN v_xy_fourni THEN 1 ELSE 0 END
+                    + CASE WHEN v_lonlat_fourni THEN 1 ELSE 0 END;
+                IF v_nombre_familles > 1 THEN
+                    RAISE EXCEPTION
+                        'Fournir soit la géométrie, soit X/Y, soit longitude/latitude.';
+                ELSIF v_nombre_familles = 0 THEN
+                    RAISE EXCEPTION
+                        'Une géométrie, X/Y ou longitude/latitude est obligatoire.';
+                ELSIF NEW.geometry IS NOT NULL THEN
+                    v_geometry := NEW.geometry;
+                ELSIF v_xy_fourni THEN
+                    v_geometry := ST_SetSRID(
+                        ST_Point(NEW.coord_x_3950, NEW.coord_y_3950), 3950
+                    );
+                ELSE
+                    v_geometry := ST_Transform(
+                        ST_SetSRID(
+                            ST_Point(NEW.longitude_4326, NEW.latitude_4326), 4326
+                        ), 3950
+                    );
+                END IF;
                 INSERT INTO public.desordres (
                     id, type_desordre_id, designation, commentaire,
                     date_debut, date_fin, geometry, valid
@@ -413,14 +451,20 @@ FUNCTION_DEFINITIONS = {
                     NEW.date_fin, v_geometry, NEW.valid
                 ) RETURNING id INTO NEW.id;
             ELSE
+                v_geometry_modifiee := NEW.geometry
+                    IS DISTINCT FROM OLD.geometry;
                 v_xy_modifie := NEW.coord_x_3950 IS DISTINCT FROM OLD.coord_x_3950
                     OR NEW.coord_y_3950 IS DISTINCT FROM OLD.coord_y_3950;
                 v_lonlat_modifie := NEW.longitude_4326
                         IS DISTINCT FROM OLD.longitude_4326
                     OR NEW.latitude_4326 IS DISTINCT FROM OLD.latitude_4326;
-                IF v_xy_modifie AND v_lonlat_modifie THEN
+                v_nombre_familles :=
+                    CASE WHEN v_geometry_modifiee THEN 1 ELSE 0 END
+                    + CASE WHEN v_xy_modifie THEN 1 ELSE 0 END
+                    + CASE WHEN v_lonlat_modifie THEN 1 ELSE 0 END;
+                IF v_nombre_familles > 1 THEN
                     RAISE EXCEPTION
-                        'Modifier soit X/Y, soit longitude/latitude, pas les deux.';
+                        'Modifier soit la géométrie, soit X/Y, soit longitude/latitude.';
                 ELSIF v_xy_modifie THEN
                     IF NEW.coord_x_3950 IS NULL OR NEW.coord_y_3950 IS NULL THEN
                         RAISE EXCEPTION 'X et Y sont obligatoires ensemble.';
