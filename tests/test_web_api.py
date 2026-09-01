@@ -1,5 +1,8 @@
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import unittest
 import uuid
 
@@ -7,19 +10,33 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from sirs_postgre.target import PostgreSQLConfig
+from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
 from sirs_postgre.web.models import (
+    DesordreCreate,
+    DigueCreate,
     LineStringGeometryUpdate,
+    LineEndpoints,
     PointDesordreUpdate,
     PointReperageUpdate,
+    SystemeEndiguementCreate,
+    TronconCreate,
 )
 from sirs_postgre.web.queries import (
+    DIGUE_DETAIL_SQL,
     DESORDRE_OBSERVATIONS_SQL,
     DESORDRES_GEOJSON_SQL,
     OBSERVATION_DETAIL_SQL,
     POINT_DESORDRE_SQL,
     LINE_DESORDRE_SQL,
     SYSTEMES_ENDIGUEMENT_SQL,
+    SYSTEME_ENDIGUEMENT_DETAIL_SQL,
+    TRONCON_DETAIL_SQL,
     TRONCONS_GEOJSON_SQL,
+    create_digue,
+    create_desordre,
+    create_systeme_endiguement,
+    create_troncon,
+    DesordreCreationError,
     fetch_desordres,
     fetch_desordre_observations,
     fetch_desordre,
@@ -28,21 +45,25 @@ from sirs_postgre.web.queries import (
     fetch_point_desordre,
     fetch_systemes_endiguement,
     fetch_troncons,
+    HeritageCreationError,
     update_point_desordre,
     update_point_reperage,
     update_line_desordre_geometry,
+    update_line_desordre_endpoints,
     LineDesordreUpdateError,
     PointReperageUpdateError,
     PointReperageUnavailableError,
+    PointDesordreUpdateError,
 )
 
 try:
-    from sirs_postgre.web.app import FRONTEND_DIRECTORY, app
+    from sirs_postgre.web.app import FRONTEND_DIRECTORY, app, web_show_uuid
 except ModuleNotFoundError as exc:
     if exc.name != "fastapi":
         raise
     FRONTEND_DIRECTORY = Path(__file__).resolve().parents[1] / "web"
     app = None
+    web_show_uuid = None
 
 
 EMPTY_COLLECTION = {"type": "FeatureCollection", "features": []}
@@ -83,12 +104,18 @@ class WebApplicationTest(unittest.TestCase):
             {
                 "/",
                 "/api/troncons",
+                "/api/troncons/options",
+                "/api/troncons/{troncon_id}/reperage-options",
+                "/api/config",
                 "/api/systemes-endiguement",
+                "/api/digues",
                 "/api/desordres",
+                "/api/referentiels/types-desordre",
                 "/api/desordres/{desordre_id}",
                 "/api/desordres/{desordre_id}/observations",
                 "/api/desordres/{desordre_id}/reperage",
                 "/api/desordres/{desordre_id}/geometry",
+                "/api/desordres/{desordre_id}/endpoints",
                 "/api/observations/{observation_id}",
             }
             <= paths
@@ -100,9 +127,36 @@ class WebApplicationTest(unittest.TestCase):
             for method in route.methods
         }
         self.assertTrue({"GET", "PUT"} <= point_methods)
+        methods_by_path = {
+            path: {
+                method
+                for route in app.routes
+                if route.path == path
+                for method in route.methods
+            }
+            for path in (
+                "/api/systemes-endiguement",
+                "/api/digues",
+                "/api/troncons",
+            )
+        }
+        self.assertTrue({"GET", "POST"} <= methods_by_path["/api/systemes-endiguement"])
+        self.assertEqual(methods_by_path["/api/digues"], {"POST"})
+        self.assertTrue({"GET", "POST"} <= methods_by_path["/api/troncons"])
+        desordre_methods = {
+            method
+            for route in app.routes
+            if route.path == "/api/desordres"
+            for method in route.methods
+        }
+        self.assertTrue({"GET", "POST"} <= desordre_methods)
 
     def test_business_routes_return_feature_collections(self):
-        routes = {route.path: route for route in app.routes}
+        routes = {
+            route.path: route
+            for route in app.routes
+            if "GET" in getattr(route, "methods", set())
+        }
         for path in ("/api/troncons", "/api/desordres"):
             response = routes[path].endpoint(FakeConnection(EMPTY_COLLECTION))
             self.assertEqual(response, EMPTY_COLLECTION)
@@ -156,6 +210,83 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         self.assertIn('fetchJson("/api/systemes-endiguement")', script)
         self.assertIn("tronconLayersById", script)
         self.assertIn("map.fitBounds(layer.getBounds(), { padding: [40, 40] })", script)
+
+    def test_frontend_has_generic_creation_mode_and_context_prefill(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        for expected in (
+            '+ Nouvel objet ▾',
+            'data-create-type="systeme"',
+            'data-create-type="digue"',
+            'data-create-type="troncon"',
+            'data-create-type="desordre"',
+            'id="heritage-object-editor"',
+            'id="start-troncon-draw"',
+        ):
+            self.assertIn(expected, page)
+        self.assertIn('editorState = { mode: "create", objectType }', script)
+        self.assertIn('selectedHeritageObject?.kind === "Système d\'endiguement"', script)
+        self.assertIn('selectedHeritageObject?.kind === "Digue"', script)
+        self.assertIn("fillHeritageParentOptions", script)
+
+    def test_frontend_desordre_drafts_are_local_and_support_three_geometries(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        for expected in (
+            'id="desordre-create-editor"',
+            '<option value="Point">Point</option>',
+            '<option value="LineString">Ligne</option>',
+            '<option value="Polygon">Polygone</option>',
+            'id="desordre-create-troncons"',
+        ):
+            self.assertIn(expected, page)
+        drawing = script.split(
+            'startDesordreDrawButton.addEventListener("click"', 1
+        )[1].split('});\n\ncancelDesordreDrawButton', 1)[0]
+        self.assertIn("startMarker", drawing)
+        self.assertIn("startPolyline", drawing)
+        self.assertIn("startPolygon", drawing)
+        self.assertNotIn("fetchJson", drawing)
+        self.assertIn('fetchJson("/api/desordres"', script)
+        self.assertIn('fetchJson("/api/troncons/options")', script)
+        self.assertIn("addCreatedDesordreToMap", script)
+        self.assertIn("desordreLayersById", script)
+
+    def test_frontend_keeps_creation_and_geometry_local_until_submit(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        drawing = script.split(
+            'startTronconDrawButton.addEventListener("click"', 1
+        )[1].split(
+            'heritageObjectForm.addEventListener("submit"', 1
+        )[0]
+        self.assertIn("map.editTools.startPolyline", drawing)
+        self.assertIn("restoreTronconDraft", drawing)
+        self.assertNotIn("fetchJson", drawing)
+        cancellation = script.split("function closeHeritageDraft()", 1)[1].split(
+            "function selectCreatedHeritageObject", 1
+        )[0]
+        self.assertIn("clearTronconDraft()", cancellation)
+        self.assertNotIn("fetchJson", cancellation)
+        submission = script.split(
+            'heritageObjectForm.addEventListener("submit"', 1
+        )[1].split("function selectedCoordinateFamily", 1)[0]
+        self.assertIn('method: "POST"', submission)
+        self.assertIn("addCreatedObjectToHeritage", submission)
+        self.assertIn("addCreatedTronconToMap", submission)
+        self.assertIn("showCreatedObject", submission)
+
+    def test_creation_queries_use_transactions_reloads_and_postgis_transform(self):
+        source = (Path(__file__).resolve().parents[1]
+                  / "sirs_postgre" / "web" / "queries.py").read_text()
+        self.assertIn("with connection.transaction()", source)
+        self.assertIn("return fetch_systeme_endiguement", source)
+        self.assertIn("return fetch_digue", source)
+        self.assertIn("return fetch_troncon", source)
+        normalized = " ".join(source.lower().split())
+        self.assertIn("insert into public.troncons", normalized)
+        self.assertIn("st_transform(st_setsrid(", normalized)
+        self.assertIn("st_geomfromgeojson(%s), 4326), 3950)", normalized)
+        self.assertIn("st_length(candidate.geometry) > 0", normalized)
 
     def test_hierarchy_query_uses_real_relations_without_artificial_geometry(self):
         normalized = " ".join(SYSTEMES_ENDIGUEMENT_SQL.lower().split())
@@ -219,8 +350,168 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         self.assertIn("public.desordres", normalized)
         self.assertIn("st_npoints(d.geometry)", normalized)
         self.assertIn("public.view_desordre_localisations_reperage", normalized)
-        self.assertNotIn("st_startpoint", normalized)
-        self.assertNotIn("st_endpoint", normalized)
+        self.assertIn("st_startpoint", normalized)
+        self.assertIn("st_endpoint", normalized)
+        self.assertIn("debut_x_3950", normalized)
+        self.assertIn("fin_longitude_4326", normalized)
+
+    def test_line_authorities_use_distinct_postgis_operations(self):
+        import inspect
+
+        endpoint_source = inspect.getsource(update_line_desordre_endpoints).lower()
+        reperage_source = FUNCTION_DEFINITIONS["appliquer_desordre_reperage"].lower()
+        self.assertIn("st_setpoint", endpoint_source)
+        self.assertNotIn("st_linesubstring", endpoint_source)
+        self.assertIn("st_linesubstring", reperage_source)
+
+    def test_frontend_modes_legend_and_uuid_configuration_are_centralized(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+        self.assertIn("Choisissez votre mode d’édition", page)
+        for identifier in ("line-coordinate-editor", "line-bornage-editor",
+                           "polygon-representative-point"):
+            self.assertIn(f'id="{identifier}"', page)
+        self.assertIn('id="polygon-representative-x" type="text" readonly', page)
+        polygon_section = page.split('id="polygon-representative-point"', 1)[1]
+        polygon_section = polygon_section.split("</section>", 1)[0]
+        self.assertNotIn('name="line-edit-mode"', polygon_section)
+        self.assertIn('data-layer-toggle="Polygon"', page)
+        self.assertNotIn("L.control.layers", script)
+        self.assertIn("map.removeLayer(layer)", script)
+        self.assertIn('fetchJson("/api/config")', script)
+        self.assertIn("body:not(.show-uuid) .technical-identifier", css)
+
+    def test_frontend_centralizes_modes_and_never_queries_empty_reperage(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        self.assertEqual(page.count('class="disorder-form"'), 3)
+        self.assertIn("function availableDisorderModes", script)
+        self.assertIn('return ["map"]', script)
+        self.assertIn('["map", "coordinates"]', script)
+        self.assertIn(".filter(Boolean)", script)
+        availability = script.split(
+            "async function refreshCreationReperageAvailability", 1
+        )[1].split("async function openDesordreCreation", 1)[0]
+        self.assertLess(availability.index("if (!eligible)"), availability.index(
+            "loadTronconReperageOptions"
+        ))
+        self.assertIn("requestVersion !== creationReperageRequestVersion", availability)
+        self.assertNotIn("Not Found", script)
+
+    def test_create_linestring_bornage_follows_rendered_troncon_cardinality(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+        available_source = "function availableDisorderModes" + script.split(
+            "function availableDisorderModes", 1
+        )[1].split("function setModeChoiceAvailability", 1)[0]
+        choice_source = "function setModeChoiceAvailability" + script.split(
+            "function setModeChoiceAvailability", 1
+        )[1].split("function renderCreationModeChoices", 1)[0]
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js indisponible pour le test DOM sans navigateur.")
+        program = available_source + choice_source + """
+const choice = {
+  hidden: false,
+  input: { disabled: false },
+  querySelector() { return this.input; },
+};
+const states = [0, 1, 2, 3, 2, 1].map((count) => {
+  const available = availableDisorderModes("LineString", count, true)
+    .includes("bornage");
+  setModeChoiceAvailability(choice, available);
+  return { count, available, hidden: choice.hidden,
+           disabled: choice.input.disabled };
+});
+process.stdout.write(JSON.stringify(states));
+"""
+        completed = subprocess.run(
+            [node, "-e", program], check=True, capture_output=True, text=True
+        )
+        self.assertEqual(
+            json.loads(completed.stdout),
+            [
+                {"count": 0, "available": False, "hidden": True, "disabled": True},
+                {"count": 1, "available": True, "hidden": False, "disabled": False},
+                {"count": 2, "available": False, "hidden": True, "disabled": True},
+                {"count": 3, "available": False, "hidden": True, "disabled": True},
+                {"count": 2, "available": False, "hidden": True, "disabled": True},
+                {"count": 1, "available": True, "hidden": False, "disabled": False},
+            ],
+        )
+        self.assertIn(".mode-selector .authority-choice[hidden]", css)
+        hidden_rule = css.split(
+            ".mode-selector .authority-choice[hidden]", 1
+        )[1].split("}", 1)[0]
+        self.assertIn("display: none !important", hidden_rule)
+        renderer = script.split("function renderCreationModeChoices", 1)[1].split(
+            "function updateLineCoordinateLabels", 1
+        )[0]
+        self.assertIn("desordreCreateLineBornageChoice", renderer)
+        selection_handler = script.split(
+            'desordreCreateTroncons.addEventListener("change"', 1
+        )[1].split('startDesordreDrawButton.addEventListener', 1)[0]
+        self.assertLess(
+            selection_handler.index("renderCreationModeChoices(false)"),
+            selection_handler.index("refreshCreationReperageAvailability()"),
+        )
+        payload_builder = script.split("function buildDesordreCreationPayload", 1)[1]
+        payload_builder = payload_builder.split(
+            'submitDesordreCreateButton.addEventListener', 1
+        )[0]
+        self.assertIn('if (!modes.includes("bornage"))', payload_builder)
+
+    def test_create_linestring_replacement_never_flashes_bornage_visibility(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        state_source = "function creationBornageChoiceState" + script.split(
+            "function creationBornageChoiceState", 1
+        )[1].split("function setModeChoiceState", 1)[0]
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js indisponible pour le test d'état frontend.")
+        program = state_source + """
+const states = [
+  // A déjà chargé, puis remplacement par un B jamais chargé.
+  creationBornageChoiceState("LineString", 1, true),
+  creationBornageChoiceState("LineString", 1, false),
+  creationBornageChoiceState("LineString", 1, true),
+  // Retour vers un tronçon déjà présent dans le cache.
+  creationBornageChoiceState("LineString", 1, true),
+];
+process.stdout.write(JSON.stringify({
+  states,
+  zero: creationBornageChoiceState("LineString", 0, false),
+  many: creationBornageChoiceState("LineString", 2, true),
+}));
+"""
+        completed = subprocess.run(
+            [node, "-e", program], check=True, capture_output=True, text=True
+        )
+        result = json.loads(completed.stdout)
+        self.assertTrue(all(state["visible"] for state in result["states"]))
+        self.assertEqual(
+            [state["enabled"] for state in result["states"]],
+            [True, False, True, True],
+        )
+        self.assertEqual(result["zero"], {"visible": False, "enabled": False})
+        self.assertEqual(result["many"], {"visible": False, "enabled": False})
+        renderer = script.split("function renderCreationModeChoices", 1)[1].split(
+            "function updateLineCoordinateLabels", 1
+        )[0]
+        self.assertIn("creationBornageChoiceState", renderer)
+        self.assertIn('tronconCount === 1', state_source)
+        self.assertIn('enabled: visible && reperageAvailable', state_source)
+
+    def test_point_graphical_edit_supports_deliberate_map_tap(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        tap_handler = script.split('map.on("click", (event)', 1)[1].split(
+            'cancelMapPositionButton.addEventListener', 1
+        )[0]
+        self.assertIn("graphicEditActive", tap_handler)
+        self.assertIn("activePointLayer.setLatLng(provisionalLatLng)", tap_handler)
+        self.assertIn("validateMapPositionButton.disabled = false", tap_handler)
+        self.assertNotIn("fetchJson", tap_handler)
 
     def test_observation_results_keep_identifiers_and_nested_photos(self):
         desordre_id = uuid.uuid4()
@@ -391,10 +682,15 @@ class PointUpdateValidationTest(unittest.TestCase):
         )
         self.assertEqual(len(update.geometry.coordinates), 3)
 
+    def test_line_endpoints_require_two_distinct_complete_positions(self):
+        endpoints = LineEndpoints(crs="EPSG:3950", debut=(1, 2), fin=(3, 4))
+        self.assertEqual(endpoints.fin, (3, 4))
+        with self.assertRaises(ValidationError):
+            LineEndpoints(crs="EPSG:4326", debut=(2, 50), fin=(2, 50))
+
     def test_rejects_non_line_short_or_invalid_coordinates(self):
         for geometry in (
             {"type": "Point", "coordinates": [2.1, 50.5]},
-            {"type": "Polygon", "coordinates": []},
             {"type": "LineString", "coordinates": [[2.1, 50.5]]},
             {
                 "type": "LineString",
@@ -408,6 +704,175 @@ class PointUpdateValidationTest(unittest.TestCase):
             with self.subTest(geometry=geometry):
                 with self.assertRaises(ValidationError):
                     LineStringGeometryUpdate(geometry=geometry)
+
+    def test_geometry_update_accepts_valid_polygon(self):
+        update = LineStringGeometryUpdate(geometry={
+            "type": "Polygon",
+            "coordinates": [[[2, 50], [2.1, 50], [2.1, 50.1], [2, 50]]],
+        })
+        self.assertEqual(update.geometry.type, "Polygon")
+
+
+class HeritageCreationValidationTest(unittest.TestCase):
+    def test_named_objects_trim_labels_and_default_to_valid(self):
+        creation = SystemeEndiguementCreate(libelle="  SE neuf  ")
+        self.assertEqual(creation.libelle, "SE neuf")
+        self.assertTrue(creation.valid)
+        with self.assertRaisesRegex(ValidationError, "libellé"):
+            SystemeEndiguementCreate(libelle="   ")
+
+    def test_digue_and_troncon_require_their_parent(self):
+        with self.assertRaises(ValidationError):
+            DigueCreate(libelle="Digue")
+        with self.assertRaises(ValidationError):
+            TronconCreate(
+                libelle="Tronçon",
+                geometry={
+                    "type": "LineString",
+                    "coordinates": [[2.1, 48.5], [2.2, 48.6]],
+                },
+            )
+
+    def test_troncon_accepts_every_linestring_vertex(self):
+        creation = TronconCreate(
+            digue_id=uuid.uuid4(),
+            libelle="Tronçon sinueux",
+            geometry={
+                "type": "LineString",
+                "coordinates": [
+                    [2.10, 48.50],
+                    [2.11, 48.52],
+                    [2.13, 48.51],
+                    [2.15, 48.54],
+                ],
+            },
+        )
+        self.assertEqual(len(creation.geometry.coordinates), 4)
+
+
+class DesordreCreationValidationTest(unittest.TestCase):
+    def test_accepts_point_line_and_polygon(self):
+        geometries = (
+            {"type": "Point", "coordinates": [2.1, 50.5]},
+            {
+                "type": "LineString",
+                "coordinates": [[2.1, 50.5], [2.2, 50.6], [2.3, 50.55]],
+            },
+            {
+                "type": "Polygon",
+                "coordinates": [[
+                    [2.1, 50.5], [2.2, 50.5], [2.2, 50.6], [2.1, 50.5]
+                ]],
+            },
+        )
+        for geometry in geometries:
+            with self.subTest(geometry=geometry["type"]):
+                creation = DesordreCreate(geometry=geometry)
+                self.assertEqual(creation.geometry.type, geometry["type"])
+
+    def test_accepts_point_xy_or_lonlat_as_postgresql_authority(self):
+        self.assertEqual(
+            DesordreCreate(coord_x_3950=12, coord_y_3950=9).coord_x_3950,
+            12,
+        )
+        self.assertEqual(
+            DesordreCreate(
+                longitude_4326=2.25, latitude_4326=50.5
+            ).latitude_4326,
+            50.5,
+        )
+
+    def test_rejects_missing_or_multiple_location_authorities(self):
+        with self.assertRaisesRegex(ValidationError, "exactement une"):
+            DesordreCreate(designation="Sans géométrie")
+        with self.assertRaisesRegex(ValidationError, "exactement une"):
+            DesordreCreate(
+                geometry={"type": "Point", "coordinates": [2.1, 50.5]},
+                coord_x_3950=1,
+                coord_y_3950=2,
+            )
+
+    def test_rejects_invalid_polygon_and_unsupported_geometry(self):
+        invalid = (
+            {
+                "type": "Polygon",
+                "coordinates": [[[2.1, 50.5], [2.2, 50.5], [2.2, 50.6]]],
+            },
+            {
+                "type": "Polygon",
+                "coordinates": [[
+                    [2.1, 50.5], [2.2, 50.5], [2.2, 50.6], [2.0, 50.4]
+                ]],
+            },
+            {"type": "MultiLineString", "coordinates": []},
+        )
+        for geometry in invalid:
+            with self.subTest(geometry=geometry):
+                with self.assertRaises(ValidationError):
+                    DesordreCreate(geometry=geometry)
+
+    def test_rejects_non_finite_out_of_domain_and_duplicate_links(self):
+        for coordinates in ([float("nan"), 50.5], [181, 50.5], [2.1, 91]):
+            with self.subTest(coordinates=coordinates):
+                with self.assertRaises(ValidationError):
+                    DesordreCreate(
+                        geometry={"type": "Point", "coordinates": coordinates}
+                    )
+        troncon_id = uuid.uuid4()
+        with self.assertRaisesRegex(ValidationError, "qu'une fois"):
+            DesordreCreate(
+                geometry={"type": "Point", "coordinates": [2.1, 50.5]},
+                troncon_ids=[troncon_id, troncon_id],
+            )
+        with self.assertRaises(ValidationError):
+            DesordreCreate(
+                longitude_4326=2.1,
+                latitude_4326=50.5,
+                troncon_ids=[""],
+            )
+        self.assertIsNone(DesordreCreate(
+            longitude_4326=2.1,
+            latitude_4326=50.5,
+            type_desordre_id="",
+        ).type_desordre_id)
+
+    def test_point_accepts_zero_or_one_troncon_and_rejects_more(self):
+        geometry = {"type": "Point", "coordinates": [2.1, 50.5]}
+        DesordreCreate(geometry=geometry)
+        DesordreCreate(geometry=geometry, troncon_ids=[uuid.uuid4()])
+        for count in (2, 3):
+            with self.subTest(count=count), self.assertRaisesRegex(
+                ValidationError, "au plus un tronçon"
+            ):
+                DesordreCreate(
+                    geometry=geometry,
+                    troncon_ids=[uuid.uuid4() for _ in range(count)],
+                )
+
+    def test_line_and_polygon_accept_multiple_troncons(self):
+        links = [uuid.uuid4(), uuid.uuid4()]
+        DesordreCreate(geometry={
+            "type": "LineString", "coordinates": [[2, 50], [2.1, 50.1]],
+        }, troncon_ids=links)
+        DesordreCreate(geometry={
+            "type": "Polygon",
+            "coordinates": [[[2, 50], [2.1, 50], [2.1, 50.1], [2, 50]]],
+        }, troncon_ids=links)
+
+
+@unittest.skipIf(web_show_uuid is None, "FastAPI indisponible")
+class WebConfigurationTest(unittest.TestCase):
+    def test_uuid_visibility_defaults_false_and_can_be_enabled(self):
+        previous = os.environ.pop("SIRS_WEB_SHOW_UUID", None)
+        try:
+            self.assertFalse(web_show_uuid())
+            os.environ["SIRS_WEB_SHOW_UUID"] = "true"
+            self.assertTrue(web_show_uuid())
+        finally:
+            if previous is None:
+                os.environ.pop("SIRS_WEB_SHOW_UUID", None)
+            else:
+                os.environ["SIRS_WEB_SHOW_UUID"] = previous
 
 
 class WebPostGISIntegrationTest(unittest.TestCase):
@@ -430,6 +895,7 @@ class WebPostGISIntegrationTest(unittest.TestCase):
                 )
                 if cursor.fetchone() != ("troncons", "desordres"):
                     raise unittest.SkipTest("Schéma cible absent")
+                cursor.execute(FUNCTION_DEFINITIONS["appliquer_desordre_reperage"])
                 cls.desordre_id = uuid.uuid4()
                 cls.observation_new_id = uuid.uuid4()
                 cls.observation_old_id = uuid.uuid4()
@@ -448,6 +914,8 @@ class WebPostGISIntegrationTest(unittest.TestCase):
                 cls.reperage_desordre_id = uuid.uuid4()
                 cls.many_troncons_desordre_id = uuid.uuid4()
                 cls.line_desordre_id = uuid.uuid4()
+                cls.categorie_desordre_id = f"categorie-web-{uuid.uuid4()}"
+                cls.type_desordre_id = f"type-web-{uuid.uuid4()}"
                 cursor.execute(
                     "INSERT INTO public.desordres "
                     "(id, designation, commentaire, geometry, valid) "
@@ -482,6 +950,17 @@ class WebPostGISIntegrationTest(unittest.TestCase):
                         cls.observation_new_id,
                         "/archives/vue-amont.jpg",
                     ),
+                )
+                cursor.execute(
+                    "INSERT INTO public.ref_categories_desordre "
+                    "(id, libelle, valid) VALUES (%s, 'Catégorie web', true)",
+                    (cls.categorie_desordre_id,),
+                )
+                cursor.execute(
+                    "INSERT INTO public.ref_types_desordre "
+                    "(id, categorie_id, libelle, valid) "
+                    "VALUES (%s, %s, 'Type web', true)",
+                    (cls.type_desordre_id, cls.categorie_desordre_id),
                 )
                 cursor.execute(
                     "INSERT INTO public.systemes (id, libelle, valid) "
@@ -630,7 +1109,10 @@ class WebPostGISIntegrationTest(unittest.TestCase):
             self.assertIsInstance(collection["features"], list)
             for feature in collection["features"]:
                 self.assertEqual(feature["type"], "Feature")
-                self.assertIn(feature["geometry"]["type"], {"Point", "LineString"})
+                self.assertIn(
+                    feature["geometry"]["type"],
+                    {"Point", "LineString", "Polygon"},
+                )
                 self.assertIsInstance(feature["properties"], dict)
 
     def test_real_hierarchy_has_coherent_parent_relations(self):
@@ -646,6 +1128,274 @@ class WebPostGISIntegrationTest(unittest.TestCase):
                 for troncon in digue["troncons"]:
                     self.assertEqual(troncon["digue_id"], digue["id"])
                     self.assertTrue({"id", "libelle", "valid"} <= set(troncon))
+
+    def test_create_systeme_reloads_the_persisted_object(self):
+        created = create_systeme_endiguement(
+            self.connection,
+            SystemeEndiguementCreate(libelle="  SE créé par le web  "),
+        )
+        self.assertEqual(created["libelle"], "SE créé par le web")
+        self.assertTrue(created["valid"])
+        self.assertEqual(created["digues"], [])
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT libelle, valid FROM public.systemes WHERE id = %s",
+                (created["id"],),
+            )
+            self.assertEqual(cursor.fetchone(), ("SE créé par le web", True))
+
+    def test_create_digue_validates_and_reloads_its_parent(self):
+        created = create_digue(
+            self.connection,
+            DigueCreate(
+                systeme_endiguement_id=self.systeme_endiguement_id,
+                libelle="Digue créée par le web",
+            ),
+        )
+        self.assertEqual(
+            created["systeme_endiguement_id"],
+            str(self.systeme_endiguement_id),
+        )
+        self.assertEqual(created["systeme_endiguement_libelle"], "SE web bornage")
+        self.assertEqual(created["troncons"], [])
+
+    def test_create_digue_rejects_unknown_parent_without_partial_insert(self):
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.digues")
+            before = cursor.fetchone()[0]
+        with self.assertRaisesRegex(HeritageCreationError, "parent"):
+            create_digue(
+                self.connection,
+                DigueCreate(
+                    systeme_endiguement_id=uuid.uuid4(),
+                    libelle="Ne doit pas exister",
+                ),
+            )
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.digues")
+            self.assertEqual(cursor.fetchone()[0], before)
+
+    def test_create_troncon_transforms_and_preserves_all_vertices(self):
+        coordinates = [
+            [2.101, 48.801],
+            [2.104, 48.804],
+            [2.108, 48.802],
+            [2.112, 48.807],
+        ]
+        created = create_troncon(
+            self.connection,
+            TronconCreate(
+                digue_id=self.digue_id,
+                libelle="Tronçon web multi-sommets",
+                geometry={"type": "LineString", "coordinates": coordinates},
+            ),
+        )
+        self.assertEqual(created["type"], "Feature")
+        self.assertEqual(created["geometry"]["type"], "LineString")
+        self.assertEqual(len(created["geometry"]["coordinates"]), 4)
+        self.assertEqual(created["properties"]["nombre_sommets"], 4)
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT ST_SRID(geometry), ST_NPoints(geometry), "
+                "ST_AsGeoJSON(ST_Transform(geometry, 4326))::jsonb "
+                "FROM public.troncons WHERE id = %s",
+                (created["properties"]["id"],),
+            )
+            srid, vertices, geometry = cursor.fetchone()
+        self.assertEqual((srid, vertices), (3950, 4))
+        self.assertEqual(geometry, created["geometry"])
+
+    def test_create_troncon_rejects_degenerate_geometry_without_insert(self):
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.troncons")
+            before = cursor.fetchone()[0]
+        with self.assertRaisesRegex(HeritageCreationError, "dégénérée"):
+            create_troncon(
+                self.connection,
+                TronconCreate(
+                    digue_id=self.digue_id,
+                    libelle="Tronçon dégénéré",
+                    geometry={
+                        "type": "LineString",
+                        "coordinates": [[2.1, 48.8], [2.1, 48.8]],
+                    },
+                ),
+            )
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.troncons")
+            self.assertEqual(cursor.fetchone()[0], before)
+
+    def test_create_point_desordre_transforms_reloads_and_keeps_reference(self):
+        created = create_desordre(
+            self.connection,
+            DesordreCreate(
+                designation="Point créé",
+                type_desordre_id=self.type_desordre_id,
+                geometry={"type": "Point", "coordinates": [2.25, 50.50]},
+            ),
+        )
+        self.assertEqual(created["geometry"]["type"], "Point")
+        self.assertEqual(created["properties"]["designation"], "Point créé")
+        self.assertEqual(
+            created["properties"]["type_desordre_id"], self.type_desordre_id
+        )
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT ST_SRID(geometry), "
+                "ST_X(ST_Transform(geometry, 4326)), "
+                "ST_Y(ST_Transform(geometry, 4326)) "
+                "FROM public.desordres WHERE id = %s",
+                (created["properties"]["id"],),
+            )
+            srid, longitude, latitude = cursor.fetchone()
+        self.assertEqual(srid, 3950)
+        self.assertAlmostEqual(longitude, 2.25, places=7)
+        self.assertAlmostEqual(latitude, 50.50, places=7)
+
+    def test_create_point_desordre_from_xy_uses_writable_view(self):
+        created = create_desordre(
+            self.connection,
+            DesordreCreate(
+                designation="Point XY créé",
+                coord_x_3950=12.5,
+                coord_y_3950=9.25,
+                troncon_ids=[self.reperage_troncon_id],
+            ),
+        )
+        self.assertEqual(created["properties"]["coord_x_3950"], 12.5)
+        self.assertEqual(created["properties"]["coord_y_3950"], 9.25)
+        self.assertEqual(created["properties"]["reperage"]["nombre_troncons"], 1)
+        self.assertTrue(created["properties"]["reperage"]["disponible"])
+
+    def test_create_point_from_lonlat_with_optional_contexts(self):
+        cases = (
+            ([], None),
+            ([self.reperage_troncon_id], self.type_desordre_id),
+        )
+        for troncon_ids, type_id in cases:
+            with self.subTest(troncon_ids=troncon_ids, type_id=type_id):
+                created = create_desordre(
+                    self.connection,
+                    DesordreCreate(
+                        designation="Point longitude latitude",
+                        longitude_4326=2.25,
+                        latitude_4326=50.50,
+                        troncon_ids=troncon_ids,
+                        type_desordre_id=type_id,
+                    ),
+                )
+                self.assertAlmostEqual(
+                    created["properties"]["longitude_4326"], 2.25, places=7
+                )
+                self.assertAlmostEqual(
+                    created["properties"]["latitude_4326"], 50.50, places=7
+                )
+                self.assertEqual(
+                    created["properties"]["reperage"]["nombre_troncons"],
+                    len(troncon_ids),
+                )
+
+    def test_create_multivertex_line_desordre_preserves_every_vertex(self):
+        coordinates = [
+            [2.101, 50.501], [2.104, 50.504],
+            [2.108, 50.502], [2.112, 50.507],
+        ]
+        created = create_desordre(
+            self.connection,
+            DesordreCreate(
+                designation="Ligne créée",
+                geometry={"type": "LineString", "coordinates": coordinates},
+            ),
+        )
+        self.assertEqual(created["geometry"]["type"], "LineString")
+        self.assertEqual(created["properties"]["nombre_sommets"], 4)
+        self.assertEqual(len(created["geometry"]["coordinates"]), 4)
+
+    def test_create_polygon_desordre_and_disable_longitudinal_reperage(self):
+        created = create_desordre(
+            self.connection,
+            DesordreCreate(
+                designation="Polygone créé",
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [2.10, 50.50], [2.12, 50.50],
+                        [2.12, 50.52], [2.10, 50.50],
+                    ]],
+                },
+                troncon_ids=[self.reperage_troncon_id, self.second_troncon_id],
+            ),
+        )
+        self.assertEqual(created["geometry"]["type"], "Polygon")
+        self.assertEqual(created["properties"]["nombre_troncons"], 2)
+        self.assertFalse(created["properties"]["reperage"]["disponible"])
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT ST_SRID(geometry), ST_NPoints(geometry), "
+                "(SELECT count(*) FROM public.desordre_localisations_reperage "
+                "WHERE desordre_id = d.id) "
+                "FROM public.desordres AS d WHERE id = %s",
+                (created["properties"]["id"],),
+            )
+            self.assertEqual(cursor.fetchone(), (3950, 4, 0))
+
+    def test_polygon_graphical_update_recalculates_representative_point(self):
+        created = create_desordre(
+            self.connection,
+            DesordreCreate(geometry={
+                "type": "Polygon",
+                "coordinates": [[[2, 50], [2.02, 50], [2.02, 50.02], [2, 50]]],
+            }),
+        )
+        before = created["properties"]["longitude_4326"]
+        feature = update_line_desordre_geometry(
+            self.connection,
+            uuid.UUID(created["properties"]["id"]),
+            LineStringGeometryUpdate(geometry={
+                "type": "Polygon",
+                "coordinates": [[[3, 49], [3.02, 49], [3.02, 49.02], [3, 49]]],
+            }),
+        )
+        self.assertEqual(feature["geometry"]["type"], "Polygon")
+        self.assertNotEqual(feature["properties"]["longitude_4326"], before)
+
+    def test_create_desordre_invalid_reference_and_polygon_roll_back(self):
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.desordres")
+            before = cursor.fetchone()[0]
+        with self.assertRaisesRegex(DesordreCreationError, "type"):
+            create_desordre(
+                self.connection,
+                DesordreCreate(
+                    type_desordre_id="type-absent",
+                    geometry={"type": "Point", "coordinates": [2.1, 50.5]},
+                ),
+            )
+        with self.assertRaisesRegex(DesordreCreationError, "tronçon"):
+            create_desordre(
+                self.connection,
+                DesordreCreate(
+                    geometry={"type": "Point", "coordinates": [2.1, 50.5]},
+                    troncon_ids=[uuid.uuid4()],
+                ),
+            )
+        with self.assertRaisesRegex(DesordreCreationError, "invalide"):
+            create_desordre(
+                self.connection,
+                DesordreCreate(
+                    designation="Polygone croisé",
+                    geometry={
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [2.10, 50.50], [2.12, 50.52],
+                            [2.12, 50.50], [2.10, 50.52], [2.10, 50.50],
+                        ]],
+                    },
+                ),
+            )
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM public.desordres")
+            self.assertEqual(cursor.fetchone()[0], before)
 
     def test_get_real_point_desordre(self):
         feature = fetch_point_desordre(self.connection, self.desordre_id)
@@ -805,6 +1555,171 @@ class WebPostGISIntegrationTest(unittest.TestCase):
         self.assertEqual(stored_geometry, feature["geometry"])
         self.assertEqual(stored_vertices, 4)
         self.assertEqual(stored_srid, 3950)
+
+    def test_put_linestring_endpoints_preserves_intermediate_vertices(self):
+        feature = update_line_desordre_endpoints(
+            self.connection,
+            self.line_desordre_id,
+            LineEndpoints(crs="EPSG:3950", debut=(-5, 4), fin=(95, 6)),
+        )
+        self.assertEqual(feature["properties"]["nombre_sommets"], 3)
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT ST_X(ST_PointN(geometry, 1)), ST_Y(ST_PointN(geometry, 1)), "
+                "ST_X(ST_PointN(geometry, 2)), ST_Y(ST_PointN(geometry, 2)), "
+                "ST_X(ST_PointN(geometry, 3)), ST_Y(ST_PointN(geometry, 3)) "
+                "FROM public.desordres WHERE id = %s",
+                (self.line_desordre_id,),
+            )
+            self.assertEqual(cursor.fetchone(), (-5, 4, 30, 8, 95, 6))
+
+    def test_put_linestring_bornage_rebuilds_from_troncon(self):
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE public.troncons SET geometry = "
+                "ST_GeomFromText('LINESTRING(0 0,20 0,40 10,60 10,80 0,100 0)', 3950) "
+                "WHERE id = %s",
+                (self.reperage_troncon_id,),
+            )
+        feature = update_point_reperage(
+            self.connection,
+            self.line_desordre_id,
+            PointReperageUpdate(
+                borne_debut_id=self.borne_debut_id,
+                distance_debut_m=10,
+                position_debut_relative="APRES_BORNE",
+                borne_fin_id=self.borne_fin_id,
+                distance_fin_m=15,
+                position_fin_relative="AVANT_BORNE",
+            ),
+        )
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT ST_Equals(d.geometry, ST_LineSubstring(t.geometry, "
+                "10 / ST_Length(t.geometry), "
+                "(ST_Length(t.geometry) - 15) / ST_Length(t.geometry))), "
+                "ST_NPoints(d.geometry), "
+                "ST_DWithin(d.geometry, ST_SetSRID(ST_Point(30, 8), 3950), 0.01) "
+                "FROM public.desordres AS d JOIN public.troncons AS t ON t.id = %s "
+                "WHERE d.id = %s",
+                (self.reperage_troncon_id, self.line_desordre_id),
+            )
+            equals_substring, vertex_count, keeps_old_middle = cursor.fetchone()
+        self.assertTrue(equals_substring)
+        self.assertGreater(vertex_count, 2)
+        self.assertFalse(keeps_old_middle)
+
+    def test_point_link_update_rejects_multiple_troncons_transactionally(self):
+        with self.assertRaisesRegex(PointDesordreUpdateError, "au plus un"):
+            update_point_desordre(
+                self.connection,
+                self.desordre_id,
+                PointDesordreUpdate(troncon_ids=[
+                    self.reperage_troncon_id, self.second_troncon_id,
+                ]),
+            )
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM public.link_desordres_troncons "
+                "WHERE desordre_id = %s", (self.desordre_id,),
+            )
+            self.assertEqual(cursor.fetchone()[0], 0)
+
+    def test_link_transitions_keep_fk_and_reperage_coherent(self):
+        troncon_a = self.reperage_troncon_id
+        troncon_b = self.second_troncon_id
+
+        def create_line(initial_links):
+            feature = create_desordre(
+                self.connection,
+                DesordreCreate(
+                    geometry={
+                        "type": "LineString",
+                        "coordinates": [[2.10, 50.50], [2.11, 50.51], [2.12, 50.50]],
+                    },
+                    troncon_ids=initial_links,
+                ),
+            )
+            return uuid.UUID(feature["properties"]["id"])
+
+        transitions = (
+            ([], [troncon_a]),
+            ([troncon_a], []),
+            ([troncon_a], [troncon_b]),
+            ([troncon_a], [troncon_a, troncon_b]),
+            ([troncon_a, troncon_b], [troncon_b]),
+            ([troncon_a, troncon_b], []),
+        )
+        for initial_links, final_links in transitions:
+            with self.subTest(initial=initial_links, final=final_links):
+                desordre_id = create_line(initial_links)
+                feature = update_point_desordre(
+                    self.connection,
+                    desordre_id,
+                    PointDesordreUpdate(troncon_ids=final_links),
+                )
+                self.assertEqual(
+                    set(feature["properties"]["troncon_ids"]),
+                    {str(item) for item in final_links},
+                )
+                with self.connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT count(*) FROM public.desordre_localisations_reperage "
+                        "WHERE desordre_id = %s",
+                        (desordre_id,),
+                    )
+                    localisation_count = cursor.fetchone()[0]
+                self.assertEqual(localisation_count, 1 if len(final_links) == 1 else 0)
+
+        point = create_desordre(
+            self.connection,
+            DesordreCreate(longitude_4326=2.25, latitude_4326=50.5),
+        )
+        point_id = uuid.UUID(point["properties"]["id"])
+        for final_links in ([troncon_a], [], [troncon_b]):
+            feature = update_point_desordre(
+                self.connection,
+                point_id,
+                PointDesordreUpdate(troncon_ids=final_links),
+            )
+            self.assertEqual(
+                set(feature["properties"]["troncon_ids"]),
+                {str(item) for item in final_links},
+            )
+
+    def test_type_desordre_is_editable_for_all_geometries_and_nullable(self):
+        for desordre_id in (self.desordre_id, self.line_desordre_id):
+            feature = update_point_desordre(
+                self.connection, desordre_id,
+                PointDesordreUpdate(type_desordre_id=self.type_desordre_id),
+            )
+            self.assertEqual(
+                feature["properties"]["type_desordre_id"], self.type_desordre_id
+            )
+            feature = update_point_desordre(
+                self.connection, desordre_id,
+                PointDesordreUpdate(type_desordre_id=None),
+            )
+            self.assertIsNone(feature["properties"]["type_desordre_id"])
+        polygon = create_desordre(
+            self.connection,
+            DesordreCreate(geometry={
+                "type": "Polygon",
+                "coordinates": [[[2, 50], [2.1, 50], [2.1, 50.1], [2, 50]]],
+            }),
+        )
+        polygon = update_point_desordre(
+            self.connection, uuid.UUID(polygon["properties"]["id"]),
+            PointDesordreUpdate(type_desordre_id=self.type_desordre_id),
+        )
+        self.assertEqual(
+            polygon["properties"]["type_desordre_id"], self.type_desordre_id
+        )
+        with self.assertRaisesRegex(PointDesordreUpdateError, "type"):
+            update_point_desordre(
+                self.connection, self.desordre_id,
+                PointDesordreUpdate(type_desordre_id="type-inactif-ou-absent"),
+            )
 
     def test_put_linestring_rejects_postgis_invalid_geometry(self):
         with self.connection.cursor() as cursor:

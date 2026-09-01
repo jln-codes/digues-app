@@ -563,7 +563,9 @@ class TargetSchemaTest(unittest.TestCase):
             ddl,
         )
         self.assertIn("create or replace function public.synchroniser_desordre_reperage", ddl)
-        self.assertIn("st_linesubstring", ddl)
+        self.assertIn("st_linesubstring", normalized(
+            FUNCTION_DEFINITIONS["appliquer_desordre_reperage"]
+        ))
         self.assertIn("create or replace view public.view_desordres_points_saisie", ddl)
 
     def test_point_edit_trigger_arbitrates_all_coordinate_families(self):

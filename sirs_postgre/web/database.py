@@ -51,6 +51,6 @@ def get_connection() -> Iterator[Any]:
 
 
 def get_write_connection() -> Iterator[Any]:
-    """Connexion d'écriture réservée au PUT ponctuel contrôlé par PostGIS."""
+    """Connexion d'écriture réservée aux mutations contrôlées par PostGIS."""
 
     yield from _connection(read_only=False)

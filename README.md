@@ -1,142 +1,429 @@
 # sirs-postgre
 
-## Objectif
+## Présentation
 
-sirs-postgre est un projet Python autonome qui organise la migration progressive
-de SIRS Digues V2 depuis CouchDB vers PostgreSQL/PostGIS.
+`sirs-postgre` est un projet Python consacré à la transition de **SIRS Digues V2**
+depuis CouchDB vers PostgreSQL/PostGIS.
 
-PostgreSQL/PostGIS constitue le futur modèle métier. QGIS est l'interface
-principale prévue pour consulter et éditer les données. Le projet avance de façon
-itérative : chaque brique métier est inspectée dans la source, modélisée, migrée,
-validée puis intégrée à QGIS avant d'élargir le périmètre.
+Le dépôt contient aujourd'hui deux briques principales :
+
+1. une **application web métier** fondée sur FastAPI, Leaflet et
+   PostgreSQL/PostGIS ;
+2. un **migrateur CouchDB → PostgreSQL/PostGIS** chargé de reconstruire de façon
+   reproductible la base cible à partir d'une base SIRS Digues existante.
+
+Un générateur de projet QGIS complète ces deux briques pour les usages SIG
+avancés et les contrôles dans QGIS.
+
+Le schéma historique SIRS Digues/CouchDB reste la **référence métier, technique
+et historique**. PostgreSQL est une transposition relationnelle destinée à
+préserver cette information tout en permettant des améliorations ciblées du
+modèle. Tout écart volontaire par rapport au modèle SIRS doit être identifié,
+argumenté et documenté.
+
+---
 
 ## Architecture générale
 
-- CouchDB reste actuellement la source de migration.
-- PostgreSQL 16 et PostGIS portent le modèle cible dans le schéma `public`.
-- La CLI Python contrôle l'infrastructure, crée le schéma et exécute les migrations.
-- QGIS charge directement les tables PostgreSQL pour l'exploitation et l'édition.
+```text
+                         ┌──────────────────────┐
+                         │   SIRS Digues V2     │
+                         │      CouchDB         │
+                         └──────────┬───────────┘
+                                    │
+                                    │ migration
+                                    ▼
+                         ┌──────────────────────┐
+                         │ PostgreSQL / PostGIS │
+                         │   modèle métier      │
+                         └───────┬──────┬───────┘
+                                 │      │
+                         SQL     │      │ SQL
+                                 │      │
+                    ┌────────────▼─┐  ┌─▼────────────┐
+                    │   FastAPI    │  │     QGIS     │
+                    │ API + web    │  │ usage SIG    │
+                    └──────┬───────┘  └──────────────┘
+                           │ HTTPS/HTTP
+                           ▼
+                    ┌──────────────┐
+                    │  Navigateur  │
+                    │   Leaflet    │
+                    └──────────────┘
+```
 
-La base PostgreSQL cible est encore considérée comme jetable pendant le
-développement. Le cycle normal consiste à la recréer, initialiser son schéma puis
-relancer la migration depuis la source.
+### Principes
 
-## État actuel
+- CouchDB reste la source de migration tant que la bascule n'est pas achevée.
+- PostgreSQL/PostGIS constitue la base cible et l'autorité métier/spatiale de
+  l'application web.
+- Le navigateur ne se connecte jamais directement à PostgreSQL.
+- FastAPI porte les accès applicatifs à PostgreSQL/PostGIS.
+- Les calculs spatiaux et les règles de repérage restent côté
+  PostgreSQL/PostGIS ; ils ne sont pas réimplémentés en JavaScript.
+- QGIS reste disponible comme interface SIG complémentaire.
+- La base PostgreSQL de développement reste actuellement recréable à partir de
+  CouchDB.
 
-Le noyau métier, les ouvrages, les aménagements hydrauliques et la végétation
-sont opérationnels. Ils couvrent :
+---
 
-- les tables métier `systemes`, `digues`, `troncons`, `desordres`,
-  `observations` et `photos` ;
-- le noyau de repérage linéaire `systemes_reperage`, `bornes_reperage`,
-  `link_troncons_bornes` et `link_systemes_reperage_bornes`, avec système par
-  défaut facultatif sur un tronçon ;
-- la relation N-N `link_desordres_troncons` ;
-- les référentiels `ref_categories_desordre`, `ref_types_desordre` et
-  `ref_urgences` ;
-- les tables `ouvrages_hydrauliques`, `equipements_mesure`, `cheminements`,
-  `mobilier` et `reseaux_techniques`, ainsi que leurs cinq référentiels de types
-  indépendants ;
-- les relations explicites N-N `link_cheminements_troncons` et
-  `link_cheminements_desordres` ;
-- `amenagements_hydrauliques`, son référentiel minimal et la relation explicite
-  N-N `link_amenagements_troncons` ;
-- les plans, parcelles de gestion et objets physiques de végétation, avec
-  `link_parcelles_gestion_troncons` ;
-- les observations généralisées et les photos exclusivement rattachées à une
-  observation ;
-- le diagnostic de couverture CouchDB généré dans `audits/bilan.md` ;
-- le registre persistant des anomalies dans `audits/anomalies.json` et
-  `audits/anomalies.csv`, avec distinction `DATA`, `COVERAGE` et
-  `MIGRATION_DECISION` ;
-- la détection du CRS global SIRS depuis le document CouchDB `$sirs`, avec
-  reprojection réelle vers `EPSG:3950` lorsque le CRS source diffère.
+# Application web
 
-Les objets métier provenant de CouchDB conservent leurs UUID historiques. Les
-insertions réalisées directement dans PostgreSQL ou QGIS peuvent omettre l'ID :
-les PK UUID simples, y compris l'ID technique de la table de liaison, utilisent
-`DEFAULT gen_random_uuid()`.
+## Objectif
 
-Les référentiels du noyau conservent littéralement leurs identifiants CouchDB en
-PK `TEXT`, par exemple `RefTypeDesordre:57` ou `RefUrgence:1`. Les cinq nouveaux
-référentiels Ouvrages utilisent au contraire une abréviation métier stable comme
-PK (`PIE`, `ECH`, `VAN`, etc.) ; les anciens IDs `RefOuvrage...` servent
-uniquement au mapping de migration.
+L'application web constitue un prototype métier léger permettant de consulter
+et modifier les données SIRS directement depuis un navigateur.
 
-## Installation
+Architecture :
 
-Le projet nécessite Python 3.11 ou plus récent ainsi qu'un serveur PostgreSQL
-compatible disposant de PostGIS et de `pgcrypto`. Le développement courant est
-validé sur PostgreSQL 16.
+```text
+Navigateur
+├── HTML / CSS / JavaScript
+├── Leaflet
+└── Leaflet.Editable
+        ↓
+     FastAPI
+        ↓
+PostgreSQL / PostGIS
+```
+
+Le frontend reste volontairement simple : pas de React, Vue, TypeScript, Node
+ou chaîne de build obligatoire.
+
+Les géométries sont exposées au navigateur en GeoJSON `EPSG:4326`.
+PostGIS conserve les géométries métier en `EPSG:3950` et réalise les
+transformations nécessaires.
+
+## Fonctions actuellement disponibles
+
+### Navigation patrimoniale
+
+La barre principale donne accès à la navigation :
+
+```text
+Système d'endiguement
+  └── Digue
+       └── Tronçon
+```
+
+Le panneau gauche permet de parcourir les systèmes, digues et tronçons. Les
+tronçons peuvent être sélectionnés, mis en évidence et cadrés sur la carte.
+
+### Désordres Point
+
+Un désordre Point peut être ouvert dans le panneau droit et localisé par quatre
+modes exclusifs :
+
+- modification X/Y en `EPSG:3950` ;
+- modification longitude/latitude en `EPSG:4326` ;
+- déplacement graphique du marqueur ;
+- repérage par borne, distance et sens lorsqu'exactement un tronçon est associé.
+
+Dans tous les cas, une seule famille de saisie est autoritaire pour
+l'opération :
+
+```text
+saisie utilisateur
+→ PostgreSQL/PostGIS
+→ triggers métier
+→ géométrie / coordonnées / repérage recalculés
+→ relecture serveur
+→ rafraîchissement du formulaire et de la carte
+```
+
+### Désordres LineString
+
+Les LineString peuvent être ouvertes puis éditées graphiquement avec
+Leaflet.Editable.
+
+L'édition :
+
+- conserve tous les sommets de la géométrie ;
+- permet de déplacer les sommets existants ;
+- permet d'ajouter un sommet via les poignées intermédiaires ;
+- reste locale tant que l'utilisateur n'a pas validé ;
+- peut être annulée sans écriture en base ;
+- envoie la géométrie GeoJSON au serveur uniquement lors de la validation ;
+- relit ensuite la géométrie réellement persistée par PostgreSQL.
+
+### Observations et photos
+
+Les observations sont consultables depuis la fiche d'un désordre selon la
+relation métier :
+
+```text
+Désordre
+  └── Observation
+       └── Photo
+```
+
+Les métadonnées des photos sont disponibles. Le stockage et le service du
+contenu binaire des médias restent à finaliser.
+
+## État du prototype web
+
+L'application web est actuellement une interface expérimentale de développement.
+Elle n'est pas encore une PWA complète et ne propose pas encore de
+synchronisation hors ligne.
+
+La création de nouveaux objets métier, l'édition des observations/photos et
+l'extension aux autres familles SIRS sont les prochaines briques prévues.
+
+Leaflet.Editable est actuellement chargé depuis un CDN. Pour un déploiement
+intranet ou PWA, cette dépendance devra être embarquée localement afin de ne pas
+dépendre d'un accès Internet externe.
+
+---
+
+# Installation et dépendances
+
+## 1. Prérequis
+
+Le projet nécessite au minimum :
+
+- Python 3.11 ou plus récent ;
+- `venv` ;
+- PostgreSQL 16 ou compatible ;
+- PostGIS ;
+- l'extension PostgreSQL `pgcrypto`.
+
+Pour l'application web :
+
+- FastAPI ;
+- Uvicorn.
+
+Pour la génération du projet QGIS uniquement :
+
+- QGIS ;
+- PyQGIS 3.38 ou plus récent.
+
+**PyQGIS n'est pas requis pour lancer le migrateur ou l'application web.**
+
+---
+
+## 2. Linux — environnement Python
+
+Sous Ubuntu/Debian :
 
 ```bash
-cd /home/julien/Projects/sirs-postgre
+sudo apt update
+sudo apt install python3 python3-pip python3-venv
+```
+
+Créer ensuite l'environnement virtuel depuis la racine du projet :
+
+```bash
+cd ~/Projects/sirs-postgre
+
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e .
+.venv/bin/python -m pip install fastapi uvicorn
 ```
 
-## Configuration
+Activation facultative du venv :
 
-Créer la configuration locale depuis le modèle versionné :
+```bash
+source .venv/bin/activate
+```
+
+Le venv n'a pas besoin d'être activé si les commandes utilisent explicitement
+`.venv/bin/python`.
+
+### PostgreSQL/PostGIS local sous Ubuntu/Debian
+
+Si PostgreSQL doit être installé sur la même machine :
+
+```bash
+sudo apt install postgresql postgresql-contrib postgis
+```
+
+Si la base PostgreSQL est hébergée sur un autre serveur, seul l'accès réseau et
+la configuration de connexion sont nécessaires.
+
+---
+
+## 3. Windows — environnement Python
+
+Depuis la racine du projet :
+
+```cmd
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -e .
+.venv\Scripts\python.exe -m pip install fastapi uvicorn
+```
+
+Activation sous `cmd.exe` :
+
+```cmd
+.venv\Scripts\activate.bat
+```
+
+Sous Git Bash :
+
+```bash
+source .venv/Scripts/activate
+```
+
+L'activation reste facultative si les commandes utilisent
+`.venv\Scripts\python.exe`.
+
+---
+
+## 4. PyQGIS / QGIS
+
+PyQGIS est une dépendance particulière : il ne doit pas être considéré comme un
+simple paquet `pip`.
+
+### Linux
+
+Pour une installation QGIS fournie par la distribution :
+
+```bash
+sudo apt install qgis python3-qgis
+```
+
+Si l'on souhaite utiliser PyQGIS depuis le même venv, le plus simple est de
+créer ce venv avec accès aux paquets Python système :
+
+```bash
+python3 -m venv --system-site-packages .venv
+```
+
+puis d'y installer le projet :
+
+```bash
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e .
+.venv/bin/python -m pip install fastapi uvicorn
+```
+
+Vérification :
+
+```bash
+.venv/bin/python -c "import qgis; print('PyQGIS disponible')"
+```
+
+Si le venv standard est conservé sans `--system-site-packages`, utiliser
+l'environnement Python fourni par QGIS pour la seule génération du projet QGZ.
+
+### Windows
+
+Installer QGIS/OSGeo4W normalement. La génération du projet QGIS doit être
+lancée avec l'environnement Python QGIS/OSGeo4W afin que `qgis.core` soit
+disponible.
+
+Le venv Python normal reste utilisé pour le migrateur et l'application web.
+
+La procédure Windows détaillée est documentée dans :
+
+```text
+docs/generation_projet_qgis.md
+```
+
+---
+
+# Configuration
+
+Créer la configuration locale à partir du modèle :
 
 ```bash
 cp config.example.env config.env
-# éditer config.env
 ```
 
-La CLI charge automatiquement le fichier optionnel `config.env` situé à la
-racine du projet. Les variables déjà exportées dans le shell restent prioritaires
-car le chargement n'écrase pas l'environnement existant.
+Sous Windows, copier le fichier manuellement ou avec la commande disponible
+dans le shell utilisé.
 
-`config.example.env` est uniquement un modèle : la CLI ne le charge jamais et
-n'y écrit jamais de secrets. `config.env` contient la configuration locale et
-n'est pas versionné.
+La CLI et l'application chargent le fichier optionnel `config.env` situé à la
+racine du projet. Les variables déjà définies dans l'environnement restent
+prioritaires.
 
-La connexion PostgreSQL peut être définie par les paramètres séparés
-`SIRS_POSTGRE_HOST`, `SIRS_POSTGRE_PORT`, `SIRS_POSTGRE_DATABASE`,
-`SIRS_POSTGRE_USER` et `SIRS_POSTGRE_PASSWORD`, ou par
-`SIRS_POSTGRE_DSN`, prioritaire. La base d'administration utilisée par
-`recreate` est configurable avec `SIRS_POSTGRE_ADMIN_DATABASE` et vaut
-`postgres` par défaut.
+`config.example.env` est uniquement un modèle et ne doit contenir aucun secret.
+`config.env` contient la configuration locale et n'est pas versionné.
 
-### Gestion des systèmes de coordonnées
+La connexion PostgreSQL peut être définie par :
 
-SIRS Digues stocke le CRS global de chaque base CouchDB dans le document
-`$sirs`, notamment dans `epsgCode`. Le migrateur utilise cette valeur comme
-autorité, vérifie que le code est résolvable par PostGIS, puis standardise les
-géométries dans le CRS cible fixe `EPSG:3950`.
-
-Si le CRS source est déjà `EPSG:3950`, le WKT est inséré avec ce SRID sans
-reprojection. Si le CRS source diffère, le migrateur construit d'abord la
-géométrie dans son vrai CRS puis applique `ST_Transform(..., 3950)`. Affecter
-simplement le SRID 3950 à des coordonnées exprimées dans un autre CRS donnerait
-une localisation fausse et n'est jamais utilisé comme transformation.
-
-Lorsque `$sirs.epsgCode` manque ou n'est pas exploitable, un fallback explicite
-peut être configuré :
-
-```bash
-SIRS_SOURCE_SRID=2154
+```text
+SIRS_POSTGRE_HOST
+SIRS_POSTGRE_PORT
+SIRS_POSTGRE_DATABASE
+SIRS_POSTGRE_USER
+SIRS_POSTGRE_PASSWORD
 ```
 
-La variable accepte aussi la forme `EPSG:2154`. Elle est normalement inutile
-pour une base SIRS correctement renseignée. Le fallback n'autorise jamais à
-masquer une contradiction : si `$sirs.epsgCode`, `crsWkt`, `proj4` ou
-`SIRS_SOURCE_SRID` apportent des informations incompatibles, la migration est
-bloquée. Le champ objet historique `crsName` sert uniquement de contrôle de
-cohérence : il n'est jamais utilisé pour choisir le CRS source et son absence
-n'est pas une anomalie.
+ou par :
 
-## Commandes principales
+```text
+SIRS_POSTGRE_DSN
+```
 
-Cycle complet actuel :
+`SIRS_POSTGRE_DSN` est prioritaire.
+
+La base d'administration utilisée par `recreate` est configurable avec :
+
+```text
+SIRS_POSTGRE_ADMIN_DATABASE
+```
+
+et vaut `postgres` par défaut.
+
+---
+
+# Lancer l'application web locale
+
+## Linux
+
+Depuis la racine du projet :
 
 ```bash
-cd /home/julien/Projects/sirs-postgre
+.venv/bin/python -m uvicorn sirs_postgre.web.app:app --reload
+```
 
-source .venv/bin/activate (Linux)
-source .venv/Scripts/activate (windows)
+## Windows
+
+```cmd
+.venv\Scripts\python.exe -m uvicorn sirs_postgre.web.app:app --reload
+```
+
+Puis ouvrir :
+
+```text
+http://127.0.0.1:8000/
+```
+
+L'option `--reload` redémarre automatiquement le serveur de développement
+lorsque le code Python est modifié.
+
+---
+
+# Migrateur CouchDB → PostgreSQL/PostGIS
+
+## Principe général
+
+Le migrateur reconstruit PostgreSQL/PostGIS à partir d'une base CouchDB SIRS.
+
+Le modèle historique CouchDB est considéré comme la référence. Une propriété
+source ne doit pas être abandonnée simplement parce qu'elle paraît inutilisée
+dans une base particulière.
+
+Pour chaque évolution du modèle cible, il faut pouvoir documenter :
+
+```text
+source CouchDB
+→ cible PostgreSQL
+→ transformation éventuelle
+→ justification
+→ impact sur la donnée historique
+```
+
+Les écarts structurels restent possibles lorsqu'ils améliorent la cohérence du
+modèle relationnel, mais ils doivent être explicites et traçables.
+
+## Cycle courant de migration
+
+```bash
+cd ~/Projects/sirs-postgre
 
 sirs-postgre check
 sirs-postgre recreate
@@ -147,22 +434,68 @@ sirs-postgre diagnose
 sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
 ```
 
-### `check`
+Pendant le développement, la base cible est considérée comme recréable. Le
+cycle normal consiste à la supprimer, recréer le schéma puis relancer la
+migration depuis CouchDB.
+
+---
+
+## Gestion des systèmes de coordonnées
+
+SIRS Digues stocke le CRS global de chaque base CouchDB dans le document `$sirs`,
+notamment via `epsgCode`.
+
+Le migrateur :
+
+1. lit le CRS source ;
+2. vérifie qu'il est résolvable par PostGIS ;
+3. construit les géométries dans leur vrai CRS ;
+4. les standardise en `EPSG:3950`.
+
+Si la source est déjà en `EPSG:3950`, aucune reprojection n'est effectuée.
+
+Si le CRS source diffère, le migrateur applique :
+
+```text
+ST_Transform(..., 3950)
+```
+
+Affecter arbitrairement le SRID 3950 à des coordonnées exprimées dans un autre
+CRS n'est jamais considéré comme une transformation valide.
+
+Un fallback explicite peut être configuré :
+
+```bash
+SIRS_SOURCE_SRID=2154
+```
+
+La forme suivante est également acceptée :
+
+```bash
+SIRS_SOURCE_SRID=EPSG:2154
+```
+
+Ce fallback ne masque jamais une contradiction entre `$sirs.epsgCode`,
+`crsWkt`, `proj4` et la configuration locale.
+
+Le champ objet historique `crsName` sert uniquement de contrôle de cohérence.
+
+---
+
+# Commandes principales du migrateur
+
+## `check`
 
 ```bash
 sirs-postgre check
 ```
 
-La commande diagnostique les connexions CouchDB et PostgreSQL, les versions de
-PostgreSQL, PostGIS et `pgcrypto`, ainsi que la présence des tables attendues.
-Elle indique aussi si l'authentification est configurée sans jamais afficher les
-mots de passe. L'absence de credentials n'est pas une erreur si la connexion
-locale réussit.
+Cette commande diagnostique les connexions CouchDB et PostgreSQL, les versions
+de PostgreSQL, PostGIS et `pgcrypto`, ainsi que la présence des tables attendues.
 
-Le diagnostic ne modifie aucune base. La partie CouchDB n'effectue que des
-lectures et la partie PostgreSQL uniquement des `SELECT`.
+Elle ne modifie aucune base.
 
-Options disponibles :
+Options :
 
 ```bash
 sirs-postgre check --source-only
@@ -171,150 +504,146 @@ sirs-postgre check --profile secure
 sirs-postgre check --source-database autre_base
 ```
 
-### `recreate`
+---
+
+## `recreate`
 
 ```bash
 sirs-postgre recreate
 ```
 
-> **Attention — opération destructive :** `sirs-postgre recreate` exécute un
-> `DROP DATABASE` sur la base cible configurée. Toute donnée créée directement
-> dans PostgreSQL ou QGIS depuis la dernière migration est supprimée.
+> **Attention — opération destructive :** cette commande exécute un
+> `DROP DATABASE` sur la base PostgreSQL cible configurée.
 
-La commande ferme les connexions actives vers la seule base cible, la supprime,
-la recrée puis active les extensions PostGIS et `pgcrypto`. Les bases protégées
-`postgres`, `template0`, `template1`, la base d'administration configurée et
-les noms dangereux sont explicitement refusés.
+Toute donnée créée directement dans PostgreSQL, QGIS ou l'application web depuis
+la dernière migration est supprimée.
 
-QGIS peut conserver en cache l'ancienne définition des couches après une
-recréation. Pendant cette phase de développement, un rafraîchissement de la
-source de données ou une réimportation des couches peut être nécessaire.
+La commande :
 
-### `init-schema`
+- ferme les connexions vers la seule base cible ;
+- supprime cette base ;
+- la recrée ;
+- active PostGIS et `pgcrypto`.
+
+Les bases protégées `postgres`, `template0`, `template1`, la base
+d'administration et les noms dangereux sont refusés.
+
+---
+
+## `init-schema`
 
 ```bash
 sirs-postgre init-schema
 ```
 
-La commande vérifie les extensions puis crée transactionnellement le schéma
-courant dans `public`. Les instructions utilisent `CREATE TABLE IF NOT EXISTS` :
-l'initialisation est réexécutable et vérifie la présence de toutes les tables
-avant de valider la transaction. Cette commande crée uniquement la structure ;
-la lecture de CouchDB relève de `migrate-core`.
+Cette commande crée transactionnellement le schéma PostgreSQL courant dans
+`public`.
 
-### `migrate-core`
+Les instructions utilisent `CREATE TABLE IF NOT EXISTS`. Cette commande ne lit
+pas CouchDB.
+
+---
+
+## `migrate-core`
 
 ```bash
 sirs-postgre migrate-core
 ```
 
-La commande migre le noyau, 118 objets Ouvrages, les aménagements hydrauliques,
-les plans/parcelles de gestion et les objets végétation depuis CouchDB dans
-l'ordre imposé par les relations. L'unique
-`OuvrageAssocieAmenagementHydraulique` rejoint désormais
-`ouvrages_hydrauliques` avec son parent explicitement stocké. Les ponts,
-escaliers d'accès, voies sur digue, voies d'accès et chemins d'accès techniques
-sont réunis dans `cheminements`. Les huit `CheminAccesDependance` sont migrés
-même sans parent ni tronçon : aucune relation obligatoire vers un aménagement
-hydraulique n'est supposée et aucun rattachement spatial n'est inféré. L'unique
-`PrestationAmenagementHydraulique` reste également différée jusqu'au modèle
-général des prestations.
-Les anciennes photos directement portées par un objet sont regroupées par objet
-et date sous des observations synthétiques déterministes. Après une migration
-réussie, le bilan de couverture est automatiquement régénéré ; une erreur du
-diagnostic rend la commande explicitement incomplète.
-Les insertions et validations s'exécutent dans une transaction PostgreSQL unique :
-une erreur bloquante entraîne un rollback complet. Le CRS source est résolu une
-seule fois pour l'exécution puis partagé par les modules de migration ; les
-géométries ne sont reprojetées que si ce CRS diffère de `EPSG:3950`.
+La commande migre actuellement le noyau SIRS, les ouvrages, les aménagements
+hydrauliques, les plans/parcelles de gestion et la végétation.
 
-La migration refuse une cible contenant déjà des données et n'effectue aucun
-UPSERT. Il faut alors rejouer le cycle `recreate`, `init-schema`,
-`migrate-core`.
+Le noyau couvre notamment :
 
-### `diagnose`
+- `systemes` ;
+- `digues` ;
+- `troncons` ;
+- `desordres` ;
+- `observations` ;
+- `photos` ;
+- les systèmes et bornes de repérage ;
+- les référentiels associés.
+
+Les anciennes photos directement portées par un objet sont regroupées sous des
+observations synthétiques déterministes.
+
+Les insertions et validations s'exécutent dans une transaction PostgreSQL
+unique. Une erreur bloquante entraîne un rollback complet.
+
+La migration refuse actuellement une cible contenant déjà des données et ne
+réalise pas d'UPSERT.
+
+Il faut alors rejouer :
+
+```text
+recreate
+→ init-schema
+→ migrate-core
+```
+
+---
+
+## `diagnose`
 
 ```bash
 sirs-postgre diagnose
 ```
 
-Cette commande indépendante lit les documents CouchDB et génère
-`audits/bilan.md`, `audits/anomalies.json` et `audits/anomalies.csv`. Elle
-découvre les valeurs `@class` et les clés JSON réelles, les compare au registre
-de couverture et distingue `MIGREE`, `PARTIELLE`, `NON_MIGREE`,
-`TECHNIQUE_IGNORE` et `REFERENTIEL_IGNORE`. Une classe ou un champ inconnu dans
-une autre base apparaît donc automatiquement dans le bilan et, lorsqu'il est
-actionnable, dans le registre des anomalies.
+Cette commande analyse les documents CouchDB et génère :
 
-Le bilan contient aussi une synthèse CRS : CRS source détecté, origine de cette
-détection, CRS cible et nécessité éventuelle d'une transformation. Les codes
-EPSG sont validés contre PostGIS avant d'être utilisés pour une migration
-géométrique.
-
-### Génération du projet QGIS
-
-```bash
-sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
+```text
+audits/bilan.md
+audits/anomalies.json
+audits/anomalies.csv
 ```
 
-La commande génère entièrement le QGZ depuis le code et la configuration
-PostgreSQL existante. Elle nécessite PyQGIS 3.38 ou plus récent et doit être
-lancée avec le Python fourni par QGIS/OSGeo4W ; son absence produit une erreur
-explicite sans affecter les autres commandes. Le projet contient les couches,
-groupes, relations et formulaires du prototype de repérage des désordres,
-ainsi qu'un unique fond XYZ OpenStreetMap connecté placé derrière les couches
-métier. Ce fond ne couvre pas l'utilisation hors connexion de QField.
+Elle découvre les valeurs `@class` et les clés JSON réellement présentes, puis
+les compare au registre de couverture.
 
-Le mot de passe PostgreSQL n'est jamais écrit dans le QGZ. Une configuration
-d'authentification QGIS locale peut être référencée avec `--authcfg ID`, ou
-QGIS peut utiliser `.pgpass`/une saisie interactive. Le code générateur est
-versionné ; `qgis/sirs_postgre.qgz` reste un artifact local ignoré par Git. La
-procédure Windows détaillée figure dans
-`docs/generation_projet_qgis.md`.
+Les statuts de couverture comprennent notamment :
 
-## Diagnostic et registre des anomalies
+```text
+MIGREE
+PARTIELLE
+NON_MIGREE
+TECHNIQUE_IGNORE
+REFERENTIEL_IGNORE
+```
 
-Les trois livrables ont des usages distincts :
+Une classe ou un champ inconnu dans une autre base apparaît donc dans le bilan
+et, lorsqu'il est actionnable, dans le registre des anomalies.
 
-- `bilan.md` synthétise la couverture globale des classes, champs et relations ;
-- `anomalies.json` est le registre structuré et persistant destiné au suivi ;
-- `anomalies.csv` expose le même registre aux tableurs, à QGIS et aux autres
-  outils d'analyse.
+Le diagnostic inclut également la synthèse du CRS source et de la
+transformation éventuelle vers `EPSG:3950`.
 
-Chaque entrée reçoit un `anomaly_id` déterministe calculé depuis la base source,
-la classe, une clé de sujet interne stable, la catégorie et le champ concernés.
-Cette clé interne n'est pas exportée. `source_document_id` conserve exactement
-le `_id` du document CouchDB à ouvrir ; `source_object_id` conserve exactement
-l'identifiant d'un sous-objet uniquement lorsque celui-ci est le sujet réel du
-constat. Un constat portant directement sur le document laisse donc
-`source_object_id` à NULL. Le message n'entre pas dans l'identité : il peut
-évoluer sans casser le suivi. Une
-régénération préserve le statut, le commentaire de résolution et la première
-date de détection. Une anomalie disparue reste dans l'historique avec
-`active=false`; si elle réapparaît, elle retrouve le même ID et redevient active.
-`active` décrit uniquement la présence du constat dans le dernier diagnostic,
-tandis que `status` enregistre une décision humaine. Le diagnostic ne transforme
-donc jamais automatiquement un statut `OPEN` en statut résolu :
+---
 
-- `active=true`, `status=OPEN` : problème actuel non traité ;
-- `active=false`, `status=OPEN` : problème absent du dernier diagnostic, sans
-  décision humaine enregistrée ;
-- `active=true`, `status=ACCEPTED_AS_IS` : problème encore présent mais accepté ;
-- `active=false`, `status=RESOLVED_IN_COUCHDB` : correction enregistrée et
-  constat désormais absent.
+# Diagnostic et registre des anomalies
 
-Les statuts disponibles sont `OPEN`, `RESOLVED_IN_COUCHDB`,
-`RESOLVED_IN_POSTGRES`, `RESOLVED_BY_MIGRATOR`, `ACCEPTED_AS_IS` et `IGNORED`.
-`correction_location` indique si l'action relève de `COUCHDB`, `POSTGRESQL`, du
-`MIGRATOR`, des deux (`EITHER`), d'une revue manuelle ou n'est pas applicable.
-La sévérité (`INFO`, `WARNING`, `ERROR`, `BLOCKING`) est choisie explicitement
-selon l'impact et non déduite mécaniquement de la catégorie.
+Les trois fichiers produits ont des rôles distincts :
 
-L'affichage regroupe en outre les constats en trois familles internes : `DATA`
-pour les géométries, références, relations, médias et revues manuelles ;
-`COVERAGE` pour les classes/champs inconnus, partiels ou différés ;
-`MIGRATION_DECISION` pour les overrides explicites. Cette séparation évite
-d'interpréter chaque lacune de couverture comme une corruption de données.
+- `bilan.md` : couverture globale des classes, champs et relations ;
+- `anomalies.json` : registre structuré et persistant ;
+- `anomalies.csv` : export exploitable dans un tableur ou QGIS.
+
+Chaque entrée reçoit un `anomaly_id` déterministe.
+
+Les anomalies distinguent notamment :
+
+- `DATA` : problèmes de données, géométries, références, relations, médias ;
+- `COVERAGE` : classes/champs inconnus, partiels ou différés ;
+- `MIGRATION_DECISION` : décisions explicites de migration.
+
+Les statuts disponibles sont :
+
+```text
+OPEN
+RESOLVED_IN_COUCHDB
+RESOLVED_IN_POSTGRES
+RESOLVED_BY_MIGRATOR
+ACCEPTED_AS_IS
+IGNORED
+```
 
 Consultation :
 
@@ -327,13 +656,7 @@ sirs-postgre anomalies --source-document-id <id-couchdb-exact>
 sirs-postgre anomalies --source-object-id <id-sous-objet-exact>
 ```
 
-La vue générale distingue les anomalies actives et inactives, puis les statuts
-des seules anomalies actives. `--open` conserve toutes les catégories actives
-encore ouvertes. `--actionable` se limite aux anomalies `DATA` actives et
-ouvertes ; il exclut notamment les classes partiellement migrées, les
-fonctionnalités différées et les décisions `SOURCE_OVERRIDE`.
-
-Enregistrement d'une décision locale :
+Enregistrement d'une décision :
 
 ```bash
 sirs-postgre anomalies resolve <anomaly_id> \
@@ -341,16 +664,28 @@ sirs-postgre anomalies resolve <anomaly_id> \
   --comment "Géométrie corrigée et validée dans la source"
 ```
 
-La commande `anomalies resolve` ne contacte et ne modifie ni CouchDB ni
-PostgreSQL. Elle met uniquement à jour `audits/anomalies.json` et son export CSV;
-la prochaine exécution de `diagnose` préservera cette décision.
+Cette commande modifie uniquement le registre local d'anomalies. Elle ne
+modifie ni CouchDB ni PostgreSQL.
 
-Une correction réalisée uniquement dans PostgreSQL est perdue au prochain
-`recreate`. Elle peut servir à vérifier une solution ou corriger temporairement
-la cible, mais une correction reproductible doit ensuite être appliquée dans
-CouchDB ou codée dans le migrateur/`source_overrides.py`.
+Une correction effectuée seulement dans PostgreSQL sera perdue lors du prochain
+`recreate`. Une correction reproductible doit être réalisée dans CouchDB ou
+codée dans le migrateur.
 
-## Modèle PostgreSQL actuel
+---
+
+# État actuel du modèle PostgreSQL
+
+Le noyau couvre :
+
+- `systemes`, `digues`, `troncons` ;
+- `desordres`, `observations`, `photos` ;
+- le repérage linéaire ;
+- les principaux référentiels ;
+- les ouvrages ;
+- les aménagements hydrauliques ;
+- la végétation et sa gestion.
+
+Relations principales :
 
 ```text
 systemes
@@ -365,368 +700,348 @@ troncons
 desordres
   └── N-N ↔ link_desordres_troncons ↔ troncons
 
-desordres / troncons / familles d'ouvrages / amenagements_hydrauliques / vegetation
+objets métier
   └── 1-N → observations
                   └── 1-N → photos
-
-ref_categories_desordre
-  └── 1-N → ref_types_desordre
-                  └── 1-N → desordres.type_desordre_id
-
-ref_urgences
-  └── 1-N → observations.urgence_id
-
-ref_types_amenagement_hydraulique
-  └── 1-N → amenagements_hydrauliques
-                  └── N-N ↔ link_amenagements_troncons ↔ troncons
-
-amenagements_hydrauliques
-  └── 1-N → ouvrages_hydrauliques.amenagement_hydraulique_id
 ```
 
-`categorie_desordre_id` n'est volontairement pas stocké dans `desordres`. Quand
-un type est renseigné, sa catégorie est déduite par
-`ref_types_desordre.categorie_id`. Cette règle évite de reproduire une donnée
-redondante susceptible de devenir incohérente.
+Les objets métier provenant de CouchDB conservent leurs UUID historiques.
 
-Les relations 1-N utilisent des FK directes. La relation entre désordres et
-tronçons est réellement N-N : `link_desordres_troncons` possède un ID UUID
-technique pour QGIS et garantit l'unicité du couple
-`(desordre_id, troncon_id)`.
+Les nouvelles lignes PostgreSQL peuvent utiliser `DEFAULT gen_random_uuid()`
+lorsque l'identifiant n'est pas fourni.
 
-`observations` possède une FK nullable explicite vers chacune des neuf familles
-métier actuellement prises en charge. Une contrainte `num_nonnulls(...) = 1`
-garantit qu'une observation a exactement un parent. Ces FK permettent à QGIS de
-découvrir les relations sans couple polymorphe `objet_type/objet_id`.
+Les référentiels historiques du noyau conservent leurs identifiants CouchDB en
+PK `TEXT`, par exemple :
 
-Une ZEC représente conceptuellement un ensemble hydraulique pouvant associer
-une emprise de stockage et un ou plusieurs tronçons ; elle ne se réduit donc pas
-au seul polygone de `amenagements_hydrauliques`. Seules les relations présentes
-dans `tronconIds` sont migrées. Une intersection spatiale ne crée jamais de FK.
+```text
+RefTypeDesordre:57
+RefUrgence:1
+```
 
-La géométrie PostGIS et le repérage linéaire sont deux informations distinctes.
-Une borne est autonome et peut appartenir à plusieurs tronçons ou systèmes ;
-`valeur_pr` qualifie donc le couple système–borne, jamais la borne seule.
-L'ordre de la liste CouchDB n'est pas stocké dans le modèle opérationnel : les
-rôles début/fin sont déterminés spatialement. Les diagnostics CouchDB restent
-dans les artefacts JSON/CSV de migration.
+---
 
-Le noyau expose trois conversions PostGIS déterministes :
-`xy_vers_reperage`, `borne_offset_vers_xy` et `pr_vers_xy`. Chacune exige le
-tronçon et le système de repérage explicites ; le système par défaut du tronçon
-n'est jamais consulté par le moteur. L'abscisse est une distance géométrique
-interne depuis le début du LineString et ne doit pas être confondue avec le PR,
-qui est interpolé entre les couples système–borne. Les PR décroissants sont
-acceptés ; les systèmes ambigus, incomplets et les valeurs hors domaine sont
-signalés par des statuts, sans rabattement ni extrapolation. Pour les désordres,
-des triggers synchronisent les deux représentations selon l'opération : une
-édition géométrique conserve exactement la géométrie et recalcule le repérage ;
-une édition explicite du repérage reconstruit la géométrie sur le tronçon.
-`desordre_localisations_reperage` contient au plus une ligne, uniquement pour
-un Point ou une LineString lié à exactement un tronçon. Avec zéro ou plusieurs
-tronçons, la géométrie reste seule autoritaire. Les autres familles restent
-hors de ce prototype spécialisé.
+## Repérage des désordres
 
-### Règles génériques et overrides de source
+La géométrie PostGIS et le repérage linéaire sont deux représentations liées.
 
-Le transformateur des aménagements ne dépend d'aucun nom, UUID ou nombre
-d'objets propre à une base. Un type source connu passe par un mapping explicite ;
-un type absent ou inconnu devient `IND` avec warning, sans perte de l'objet. Une
-géométrie autre que Polygon bloque la transaction au lieu d'être corrigée.
+Le noyau expose notamment :
 
-Les décisions propres à une base sont regroupées dans
-`migration/source_overrides.py`, indexées par nom de base CouchDB. Pour la base
-auditée `cabbalr` seulement, les six UUID actuels sont provisoirement classés
-`ZEC`. Cette configuration n'est pas une règle SIRS universelle : une autre base,
-même avec les mêmes désignations, conserve `IND` en l'absence de mapping de type.
+```text
+xy_vers_reperage
+borne_offset_vers_xy
+pr_vers_xy
+```
 
-## Végétation et gestion de la végétation
+Pour les désordres Point/LineString liés à exactement un tronçon :
 
-Le modèle sépare les objets physiques des structures qui organisent leur
-gestion :
+- une modification géométrique conserve la géométrie saisie et recalcule le
+  repérage ;
+- une modification explicite du repérage reconstruit la géométrie sur le
+  tronçon.
 
-- `plans_gestion_vegetation` conserve les plans et leur période ;
-- `parcelles_gestion_vegetation` porte les segments de gestion et leur
-  géométrie linéaire ;
-- `link_parcelles_gestion_troncons` conserve uniquement les relations source
-  explicites aux tronçons ;
-- `vegetation` regroupe les objets physiques sous les natures structurelles
-  `ARB`, `PEU`, `INV` ou `IND`.
+`desordre_localisations_reperage` contient au plus une ligne par désordre.
 
-Chaque objet physique référence sa parcelle de gestion. Il ne duplique ni le
-tronçon, ni la digue, ni le système. La relation 1 parcelle–1 tronçon observée
-dans `cabbalr` est historique : la table de lien accepte plusieurs tronçons par
-parcelle et aucune intersection spatiale ne crée de relation.
+Avec zéro ou plusieurs tronçons, aucun repérage unique n'est imposé et la
+géométrie reste autoritaire.
 
-`vegetation.geometry` accepte uniquement Point, LineString, Polygon ou NULL en
-EPSG:3950. Le migrateur conserve une géométrie valide, transforme une ligne
-d'arbre dégénérée en son Point réellement stocké, ou utilise les positions
-début/fin identiques d'un arbre sans géométrie. Une géométrie explicite valide
-peut récupérer une source corrompue seulement si elle est compatible. Deux
-représentations valides divergentes, ou une corruption sans alternative, donnent
-`MANUAL_REVIEW` : la ligne métier est conservée avec une géométrie NULL et un
-warning dédié. `ST_MakeValid` n'est jamais appliqué automatiquement.
+---
 
-Les décisions propres au corpus restent dans `migration/source_overrides.py`.
-Pour `cabbalr`, seul Bos3 sélectionne explicitement `explicitGeometry` après
-audit. Aucun nom tel que « Haie », « Bos1 » ou « Ran1 » n'est utilisé comme règle
-générique.
-
-Les traitements embarqués et les tableaux de planification sont différés, car
-ils ne contiennent actuellement aucune action opérationnelle. Aucune essence
-n'est extraite des commentaires : le texte source est conservé et une future
-relation N-N aux essences pourra être étudiée avec le modèle général des
-interventions et prestations.
-
-## Migration CouchDB → PostgreSQL
-
-Le mapping actuel est issu de l'inspection des documents CouchDB :
+# Migration CouchDB → PostgreSQL : mapping principal
 
 | Source CouchDB | Cible PostgreSQL | Transformation principale |
 |---|---|---|
-| `RefCategorieDesordre` | `ref_categories_desordre` | `_id` conservé littéralement en `TEXT` |
-| `RefTypeDesordre` | `ref_types_desordre` | `_id` conservé ; `categorieId` devient `categorie_id` |
-| `RefUrgence` | `ref_urgences` | `_id` conservé littéralement en `TEXT` |
+| `RefCategorieDesordre` | `ref_categories_desordre` | `_id` conservé en `TEXT` |
+| `RefTypeDesordre` | `ref_types_desordre` | `_id` conservé ; `categorieId` → `categorie_id` |
+| `RefUrgence` | `ref_urgences` | `_id` conservé en `TEXT` |
 | `SystemeEndiguement` | `systemes` | UUID, `libelle`, `valid` conservés |
-| `Digue` | `digues` | `systemeEndiguementId` devient `systeme_endiguement_id`, nullable |
-| `TronconDigue` | `troncons` | `digueId`, libellé, validité et WKT conservés |
-| `TronconDigue.borneIds` | `link_troncons_bornes` | relations explicites uniquement, sans proximité |
-| `TronconDigue.systemeRepDefautId` | `troncons.systeme_reperage_defaut_id` | FK d'existence et validation du même tronçon |
-| `SystemeReperage` | `systemes_reperage` | UUID, `linearId`, libellé, commentaire et validité conservés |
-| `BorneDigue` | `bornes_reperage` | UUID, Point via le pipeline CRS, attributs et validité conservés |
-| `SystemeReperage.systemeReperageBornes[]` | `link_systemes_reperage_bornes` | UUID du sous-objet, borne, `valeurPR` exacte et validité ; ordre utilisé seulement au diagnostic |
-| `Desordre` | `desordres` | champs métier, type et géométrie source complète ; positions en fallback |
-| `Desordre.linearId` | `link_desordres_troncons` | liaison N-N avec ID technique généré |
-| `*.observations[]` | `observations` | aplatissement et injection de l'unique FK métier |
-| `Observation.urgenceId` | `observations.urgence_id` | référence `TEXT` vérifiée ou `NULL` |
-| `Observation.designation` | `observations.designation` | texte nullable, `NULL` si absent |
-| `Observation.photos[]` | `photos` | aplatissement et injection de `observation_id` |
-| `Objet.photos[]` | `observations` + `photos` | regroupement par objet/date sous une observation synthétique stable |
-| `Photo.chemin` | `photos.chemin_source` | valeur conservée, sans déduplication par chemin |
+| `Digue` | `digues` | `systemeEndiguementId` → `systeme_endiguement_id` |
+| `TronconDigue` | `troncons` | `digueId`, libellé, validité et géométrie conservés |
+| `TronconDigue.borneIds` | `link_troncons_bornes` | relations explicites |
+| `TronconDigue.systemeRepDefautId` | `troncons.systeme_reperage_defaut_id` | FK vers système de repérage |
+| `SystemeReperage` | `systemes_reperage` | UUID, `linearId`, libellé, commentaire, validité |
+| `BorneDigue` | `bornes_reperage` | Point via le pipeline CRS |
+| `SystemeReperage.systemeReperageBornes[]` | `link_systemes_reperage_bornes` | borne, PR et validité |
+| `Desordre` | `desordres` | champs métier, type et géométrie complète |
+| `Desordre.linearId` | `link_desordres_troncons` | relation N-N |
+| `*.observations[]` | `observations` | aplatissement et FK vers parent métier |
+| `Observation.urgenceId` | `observations.urgence_id` | référence vérifiée ou `NULL` |
+| `Observation.photos[]` | `photos` | aplatissement avec `observation_id` |
+| `Objet.photos[]` | `observations` + `photos` | observation synthétique déterministe |
+| `Photo.chemin` | `photos.chemin_source` | chemin source conservé |
 
-Les observations conservent notamment `designation`, `date`, `evolution` et
-`valid`. `urgenceId` n'est conservé que pour les observations de désordres. Une
-photo métier n'a jamais de FK directe vers un tronçon, un ouvrage ou une
-végétation : le modèle impose systématiquement objet → observation → photo. Les
-UUID source sont préservés ; seules les observations synthétiques reçoivent un
-UUID v5 reproductible. Une date absente reste `NULL` avec warning. Les chemins
-de photos ne servent pas à dédupliquer les lignes.
+Le mapping détaillé et exhaustif doit continuer à être audité contre le schéma
+SIRS historique. Une absence dans la base de développement `cabbalr` ne constitue
+pas une justification suffisante pour abandonner un champ ou une classe SIRS.
 
-`Desordre.categorieDesordreId` sert uniquement à contrôler la cohérence avec la
-catégorie du type. Une incohérence est signalée, mais la catégorie source n'est
-ni corrigée ni stockée dans `desordres`.
+---
 
-Exemple de comptes obtenus lors d'une migration validée de la source live :
+# Géométries
 
-| Table | Lignes |
-|---|---:|
-| `systemes` | 9 |
-| `digues` | 26 |
-| `troncons` | 104 |
-| `systemes_reperage` | 104 |
-| `bornes_reperage` | 208 |
-| `link_troncons_bornes` | 208 |
-| `link_systemes_reperage_bornes` | 208 |
-| `desordres` | 1 597 |
-| `link_desordres_troncons` | 1 597 |
-| `observations` | 3 400 |
-| `photos` | 3 967 |
-| `ref_categories_desordre` | 7 |
-| `ref_types_desordre` | 74 |
-| `ref_urgences` | 5 |
+## Tronçons
 
-Ces valeurs décrivent un état observé de la source, pas des constantes métier.
-La migration calcule les comptes depuis CouchDB à chaque exécution et les compare
-dynamiquement aux comptes PostgreSQL avant le commit.
+`troncons.geometry` utilise :
 
-Les objets `valid=false` sont migrés : cet état historique ne signifie pas une
-suppression. Aucune donnée source n'est corrigée silencieusement. Une
-incohérence explicitement gérée produit un warning ; une rupture qui compromet
-les FK, les identifiants ou les validations annule la migration.
+```text
+geometry(LineString, 3950)
+```
 
-## Géométries
+La géométrie source est interprétée dans le CRS global de la base CouchDB puis
+reprojetée si nécessaire.
 
-### Tronçons
+## Désordres
 
-`troncons.geometry` utilise `geometry(LineString, 3950)`. Le WKT source est
-validé, associé au CRS global détecté dans `$sirs`, puis reprojeté vers 3950
-uniquement lorsque le CRS source diffère.
+`desordres.geometry` utilise un type générique :
 
-### Désordres
+```text
+geometry(Geometry, 3950)
+```
 
-`desordres.geometry` utilise le type générique `geometry(Geometry, 3950)` avec
-une contrainte limitant les valeurs à Point, LineString, Polygon ou NULL. Pour
-une géométrie source Point, LineString ou Polygon valide est conservée avec tous
-ses sommets. `positionDebut` et `positionFin` servent seulement de fallback :
+avec une contrainte autorisant actuellement :
 
-- positions identiques : `POINT` ;
-- positions différentes : `LINESTRING` ;
-- positions absentes ou inexploitables : `NULL` avec warning.
+- Point ;
+- LineString ;
+- Polygon ;
+- NULL.
 
-Aucun Polygon, MultiPolygon ou MultiLineString n'est fabriqué depuis des données
-ponctuelles ou linéaires.
+Une géométrie source valide est conservée avec tous ses sommets.
 
-## Évolutions du modèle par rapport au schéma initial
+`positionDebut` et `positionFin` ne sont utilisés qu'en fallback lorsqu'une
+géométrie exploitable n'est pas disponible.
 
-- Désordres/tronçons : la relation est N-N via
-  `link_desordres_troncons`, car chaque côté peut concerner plusieurs objets.
-- Géométries des désordres : Point, LineString et Polygon sont désormais admis.
-- Ouvrages : les nombreuses classes SIRS sont normalisées vers
-  `ouvrages_hydrauliques`, `equipements_mesure`, `cheminements`, `mobilier` et
-  `reseaux_techniques`. Leurs
-  référentiels PostgreSQL sont indépendants des anciens IDs SIRS ; les
-  abréviations métier pertinentes ont été conservées autant que possible.
-- Cheminements : ponts, escaliers d'accès, voies sur digue, voies d'accès et
-  chemins d'accès techniques partagent une famille de déplacement, d'accès et
-  de franchissement. Le type conserve leur distinction métier. Le rattachement
-  à un tronçon est facultatif et passe par `link_cheminements_troncons`; les
-  liens vers les désordres explicitement stockés passent par
-  `link_cheminements_desordres`. Les données historiques sans parent sont
-  acceptées. Ni proximité, ni intersection, ni désignation ne créent de lien.
-  Des contraintes métier plus fortes pourront être proposées dans QGIS ou une
-  application sans empêcher la conservation de la source historique.
-- Aménagements hydrauliques : la table polygonale possède ses liens explicites
-  aux tronçons et peut être référencée par un ouvrage hydraulique. Le classement
-  provisoire `ZEC` des six objets de `cabbalr` est un override de source, pas une
-  vérité universelle SIRS.
-- Végétation : les objets biologiques sont séparés des plans et parcelles de
-  gestion. La relation parcelle–tronçon est N-N ; le 1-1 observé dans `cabbalr`
-  n'est pas une contrainte conceptuelle. Les corruptions géométriques sont
-  reconstruites uniquement par règles contrôlées, sinon `MANUAL_REVIEW` conserve
-  la ligne avec une géométrie NULL.
-- Observations/photos : toute photo passe désormais par une observation, y
-  compris quand CouchDB la stockait directement sous l'objet métier.
+---
 
-## Base CouchDB utilisée pendant le développement
+# Ouvrages, aménagements et végétation
+
+Le modèle PostgreSQL regroupe plusieurs classes historiques dans des familles
+relationnelles explicites.
+
+Il couvre notamment :
+
+- `ouvrages_hydrauliques` ;
+- `equipements_mesure` ;
+- `cheminements` ;
+- `mobilier` ;
+- `reseaux_techniques` ;
+- `amenagements_hydrauliques` ;
+- `plans_gestion_vegetation` ;
+- `parcelles_gestion_vegetation` ;
+- `vegetation`.
+
+Les relations spatiales ne sont jamais déduites automatiquement d'une simple
+intersection lorsque CouchDB fournit une relation explicite.
+
+Les décisions propres à une base source particulière restent isolées dans :
+
+```text
+migration/source_overrides.py
+```
+
+et ne doivent jamais devenir implicitement des règles SIRS générales.
+
+---
+
+# Base CouchDB utilisée pendant le développement
 
 Le développement initial s'appuie principalement sur la base CouchDB
-`cabbalr`, qui reflète les usages d'une collectivité particulière. Elle ne couvre
-pas nécessairement toutes les classes, référentiels, outils et workflows de SIRS
-Digues : certains sont absents, rares ou uniquement remplis de valeurs par
-défaut.
+`cabbalr`.
 
-L'absence d'implémentation d'une classe ne signifie donc pas qu'elle est inutile
-dans SIRS, et un override `cabbalr` n'est jamais une règle générale. En bref :
+Cette base reflète les données historiques d'une collectivité particulière. Elle
+ne contient pas nécessairement toutes les classes et tous les usages possibles
+du modèle SIRS Digues.
 
-> modèle cible générique ≠ contenu particulier de `cabbalr`
+Par conséquent :
 
-Tout fork utilisant une autre base doit commencer par exécuter
-`sirs-postgre diagnose`, puis analyser chaque classe et champ non couvert avant
-d'étendre le migrateur.
+```text
+schéma SIRS de référence
+≠
+contenu particulier de cabbalr
+```
 
-## Ce qui n'est pas encore migré
+Toute autre base doit commencer par :
 
-Le modèle général des prestations reste à construire, notamment pour
-`GlobalPrestation` et `PrestationAmenagementHydraulique`. Certaines dépendances,
-dont `DesordreDependance`, ainsi que les traitements/planifications végétation
-restent différés. Les relations explicites entre prestations et cheminements
-sont également conservées dans le diagnostic en attente de ce futur modèle.
-Le repérage opérationnel est implémenté pour les désordres Point/LineString
-liés à un tronçon unique. Sa généralisation aux autres objets `Positionable`
-reste différée.
-Cette liste
-résume les grandes familles connues ; l'inventaire exhaustif et actualisé est
-généré dans `audits/bilan.md`.
+```bash
+sirs-postgre diagnose
+```
 
-## Intégration QGIS
+puis par l'analyse des classes et champs non couverts.
 
-Les tables PostgreSQL sont chargées directement dans QGIS. Les clés étrangères
-servent aux relations et aux widgets relationnels des formulaires.
+---
 
-Pour exploiter correctement la relation N-N entre désordres et tronçons, la
-table `link_desordres_troncons` doit être présente dans le projet QGIS. Cette
-table est une structure technique : elle n'est pas destinée à être manipulée
-directement par l'utilisateur métier.
+# Ce qui n'est pas encore migré
 
-Le projet pilote est généré par `sirs-postgre qgis-project`. Les tables privées
-`desordre_localisations_reperage` et `link_desordres_troncons` alimentent les
-relations sans encombrer le panneau. La couche ponctuelle repose sur une vue
-éditable pour X/Y et longitude/latitude ; ces valeurs réécrivent la géométrie
-et ne sont pas des colonnes indépendantes. Le dossier `qgis/styles/` conserve
-les anciens QML comme références, mais le générateur ne les réutilise pas
-automatiquement.
+Le modèle reste incomplet.
 
-Après un `recreate`, QGIS peut encore référencer l'ancienne définition PostgreSQL
-des couches. Rafraîchir ou réimporter les couches évite d'utiliser ce cache
-périmé.
+Restent notamment à traiter ou généraliser :
 
-## Tests
+- le modèle général des prestations ;
+- `GlobalPrestation` ;
+- `PrestationAmenagementHydraulique` ;
+- certaines dépendances, dont `DesordreDependance` ;
+- certains traitements et planifications de végétation ;
+- plusieurs relations autour des prestations ;
+- le repérage des autres objets `Positionable`.
 
-La suite principale s'exécute avec :
+La liste exhaustive et actualisée doit être lue dans :
+
+```text
+audits/bilan.md
+```
+
+Un élément encore non migré n'est pas considéré comme inutile : il reste à
+analyser par rapport au modèle historique SIRS.
+
+---
+
+# Génération du projet QGIS
+
+```bash
+sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
+```
+
+Cette commande génère entièrement le projet QGZ depuis le code et la
+configuration PostgreSQL.
+
+Elle nécessite PyQGIS 3.38 ou plus récent.
+
+Le projet contient notamment :
+
+- les couches PostgreSQL ;
+- les groupes ;
+- les relations ;
+- les formulaires ;
+- le prototype de repérage ;
+- un fond OpenStreetMap XYZ.
+
+Le mot de passe PostgreSQL n'est jamais écrit dans le QGZ.
+
+Une configuration QGIS locale peut être référencée avec :
+
+```text
+--authcfg ID
+```
+
+Le fichier généré :
+
+```text
+qgis/sirs_postgre.qgz
+```
+
+est un artifact local ignoré par Git.
+
+Après un `recreate`, QGIS peut conserver une ancienne définition des couches en
+cache. Un rafraîchissement ou une réimportation peut alors être nécessaire.
+
+---
+
+# Tests
+
+Suite principale :
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-La majorité des tests utilisent des doubles de connexion et ne nécessitent pas
-de base CouchDB réelle. Des tests d'intégration utilisent toutefois PostGIS pour
-vérifier la reprojection et les conversions de repérage, notamment les PR
-croissants, décroissants ou non métriques, les ambiguïtés et les aller-retours.
-Lorsque PostgreSQL/PostGIS n'est pas accessible, ces tests peuvent être ignorés ;
-dans l'environnement de développement courant, ils sont exécutés.
+Sous Windows :
 
-Les tests couvrent notamment la configuration, les diagnostics, la protection
-de `recreate`, le DDL, les transformations CouchDB, l'atomicité, le registre
-d'anomalies, la résolution du CRS source et les validations de migration.
+```cmd
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
 
-## Structure du code
+La majorité des tests utilisent des doubles de connexion.
+
+Certains tests d'intégration utilisent réellement PostgreSQL/PostGIS pour
+vérifier notamment :
+
+- reprojections ;
+- repérage ;
+- géométries ;
+- triggers ;
+- relecture après écriture ;
+- API web.
+
+Les tests PyQGIS peuvent être ignorés lorsque l'environnement QGIS n'est pas
+disponible.
+
+---
+
+# Structure du code
 
 ```text
 sirs_postgre/
-├── cli.py                  # check, migration, diagnose, QGIS, anomalies
-├── qgis_project.py         # génération reproductible du projet QGZ
+├── cli.py
+├── qgis_project.py
+├── web/
+│   ├── app.py
+│   ├── models.py
+│   └── queries.py
 ├── source/
-│   └── couchdb.py          # configuration et client CouchDB
+│   └── couchdb.py
 ├── target/
-│   ├── database.py         # diagnostic, recréation et initialisation PostgreSQL
-│   ├── reperage.py         # fonctions PostGIS de conversion du repérage
-│   └── schema.py           # DDL du noyau courant
+│   ├── database.py
+│   ├── reperage.py
+│   ├── desordre_reperage.py
+│   └── schema.py
 └── migration/
-    ├── core.py             # orchestration transactionnelle du noyau
-    ├── amenagements.py     # aménagements hydrauliques
-    ├── anomalies.py        # collecte, historique et exports JSON/CSV
-    ├── coverage.py         # registre et bilan de couverture CouchDB réel
-    ├── crs.py              # détection, validation et reprojection CRS
-    ├── media.py            # normalisation objet → observation → photo
-    ├── ouvrages.py         # ouvrages et équipements
-    ├── reperage.py         # systèmes, bornes et relations explicites
-    ├── vegetation.py       # gestion et objets physiques de végétation
-    ├── source_overrides.py # décisions isolées propres aux bases sources
-    └── validation.py       # contrôles exécutés avant commit
+    ├── core.py
+    ├── amenagements.py
+    ├── anomalies.py
+    ├── coverage.py
+    ├── crs.py
+    ├── media.py
+    ├── ouvrages.py
+    ├── reperage.py
+    ├── vegetation.py
+    ├── source_overrides.py
+    └── validation.py
+
+web/
+├── index.html
+├── css/
+│   └── app.css
+└── js/
+    └── map.js
 
 qgis/
-├── sirs_postgre.qgz        # artifact local généré, ignoré par Git
-└── styles/                 # styles QML et configurations de formulaires
+├── sirs_postgre.qgz
+└── styles/
 
-tests/                      # tests unitaires
-config.example.env          # modèle de configuration sans secrets
+tests/
+config.example.env
 ```
 
-## Principes de développement
+---
 
-- CouchDB reste la source de migration tant que la bascule n'est pas achevée.
-- PostgreSQL/PostGIS est le modèle métier cible.
-- QGIS fournit l'interface principale d'exploitation et d'édition.
-- Les tables métier portent des noms simples au pluriel.
-- Les tables de liaison utilisent le préfixe `link_`.
-- Les référentiels utilisent le préfixe `ref_`.
-- Les futures vues utiliseront le préfixe `view_`.
+# Principes de développement
+
+- Le schéma SIRS Digues/CouchDB reste la référence métier générale.
+- La migration vers PostgreSQL doit être fidèle par défaut.
+- Tout écart au modèle historique doit être explicite, argumenté et documenté.
+- Une absence dans `cabbalr` ne signifie pas qu'une structure SIRS est inutile.
+- PostgreSQL/PostGIS porte l'autorité métier et spatiale de la cible.
+- Les UUID historiques sont conservés.
+- Les nouvelles lignes peuvent recevoir des UUID générés par PostgreSQL.
 - Une relation 1-N simple utilise une FK directe.
-- Une relation N-N réelle utilise une table `link_` explicite.
-- Les UUID historiques sont conservés et les nouvelles lignes reçoivent des UUID
-  générés par PostgreSQL.
-- La migration ne reproduit pas automatiquement toute la complexité du modèle
-  historique SIRS Digues : chaque structure est justifiée par les données et les
-  usages cibles.
+- Une relation N-N réelle utilise une table `link_`.
+- Les référentiels utilisent le préfixe `ref_`.
+- Les vues utilisent le préfixe `view_`.
+- Les règles spatiales ne doivent pas être dupliquées dans le frontend.
+- Les corrections de migration doivent être reproductibles.
+- Les particularités d'une base source restent isolées et documentées.
 
-## Prochaines briques
+---
 
-Le noyau actuel sera progressivement complété par :
+# Prochaines briques
 
-- les prestations ;
-- les localisations de repérage des objets `Positionable` ;
-- les intervenants ;
-- des vues PostgreSQL et configurations QGIS orientées métier.
+Les développements prévus concernent notamment :
 
-Ces briques seront définies après audit des données CouchDB et des usages
-métier, sans recopier mécaniquement le modèle historique.
+- création de nouveaux objets depuis l'application web ;
+- édition des observations et photos ;
+- autres objets `Positionable` ;
+- prestations ;
+- intervenants ;
+- généralisation des formulaires métier ;
+- stockage et service des médias ;
+- préparation éventuelle d'une PWA et d'un fonctionnement hors ligne.
+
+Chaque nouvelle brique doit être confrontée au modèle CouchDB historique avant
+de modifier le modèle PostgreSQL cible.

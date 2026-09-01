@@ -15,7 +15,7 @@
       <header class="app-header">
         <div class="app-brand">
           <strong>SIRS PostgreSQL</strong>
-          <span>Carte expérimentale — édition limitée aux désordres Point et LineString</span>
+          <span>Carte expérimentale</span>
         </div>
         <nav class="main-navigation" aria-label="Navigation principale">
           <button
@@ -27,14 +27,40 @@
           >
             Système d'endiguement
           </button>
+          <div class="create-menu">
+            <button
+              id="toggle-create-menu"
+              type="button"
+              class="menu-button"
+              aria-controls="create-menu-list"
+              aria-expanded="false"
+            >
+              + Nouvel objet ▾
+            </button>
+            <div id="create-menu-list" class="create-menu-list" role="menu" hidden>
+              <button type="button" role="menuitem" data-create-type="systeme">
+                Système d'endiguement
+              </button>
+              <button type="button" role="menuitem" data-create-type="digue">
+                Digue
+              </button>
+              <button type="button" role="menuitem" data-create-type="troncon">
+                Tronçon
+              </button>
+              <button type="button" role="menuitem" data-create-type="desordre">
+                Désordre
+              </button>
+            </div>
+          </div>
         </nav>
         <p id="status" role="status">Chargement des données…</p>
       </header>
       <div id="map" aria-label="Carte des tronçons et des désordres"></div>
       <div id="map-legend" class="legend" aria-label="Légende">
-        <span><i class="line troncon"></i>Tronçons</span>
-        <span><i class="point"></i>Désordres ponctuels</span>
-        <span><i class="line desordre"></i>Désordres linéaires</span>
+        <label><input type="checkbox" data-layer-toggle="troncons" checked><i class="line troncon"></i>Tronçons</label>
+        <label><input type="checkbox" data-layer-toggle="Point" checked><i class="point"></i>Désordres ponctuels</label>
+        <label><input type="checkbox" data-layer-toggle="LineString" checked><i class="line desordre"></i>Désordres linéaires</label>
+        <label><input type="checkbox" data-layer-toggle="Polygon" checked><i class="polygon"></i>Désordres polygonaux</label>
       </div>
       <aside id="heritage-panel" class="heritage-panel" hidden>
         <div class="heritage-title">
@@ -73,8 +99,177 @@
           </button>
         </nav>
         <section id="general-tab" class="editor-tab-panel">
-          <form id="point-editor">
-          <label>
+          <form id="heritage-object-editor" hidden>
+            <label id="heritage-object-id-field" class="technical-identifier" hidden>
+              Identifiant
+              <input id="heritage-object-id" type="text" readonly>
+            </label>
+            <label id="heritage-parent-field" hidden>
+              <span id="heritage-parent-label">Parent</span>
+              <select id="heritage-parent" required></select>
+            </label>
+            <label>
+              Libellé
+              <input id="heritage-object-label" name="libelle" type="text" required>
+            </label>
+            <label class="checkbox-field">
+              <input id="heritage-object-valid" name="valid" type="checkbox" checked>
+              Objet valide
+            </label>
+            <section id="troncon-create-geometry" class="line-geometry-editor" hidden>
+              <strong>Géométrie du tronçon</strong>
+              <p>Dessinez puis ajustez tous les sommets. Rien n’est écrit avant « Créer ».</p>
+              <button id="start-troncon-draw" type="button" class="secondary wide-button">
+                Dessiner la LineString
+              </button>
+              <p id="troncon-draw-status" class="graphic-status" role="status" hidden></p>
+              <div id="troncon-draw-actions" class="editor-actions" hidden>
+                <button id="cancel-troncon-draw" type="button" class="secondary">
+                  Annuler le dessin
+                </button>
+                <button id="restore-troncon-draw" type="button" class="secondary" hidden>
+                  Restaurer le dessin
+                </button>
+              </div>
+            </section>
+            <p id="heritage-create-message" class="editor-message" role="alert"></p>
+            <div id="heritage-create-actions" class="editor-actions">
+              <button id="cancel-create" type="button" class="secondary">Annuler</button>
+              <button id="submit-create" type="submit">Créer</button>
+            </div>
+          </form>
+          <form id="desordre-create-editor" class="disorder-form" hidden>
+            <label id="desordre-create-id-field" class="technical-identifier" hidden>
+              Identifiant
+              <input id="desordre-create-id" type="text" readonly>
+            </label>
+            <label>
+              Désignation
+              <input id="desordre-create-designation" name="designation" type="text">
+            </label>
+            <label>
+              Type de désordre
+              <select id="desordre-create-type-reference" name="type_desordre_id">
+                <option value="">Sans type</option>
+              </select>
+            </label>
+            <label>
+              Commentaire
+              <textarea id="desordre-create-commentaire" name="commentaire" rows="3"></textarea>
+            </label>
+            <div class="coordinate-grid">
+              <label>
+                Date de début
+                <input id="desordre-create-date-debut" name="date_debut" type="date">
+              </label>
+              <label>
+                Date de fin
+                <input id="desordre-create-date-fin" name="date_fin" type="date">
+              </label>
+            </div>
+            <label class="checkbox-field">
+              <input id="desordre-create-valid" name="valid" type="checkbox" checked>
+              Désordre valide
+            </label>
+            <label>
+              Tronçons concernés
+              <select id="desordre-create-troncons" name="troncon_ids" multiple size="5"></select>
+              <span class="field-help">Aucun, un ou plusieurs tronçons. Utilisez Ctrl/Cmd pour une sélection multiple.</span>
+            </label>
+            <label>
+              Type de géométrie
+              <select id="desordre-create-geometry-type" required>
+                <option value="Point">Point</option>
+                <option value="LineString">Ligne</option>
+                <option value="Polygon">Polygone</option>
+              </select>
+            </label>
+            <fieldset id="desordre-create-point-methods">
+              <legend>Position du Point</legend>
+              <p class="field-help mode-prompt">Choisissez votre mode d’édition</p>
+              <div class="mode-selector">
+              <label class="authority-choice">
+                <input type="radio" name="desordre-point-method" value="map" checked>
+                Cartographique
+              </label>
+              <label class="authority-choice">
+                <input type="radio" name="desordre-point-method" value="xy">
+                X/Y
+              </label>
+              <label class="authority-choice">
+                <input type="radio" name="desordre-point-method" value="lonlat">
+                Longitude/Latitude
+              </label>
+              <label id="desordre-create-point-bornage-choice" class="authority-choice" hidden>
+                <input type="radio" name="desordre-point-method" value="bornage">
+                Bornage
+              </label>
+              </div>
+              <div id="desordre-create-xy" class="coordinate-grid" hidden>
+                <label>X <input id="desordre-create-x" type="number" step="0.01"></label>
+                <label>Y <input id="desordre-create-y" type="number" step="0.01"></label>
+              </div>
+              <div id="desordre-create-lonlat" class="coordinate-grid" hidden>
+                <label>Longitude <input id="desordre-create-longitude" type="number" step="0.000001"></label>
+                <label>Latitude <input id="desordre-create-latitude" type="number" step="0.000001"></label>
+              </div>
+            </fieldset>
+            <fieldset id="desordre-create-line-methods" hidden>
+              <legend>Définition de la ligne</legend>
+              <p class="field-help mode-prompt">Choisissez votre mode d’édition</p>
+              <div class="mode-selector">
+                <label class="authority-choice"><input type="radio" name="desordre-line-method" value="map" checked>Cartographique</label>
+                <label class="authority-choice"><input type="radio" name="desordre-line-method" value="coordinates">Coordonnées</label>
+                <label id="desordre-create-line-bornage-choice" class="authority-choice" hidden><input type="radio" name="desordre-line-method" value="bornage">Bornage</label>
+              </div>
+            </fieldset>
+            <section id="desordre-create-line-coordinates" hidden>
+              <label>Référentiel
+                <select id="desordre-create-line-crs"><option value="EPSG:3950">X/Y EPSG:3950</option><option value="EPSG:4326">Longitude/Latitude EPSG:4326</option></select>
+              </label>
+              <div class="endpoint-grid">
+                <fieldset><legend>Début</legend><label><span class="line-axis-1">X</span><input id="desordre-create-line-start-1" type="number" step="any"></label><label><span class="line-axis-2">Y</span><input id="desordre-create-line-start-2" type="number" step="any"></label></fieldset>
+                <fieldset><legend>Fin</legend><label><span class="line-axis-1">X</span><input id="desordre-create-line-end-1" type="number" step="any"></label><label><span class="line-axis-2">Y</span><input id="desordre-create-line-end-2" type="number" step="any"></label></fieldset>
+              </div>
+            </section>
+            <section id="desordre-create-bornage" class="bornage-fields" hidden>
+              <p id="desordre-create-bornage-context" class="field-help"></p>
+              <div class="endpoint-grid">
+                <fieldset><legend>Début</legend><label>Borne<select id="desordre-create-borne-start"></select></label><label>Distance (m)<input id="desordre-create-distance-start" type="number" min="0" step="0.01"></label><label>Sens<select id="desordre-create-sense-start"><option value="AVANT_BORNE">Amont</option><option value="SUR_BORNE">Sur borne</option><option value="APRES_BORNE">Aval</option></select></label></fieldset>
+                <fieldset id="desordre-create-bornage-end"><legend>Fin</legend><label>Borne<select id="desordre-create-borne-end"></select></label><label>Distance (m)<input id="desordre-create-distance-end" type="number" min="0" step="0.01"></label><label>Sens<select id="desordre-create-sense-end"><option value="AVANT_BORNE">Amont</option><option value="SUR_BORNE">Sur borne</option><option value="APRES_BORNE">Aval</option></select></label></fieldset>
+              </div>
+            </section>
+            <section id="desordre-create-geometry" class="line-geometry-editor">
+              <strong id="desordre-create-geometry-title">Géométrie du désordre</strong>
+              <p id="desordre-create-geometry-help">Le dessin reste local jusqu’à « Créer ».</p>
+              <button id="start-desordre-draw" type="button" class="secondary wide-button">
+                Placer le Point
+              </button>
+              <p id="desordre-draw-status" class="graphic-status" role="status" hidden></p>
+              <div id="desordre-draw-actions" class="editor-actions" hidden>
+                <button id="cancel-desordre-draw" type="button" class="secondary">Annuler le dessin</button>
+                <button id="restore-desordre-draw" type="button" class="secondary" hidden>Restaurer le dessin</button>
+                <button id="validate-desordre-draw" type="button" hidden>Valider la géométrie</button>
+              </div>
+            </section>
+            <section id="polygon-representative-point" class="derived-information" hidden>
+              <strong>Point représentatif</strong>
+              <p class="field-help">Valeurs dérivées en lecture seule par ST_PointOnSurface.</p>
+              <div class="coordinate-grid">
+                <label>X (EPSG:3950)<input id="polygon-representative-x" type="text" readonly></label>
+                <label>Y (EPSG:3950)<input id="polygon-representative-y" type="text" readonly></label>
+                <label>Longitude<input id="polygon-representative-longitude" type="text" readonly></label>
+                <label>Latitude<input id="polygon-representative-latitude" type="text" readonly></label>
+              </div>
+            </section>
+            <p id="desordre-create-message" class="editor-message" role="alert"></p>
+            <div id="desordre-create-actions" class="editor-actions">
+              <button id="cancel-desordre-create" type="button" class="secondary">Annuler</button>
+              <button id="submit-desordre-create" type="submit">Créer</button>
+            </div>
+          </form>
+          <form id="point-editor" class="disorder-form">
+          <label class="technical-identifier">
             Identifiant
             <input id="desordre-id" type="text" readonly>
           </label>
@@ -84,20 +279,43 @@
           </label>
           <label>
             Type de désordre
-            <input id="type-desordre" type="text" readonly>
+            <select id="type-desordre"><option value="">Sans type</option></select>
           </label>
           <label>
             Commentaire
             <textarea id="commentaire" name="commentaire" rows="3"></textarea>
           </label>
+          <div class="coordinate-grid">
+            <label>Date de début<input id="point-date-debut" type="date"></label>
+            <label>Date de fin<input id="point-date-fin" type="date"></label>
+          </div>
+          <label class="checkbox-field"><input id="point-valid" type="checkbox">Désordre valide</label>
 
           <fieldset>
             <legend>Localisation</legend>
-            <p class="field-help">Choisir au plus une famille autoritaire avant l’enregistrement.</p>
+            <label>
+              Tronçon associé
+              <select id="point-edit-troncon"><option value="">Aucun tronçon</option></select>
+            </label>
+            <p class="field-help mode-prompt">Choisissez votre mode d’édition</p>
+            <div class="mode-selector">
+            <label class="authority-choice">
+              <input type="radio" name="coordinate-family" value="map" checked>
+              Cartographique
+            </label>
             <label class="authority-choice">
               <input type="radio" name="coordinate-family" value="xy">
-              Modifier X/Y
+              X/Y
             </label>
+            <label class="authority-choice">
+              <input type="radio" name="coordinate-family" value="lonlat">
+              Longitude/Latitude
+            </label>
+            <label id="point-bornage-mode-choice" class="authority-choice">
+              <input id="bornage-mode" type="radio" name="coordinate-family" value="bornage">
+              Bornage
+            </label>
+            </div>
             <div class="coordinate-grid">
               <label>
                 X EPSG:3950
@@ -108,10 +326,6 @@
                 <input id="coord-y" type="number" step="0.01" readonly>
               </label>
             </div>
-            <label class="authority-choice">
-              <input type="radio" name="coordinate-family" value="lonlat">
-              Modifier longitude/latitude
-            </label>
             <div class="coordinate-grid">
               <label>
                 Longitude EPSG:4326
@@ -122,10 +336,6 @@
                 <input id="latitude" type="number" step="0.000001" readonly>
               </label>
             </div>
-            <label class="authority-choice">
-              <input id="bornage-mode" type="radio" name="coordinate-family" value="bornage">
-              Modifier le bornage
-            </label>
             <p id="bornage-availability" class="field-help"></p>
             <div id="bornage-fields" class="bornage-fields" hidden>
               <label>
@@ -186,22 +396,30 @@
             <button id="save-edit" type="submit">Enregistrer</button>
           </div>
           </form>
-          <form id="line-editor" hidden>
-            <label>
+          <form id="line-editor" class="disorder-form" hidden>
+            <label class="technical-identifier">
               Identifiant
               <input id="line-desordre-id" type="text" readonly>
             </label>
             <label>
               Désignation
-              <input id="line-designation" type="text" readonly>
+              <input id="line-designation" type="text">
             </label>
             <label>
               Type de désordre
-              <input id="line-type-desordre" type="text" readonly>
+              <select id="line-type-desordre"><option value="">Sans type</option></select>
             </label>
             <label>
               Commentaire
-              <textarea id="line-commentaire" rows="3" readonly></textarea>
+              <textarea id="line-commentaire" rows="3"></textarea>
+            </label>
+            <div class="coordinate-grid">
+              <label>Date de début<input id="line-date-debut" type="date"></label>
+              <label>Date de fin<input id="line-date-fin" type="date"></label>
+            </div>
+            <label class="checkbox-field"><input id="line-valid" type="checkbox">Désordre valide</label>
+            <label>Tronçons concernés
+              <select id="line-edit-troncons" multiple size="5"></select>
             </label>
             <div class="coordinate-grid">
               <label>
@@ -217,7 +435,28 @@
               Repérage relu
               <textarea id="line-reperage-summary" rows="2" readonly></textarea>
             </label>
-            <section class="line-geometry-editor" aria-labelledby="line-geometry-title">
+            <p class="field-help mode-prompt">Choisissez votre mode d’édition</p>
+            <div class="mode-selector" id="line-edit-mode-selector">
+              <label class="authority-choice"><input type="radio" name="line-edit-mode" value="map" checked>Cartographique</label>
+              <label class="authority-choice"><input type="radio" name="line-edit-mode" value="coordinates">Coordonnées</label>
+              <label id="line-edit-bornage-choice" class="authority-choice" hidden><input type="radio" name="line-edit-mode" value="bornage">Bornage</label>
+            </div>
+            <section id="line-coordinate-editor" hidden>
+              <label>Référentiel<select id="line-endpoints-crs"><option value="EPSG:3950">X/Y EPSG:3950</option><option value="EPSG:4326">Longitude/Latitude EPSG:4326</option></select></label>
+              <div class="endpoint-grid">
+                <fieldset><legend>Début</legend><label><span class="line-axis-1">X</span><input id="line-start-1" type="number" step="any"></label><label><span class="line-axis-2">Y</span><input id="line-start-2" type="number" step="any"></label></fieldset>
+                <fieldset><legend>Fin</legend><label><span class="line-axis-1">X</span><input id="line-end-1" type="number" step="any"></label><label><span class="line-axis-2">Y</span><input id="line-end-2" type="number" step="any"></label></fieldset>
+              </div>
+              <div class="editor-actions"><button id="save-line-endpoints" type="button">Enregistrer les extrémités</button></div>
+            </section>
+            <section id="line-bornage-editor" class="bornage-fields" hidden>
+              <div class="endpoint-grid">
+                <fieldset><legend>Début</legend><label>Borne<select id="line-borne-start"></select></label><label>Distance (m)<input id="line-distance-start" type="number" min="0" step="0.01"></label><label>Sens<select id="line-sense-start"><option value="AVANT_BORNE">Amont</option><option value="SUR_BORNE">Sur borne</option><option value="APRES_BORNE">Aval</option></select></label></fieldset>
+                <fieldset><legend>Fin</legend><label>Borne<select id="line-borne-end"></select></label><label>Distance (m)<input id="line-distance-end" type="number" min="0" step="0.01"></label><label>Sens<select id="line-sense-end"><option value="AVANT_BORNE">Amont</option><option value="SUR_BORNE">Sur borne</option><option value="APRES_BORNE">Aval</option></select></label></fieldset>
+              </div>
+              <div class="editor-actions"><button id="save-line-bornage" type="button">Enregistrer le bornage</button></div>
+            </section>
+            <section id="line-map-editor" class="line-geometry-editor" aria-labelledby="line-geometry-title">
               <strong id="line-geometry-title">Géométrie graphique</strong>
               <p>Les sommets restent provisoires jusqu’à validation.</p>
               <button id="start-line-edit" type="button" class="secondary wide-button">
@@ -235,6 +474,7 @@
                 </div>
               </div>
             </section>
+            <div class="editor-actions"><button id="save-line-metadata" type="button">Enregistrer les informations</button></div>
             <p id="line-editor-message" class="editor-message" role="alert"></p>
           </form>
         </section>
