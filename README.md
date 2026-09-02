@@ -803,10 +803,16 @@ avec une contrainte autorisant actuellement :
 - Polygon ;
 - NULL.
 
-Une géométrie source valide est conservée avec tous ses sommets.
+Pour les seuls `Desordre` historiques, `geometry` CouchDB peut être une
+représentation projetée ou reconstruite par SIRS sur le tronçon. La migration
+utilise donc prioritairement `positionDebut` et `positionFin`, qui constituent
+la meilleure géométrie physique encore disponible : des positions identiques
+produisent un Point et des positions différentes une LineString à deux sommets.
 
-`positionDebut` et `positionFin` ne sont utilisés qu'en fallback lorsqu'une
-géométrie exploitable n'est pas disponible.
+Les sommets intermédiaires d'une ancienne géométrie QGIS ont déjà été perdus
+lors de l'import historique dans SIRS et ne sont pas recréés. `geometry` n'est
+utilisée qu'en fallback lorsque les positions sont inexploitables. Cette règle
+est propre aux `Desordre` et ne s'applique pas aux autres classes géométriques.
 
 ---
 

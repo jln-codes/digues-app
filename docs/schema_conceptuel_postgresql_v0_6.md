@@ -197,12 +197,22 @@ des colonnes métier indépendantes.
 
 ### LineString
 
-- tous les sommets CouchDB valides sont conservés à la migration ;
+- à la migration historique des `Desordre`, `positionDebut` et `positionFin`
+  produisent la LineString physique à deux sommets ; `Desordre.geometry`
+  CouchDB n'est pas prioritaire car SIRS peut l'avoir projetée ou reconstruite
+  sur le tronçon ;
+- les sommets intermédiaires d'une ancienne géométrie QGIS, perdus lors de
+  l'import historique dans SIRS, ne sont pas recréés ;
 - l'édition cartographique conserve la ligne complète ;
 - seuls `ST_StartPoint` et `ST_EndPoint` alimentent le repérage ;
 - le recalage explicite remplace la ligne par une portion du tronçon.
 
 ### Polygon
+
+Les `Desordre` SIRS historiques ne sont pas polygonaux. Un éventuel Polygon
+CouchDB valide n'est conservé qu'en fallback de compatibilité lorsque les deux
+positions historiques sont inexploitables ; il ne constitue pas un cas métier
+historique normal.
 
 Le polygone est éditable uniquement sur la carte. Il ne possède pas de
 repérage longitudinal éditable et ne peut jamais être reconstruit depuis une

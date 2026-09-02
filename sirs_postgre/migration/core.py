@@ -140,9 +140,15 @@ CORE_FIELD_MAPPINGS = {
         "categorieDesordreId → contrôle de cohérence uniquement, non stocké",
         "designation/commentaire → textes inchangés → colonnes homonymes",
         "date_debut/date_fin ISO → DATE → colonnes homonymes",
-        "geometry WKT valide + CRS global → géométrie complète reprojetée en 3950",
+        (
+            "positionDebut/positionFin valides + CRS global → "
+            "Point ou segment physique reprojeté en 3950"
+        ),
+        (
+            "geometry WKT valide → fallback uniquement si les positions "
+            "sont inexploitables"
+        ),
         "valid → booléen inchangé → valid",
-        "positionDebut/positionFin → fallback si geometry est inexploitable",
     ),
     "link_desordres_troncons": (
         "aucune source → gen_random_uuid() PostgreSQL → id technique",
@@ -417,11 +423,24 @@ def desordre_geometry_from_source(
     *,
     desordre_id: Any,
 ) -> tuple[str | None, str, str | None]:
-    """Préserve la géométrie source exploitable, sinon utilise les positions.
+    """Construit la géométrie physique d'un Desordre historique.
 
-    Les anciennes positions ne sont qu'un fallback : elles ne doivent jamais
-    réduire une LineString source valide à son segment début/fin.
+    Les positions sont prioritaires : ``geometry`` peut être une projection
+    produite par SIRS sur le tronçon. La géométrie source n'est conservée qu'en
+    fallback lorsque les deux positions ne permettent aucune construction.
+    Un Polygon ainsi conservé reste un cas de compatibilité hors du modèle
+    historique observé.
     """
+
+    position_geometry, position_kind, position_warning = (
+        desordre_geometry_from_positions(
+            position_debut,
+            position_fin,
+            desordre_id=desordre_id,
+        )
+    )
+    if position_geometry is not None:
+        return position_geometry, position_kind, None
 
     if isinstance(source_geometry, str):
         geometry = inspect_wkt(source_geometry)
@@ -437,11 +456,7 @@ def desordre_geometry_from_source(
                 "null",
                 f"Desordre {desordre_id}: Polygon source invalide ; geometry cible NULL",
             )
-    return desordre_geometry_from_positions(
-        position_debut,
-        position_fin,
-        desordre_id=desordre_id,
-    )
+    return None, "null", position_warning
 
 
 def _required_text(document: Mapping[str, Any], field: str, context: str) -> str:

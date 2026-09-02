@@ -178,18 +178,64 @@ class FakeMigrationConnection:
 
 
 class CoreTransformationTest(unittest.TestCase):
-    def test_multivertex_desordre_geometry_is_preserved_before_positions_fallback(self):
+    def test_multivertex_desordre_geometry_is_ignored_when_positions_are_valid(self):
         source = "LINESTRING (0 0, 10 4, 20 -2, 30 8, 40 0)"
         wkt, kind, warning = desordre_geometry_from_source(
             source,
-            "POINT (0 0)",
-            "POINT (40 0)",
+            "POINT (2 3)",
+            "POINT (42 9)",
             desordre_id="multi-sommets",
+        )
+        self.assertEqual(wkt, "LINESTRING (2 3, 42 9)")
+        self.assertEqual(kind, "linestring")
+        self.assertIsNone(warning)
+        self.assertEqual(wkt.count(",") + 1, 2)
+
+    def test_two_vertex_desordre_geometry_is_ignored_when_positions_are_valid(self):
+        wkt, kind, warning = desordre_geometry_from_source(
+            "LINESTRING (100 100, 200 200)",
+            "POINT (10 20)",
+            "POINT (30 40)",
+            desordre_id="deux-sommets",
+        )
+        self.assertEqual(wkt, "LINESTRING (10 20, 30 40)")
+        self.assertEqual(kind, "linestring")
+        self.assertIsNone(warning)
+
+    def test_degenerate_desordre_geometry_uses_identical_positions_as_point(self):
+        wkt, kind, warning = desordre_geometry_from_source(
+            "LINESTRING (99 99, 99 99)",
+            "POINT (10 20)",
+            "POINT (10.0 20.00)",
+            desordre_id="ponctuel",
+        )
+        self.assertEqual(wkt, "POINT (10 20)")
+        self.assertEqual(kind, "point")
+        self.assertIsNone(warning)
+
+    def test_source_geometry_is_only_a_fallback_when_one_position_is_missing(self):
+        source = "LINESTRING (1 2, 3 4)"
+        wkt, kind, warning = desordre_geometry_from_source(
+            source,
+            "POINT (10 20)",
+            None,
+            desordre_id="position-manquante",
         )
         self.assertEqual(wkt, source)
         self.assertEqual(kind, "linestring")
         self.assertIsNone(warning)
-        self.assertEqual(wkt.count(",") + 1, 5)
+
+    def test_source_geometry_is_only_a_fallback_when_both_positions_are_invalid(self):
+        source = "POINT (5 6)"
+        wkt, kind, warning = desordre_geometry_from_source(
+            source,
+            "invalide",
+            None,
+            desordre_id="positions-invalides",
+        )
+        self.assertEqual(wkt, source)
+        self.assertEqual(kind, "point")
+        self.assertIsNone(warning)
 
     def test_urgency_uses_the_observed_couchdb_class(self):
         self.assertEqual(
@@ -260,12 +306,24 @@ class CoreTransformationTest(unittest.TestCase):
         self.assertEqual(kind, "null")
         self.assertIn("geometry cible NULL", warning)
 
-    def test_valid_source_polygon_is_preserved_for_future_sirs_bases(self):
+    def test_source_polygon_is_ignored_when_historical_positions_are_valid(self):
         polygon = "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))"
         wkt, kind, warning = desordre_geometry_from_source(
             polygon,
             "POINT (1 1)",
             "POINT (2 2)",
+            desordre_id="d1",
+        )
+        self.assertEqual(wkt, "LINESTRING (1 1, 2 2)")
+        self.assertEqual(kind, "linestring")
+        self.assertIsNone(warning)
+
+    def test_valid_source_polygon_is_preserved_only_as_compatibility_fallback(self):
+        polygon = "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))"
+        wkt, kind, warning = desordre_geometry_from_source(
+            polygon,
+            None,
+            None,
             desordre_id="d1",
         )
         self.assertEqual(wkt, polygon)
@@ -275,8 +333,8 @@ class CoreTransformationTest(unittest.TestCase):
     def test_invalid_source_polygon_is_not_silently_rebuilt(self):
         wkt, kind, warning = desordre_geometry_from_source(
             "POLYGON ((0 0, 1 0, 0 0, 0 0))",
-            "POINT (1 1)",
-            "POINT (2 2)",
+            None,
+            None,
             desordre_id="d1",
         )
         self.assertIsNone(wkt)
