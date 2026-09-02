@@ -338,6 +338,7 @@
             </div>
             <p id="bornage-availability" class="field-help"></p>
             <div id="bornage-fields" class="bornage-fields" hidden>
+              <p class="bornage-warning" role="note">Attention : modifier le bornage repositionne le point sur le tronçon associé. Sa position actuelle est remplacée.</p>
               <label>
                 Tronçon associé
                 <input id="reperage-troncon" type="text" readonly>
@@ -393,6 +394,7 @@
           <p id="editor-message" class="editor-message" role="alert"></p>
           <div class="editor-actions">
             <button id="cancel-edit" type="button" class="secondary">Annuler</button>
+            <button id="reproject-point-bornage" type="button" class="secondary" hidden>Reprojeter</button>
             <button id="save-edit" type="submit">Enregistrer</button>
           </div>
           </form>
@@ -450,11 +452,12 @@
               <div class="editor-actions"><button id="save-line-endpoints" type="button">Enregistrer les extrémités</button></div>
             </section>
             <section id="line-bornage-editor" class="bornage-fields" hidden>
+              <p class="bornage-warning" role="note">Attention : modifier le bornage remplace la géométrie actuelle par la portion correspondante du tronçon. Les sommets de la géométrie actuelle sont perdus.</p>
               <div class="endpoint-grid">
                 <fieldset><legend>Début</legend><label>Borne<select id="line-borne-start"></select></label><label>Distance (m)<input id="line-distance-start" type="number" min="0" step="0.01"></label><label>Sens<select id="line-sense-start"><option value="AVANT_BORNE">Amont</option><option value="SUR_BORNE">Sur borne</option><option value="APRES_BORNE">Aval</option></select></label></fieldset>
                 <fieldset><legend>Fin</legend><label>Borne<select id="line-borne-end"></select></label><label>Distance (m)<input id="line-distance-end" type="number" min="0" step="0.01"></label><label>Sens<select id="line-sense-end"><option value="AVANT_BORNE">Amont</option><option value="SUR_BORNE">Sur borne</option><option value="APRES_BORNE">Aval</option></select></label></fieldset>
               </div>
-              <div class="editor-actions"><button id="save-line-bornage" type="button">Enregistrer le bornage</button></div>
+              <div class="editor-actions"><button id="reproject-line-bornage" type="button" class="secondary">Reprojeter</button><button id="save-line-bornage" type="button">Enregistrer</button></div>
             </section>
             <section id="line-map-editor" class="line-geometry-editor" aria-labelledby="line-geometry-title">
               <strong id="line-geometry-title">Géométrie graphique</strong>

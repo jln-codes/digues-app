@@ -618,6 +618,15 @@ body:not(.show-uuid) .technical-identifier {
   display: none;
 }
 
+.bornage-warning {
+  background: #fff3df;
+  border-left: 3px solid #b8470a;
+  color: #70300d;
+  font-weight: 650;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+}
+
 #point-editor fieldset {
   border: 1px solid #cdd6d0;
   border-radius: 0.35rem;

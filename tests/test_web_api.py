@@ -580,6 +580,52 @@ process.stdout.write(JSON.stringify({
         self.assertIn("renderServerFeature(feature)", script)
         self.assertIn("updatePointLayer(feature)", script)
 
+    def test_reproject_buttons_and_warnings_match_editable_geometry_types(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        point_actions = page.split('id="cancel-edit"', 1)[1].split("</div>", 1)[0]
+        line_actions = page.split('id="line-bornage-editor"', 1)[1].split(
+            "</section>", 1
+        )[0]
+        self.assertIn('id="reproject-point-bornage"', point_actions)
+        self.assertLess(
+            point_actions.index('id="reproject-point-bornage"'),
+            point_actions.index('id="save-edit"'),
+        )
+        self.assertIn('id="reproject-line-bornage"', line_actions)
+        self.assertLess(
+            line_actions.index('id="reproject-line-bornage"'),
+            line_actions.index('id="save-line-bornage"'),
+        )
+        self.assertEqual(page.count('>Reprojeter</button>'), 2)
+        self.assertIn("modifier le bornage repositionne le point", page)
+        self.assertIn("Les sommets de la géométrie actuelle sont perdus", page)
+        self.assertIn(
+            'reprojectPointBornageButton.hidden = family !== "bornage"',
+            script,
+        )
+        self.assertIn("editorForm.requestSubmit()", script)
+        self.assertIn("applyLineReperage", script)
+        polygon_editor = script.split("function showReadonlyPolygon", 1)[1].split(
+            "desordreCreateForm.addEventListener", 1
+        )[0]
+        self.assertIn("editorForm.hidden = true", polygon_editor)
+        self.assertIn("lineEditorForm.hidden = true", polygon_editor)
+        self.assertIn("desordreCreateBornage.hidden = true", polygon_editor)
+
+    def test_reproject_actions_use_current_payload_without_dirty_check(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        point_handler = script.split(
+            'reprojectPointBornageButton.addEventListener("click"', 1
+        )[1].split(");\n});", 1)[0]
+        line_handler = script.split(
+            'reprojectLineBornageButton.addEventListener("click"', 1
+        )[1].split("saveLineBornageButton.addEventListener", 1)[0]
+        self.assertIn("editorForm.requestSubmit(", point_handler)
+        self.assertIn("applyLineReperage", line_handler)
+        self.assertNotIn("initialFormValues", point_handler)
+        self.assertNotIn("initialLineReperageValues", line_handler)
+
     def test_frontend_has_explicit_linestring_editing_without_drag_writes(self):
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
@@ -1493,6 +1539,31 @@ class WebPostGISIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(stored[7], reperage["pr_debut"])
 
+    def test_put_unchanged_point_reperage_still_repositions_geometry(self):
+        before = fetch_point_desordre(
+            self.connection,
+            self.reperage_desordre_id,
+        )["properties"]["reperage"]
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('sirs.reperage_guard', 'REPERAGE', true)")
+            cursor.execute(
+                "UPDATE public.desordres SET geometry = "
+                "ST_SetSRID(ST_Point(70, 30), 3950) WHERE id = %s",
+                (self.reperage_desordre_id,),
+            )
+            cursor.execute("SELECT set_config('sirs.reperage_guard', '', true)")
+        feature = update_point_reperage(
+            self.connection,
+            self.reperage_desordre_id,
+            PointReperageUpdate(
+                borne_debut_id=before["borne_debut_id"],
+                distance_debut_m=before["distance_debut_m"],
+                position_debut_relative=before["position_debut_relative"],
+            ),
+        )
+        self.assertAlmostEqual(feature["properties"]["coord_x_3950"], 10)
+        self.assertAlmostEqual(feature["properties"]["coord_y_3950"], 0)
+
     def test_put_reperage_rejects_zero_or_many_associated_troncons(self):
         update = PointReperageUpdate(
             borne_debut_id=self.borne_debut_id,
@@ -1608,6 +1679,44 @@ class WebPostGISIntegrationTest(unittest.TestCase):
         self.assertTrue(equals_substring)
         self.assertGreater(vertex_count, 2)
         self.assertFalse(keeps_old_middle)
+
+    def test_put_unchanged_line_reperage_still_replaces_free_geometry(self):
+        before = fetch_line_desordre(
+            self.connection,
+            self.line_desordre_id,
+        )["properties"]["reperage"]
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('sirs.reperage_guard', 'REPERAGE', true)")
+            cursor.execute(
+                "UPDATE public.desordres SET geometry = ST_GeomFromText("
+                "'LINESTRING(5 0,30 25,60 -20,80 0)', 3950) WHERE id = %s",
+                (self.line_desordre_id,),
+            )
+            cursor.execute("SELECT set_config('sirs.reperage_guard', '', true)")
+        feature = update_point_reperage(
+            self.connection,
+            self.line_desordre_id,
+            PointReperageUpdate(
+                borne_debut_id=before["borne_debut_id"],
+                distance_debut_m=before["distance_debut_m"],
+                position_debut_relative=before["position_debut_relative"],
+                borne_fin_id=before["borne_fin_id"],
+                distance_fin_m=before["distance_fin_m"],
+                position_fin_relative=before["position_fin_relative"],
+            ),
+        )
+        self.assertEqual(feature["geometry"]["type"], "LineString")
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT ST_Equals(d.geometry, ST_LineSubstring(t.geometry, 0.05, 0.8)), "
+                "ST_DWithin(d.geometry, ST_SetSRID(ST_Point(30, 25), 3950), 0.01) "
+                "FROM public.desordres AS d JOIN public.troncons AS t ON t.id = %s "
+                "WHERE d.id = %s",
+                (self.reperage_troncon_id, self.line_desordre_id),
+            )
+            equals_substring, keeps_free_middle = cursor.fetchone()
+        self.assertTrue(equals_substring)
+        self.assertFalse(keeps_free_middle)
 
     def test_point_link_update_rejects_multiple_troncons_transactionally(self):
         with self.assertRaisesRegex(PointDesordreUpdateError, "au plus un"):

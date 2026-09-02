@@ -95,6 +95,7 @@ const editorObjectSubtitle = document.querySelector("#editor-object-subtitle");
 const editorTabs = document.querySelector(".editor-tabs");
 const editorMessage = document.querySelector("#editor-message");
 const saveButton = document.querySelector("#save-edit");
+const reprojectPointBornageButton = document.querySelector("#reproject-point-bornage");
 const cancelEditButton = document.querySelector("#cancel-edit");
 const closeEditorButton = document.querySelector("#close-editor");
 const startMapPositionButton = document.querySelector("#start-map-position");
@@ -186,6 +187,7 @@ const lineSenseStart = document.querySelector("#line-sense-start");
 const lineBorneEnd = document.querySelector("#line-borne-end");
 const lineDistanceEnd = document.querySelector("#line-distance-end");
 const lineSenseEnd = document.querySelector("#line-sense-end");
+const reprojectLineBornageButton = document.querySelector("#reproject-line-bornage");
 const saveLineBornageButton = document.querySelector("#save-line-bornage");
 const saveLineMetadataButton = document.querySelector("#save-line-metadata");
 
@@ -2023,6 +2025,7 @@ function updateCoordinateInputs() {
   fields.valid.disabled = family === "bornage" || graphicEditActive;
   pointEditTroncon.disabled = family === "bornage" || graphicEditActive;
   startMapPositionButton.disabled = family !== "map";
+  reprojectPointBornageButton.hidden = family !== "bornage";
 }
 
 function clearCoordinateAuthority() {
@@ -2660,6 +2663,10 @@ reperageFields.sens.addEventListener("change", () => {
   }
 });
 
+reprojectPointBornageButton.addEventListener("click", () => {
+  editorForm.requestSubmit();
+});
+
 Array.from(lineEditorForm.elements["line-edit-mode"]).forEach((radio) => {
   radio.addEventListener("change", updateLineModeControls);
 });
@@ -2725,23 +2732,45 @@ saveLineEndpointsButton.addEventListener("click", () => {
   }, "Extrémités modifiées sans supprimer les sommets intermédiaires.");
 });
 
-saveLineBornageButton.addEventListener("click", () => {
+function buildLineReperagePayload() {
   const startDistance = Number(lineDistanceStart.value);
   const endDistance = Number(lineDistanceEnd.value);
   if (!lineBorneStart.value || !lineBorneEnd.value
       || !Number.isFinite(startDistance) || !Number.isFinite(endDistance)) {
-    lineEditorMessage.textContent = "Le bornage de début et de fin est obligatoire.";
-    lineEditorMessage.classList.add("error");
-    return;
+    throw new Error("Le bornage de début et de fin est obligatoire.");
   }
-  saveLineRequest("/reperage", {
+  return {
     borne_debut_id: lineBorneStart.value,
     distance_debut_m: startDistance,
     position_debut_relative: lineSenseStart.value,
     borne_fin_id: lineBorneEnd.value,
     distance_fin_m: endDistance,
     position_fin_relative: lineSenseEnd.value,
-  }, "Bornage appliqué aux extrémités ; sommets intermédiaires conservés.");
+  };
+}
+
+function applyLineReperage(successMessage) {
+  let payload;
+  try {
+    payload = buildLineReperagePayload();
+  } catch (error) {
+    lineEditorMessage.textContent = error.message;
+    lineEditorMessage.classList.add("error");
+    return;
+  }
+  saveLineRequest("/reperage", payload, successMessage);
+}
+
+reprojectLineBornageButton.addEventListener("click", () => {
+  applyLineReperage(
+    "Ligne reprojetée depuis le bornage ; la géométrie libre a été remplacée.",
+  );
+});
+
+saveLineBornageButton.addEventListener("click", () => {
+  applyLineReperage(
+    "Bornage enregistré ; géométrie reconstruite depuis le tronçon.",
+  );
 });
 
 [lineSenseStart, lineSenseEnd].forEach((select) => {
