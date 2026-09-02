@@ -450,6 +450,16 @@ class CoreTransformationTest(unittest.TestCase):
             )
         self.assertIs(connection.rolled_back, True)
 
+    def test_negative_reprojection_tolerance_is_rejected(self):
+        prepared = prepare_core_migration(source_fixture())
+        cursor = FakeMigrationCursor([])
+        with self.assertRaisesRegex(CoreMigrationError, "tolérance"):
+            _insert_prepared_core(
+                cursor,
+                prepared,
+                on_troncon_tolerance=-0.001,
+            )
+
     def test_all_core_geometry_inserts_use_shared_reprojection_expression(self):
         prepared = prepare_core_migration(source_fixture())
         cursor = FakeMigrationCursor([])
@@ -467,11 +477,30 @@ class CoreTransformationTest(unittest.TestCase):
             )
         )
 
-    def test_invalid_reference_is_blocking(self):
+    def test_invalid_troncon_reference_keeps_ab_geometry_without_link(self):
         documents = copy.deepcopy(source_fixture())
         documents["Desordre"][0]["linearId"] = IDS["photo_2"]
-        with self.assertRaisesRegex(CoreMigrationError, "tronçon absent"):
-            prepare_core_migration(documents)
+        documents["Desordre"][0]["positionFin"] = "POINT (30 40)"
+        prepared = prepare_core_migration(documents)
+        self.assertEqual(
+            prepared.desordres[0].geometry_wkt,
+            "LINESTRING (10 20, 30 40)",
+        )
+        self.assertIsNone(prepared.desordres[0].troncon_id)
+        self.assertEqual(prepared.links, ())
+        self.assertTrue(any("linearId" in warning for warning in prepared.warnings))
+
+    def test_missing_troncon_reference_keeps_ab_geometry_without_link(self):
+        documents = copy.deepcopy(source_fixture())
+        del documents["Desordre"][0]["linearId"]
+        documents["Desordre"][0]["positionFin"] = "POINT (30 40)"
+        prepared = prepare_core_migration(documents)
+        self.assertEqual(
+            prepared.desordres[0].geometry_wkt,
+            "LINESTRING (10 20, 30 40)",
+        )
+        self.assertIsNone(prepared.desordres[0].troncon_id)
+        self.assertEqual(prepared.links, ())
 
     def test_type_without_source_category_is_migrated_without_warning(self):
         documents = copy.deepcopy(source_fixture())

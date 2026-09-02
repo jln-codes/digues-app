@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
+import math
 import re
 from typing import Any
 from uuid import UUID
@@ -73,6 +74,8 @@ CORE_SOURCE_CLASSES = {
     **AMENAGEMENT_SOURCE_CLASSES,
     **VEGETATION_SOURCE_CLASSES,
 }
+
+DEFAULT_ON_TRONCON_TOLERANCE = 0.0001
 
 CORE_FIELD_MAPPINGS = {
     "ref_categories_desordre": (
@@ -142,7 +145,7 @@ CORE_FIELD_MAPPINGS = {
         "date_debut/date_fin ISO → DATE → colonnes homonymes",
         (
             "positionDebut/positionFin valides + CRS global → "
-            "Point ou segment physique reprojeté en 3950"
+            "Point, segment A-B ou sous-ligne du tronçon canonique → geometry 3950"
         ),
         (
             "geometry WKT valide → fallback uniquement si les positions "
@@ -292,6 +295,8 @@ class DesordreRow:
     date_fin: date | None
     geometry_wkt: str | None
     geometry_kind: str
+    troncon_id: UUID | None
+    reproject_on_troncon_eligible: bool
     valid: bool
 
 
@@ -701,6 +706,23 @@ def prepare_core_migration(
         raw_id = doc.get("_id")
         context = f"Desordre {raw_id}"
         desordre_id = couchdb_id_to_uuid(raw_id, context=f"{context}._id")
+        raw_troncon_id = doc.get("linearId")
+        try:
+            candidate_troncon_id = couchdb_id_to_uuid(
+                raw_troncon_id, context=f"{context}.linearId"
+            )
+        except CoreMigrationError:
+            candidate_troncon_id = None
+        troncon_id = (
+            candidate_troncon_id
+            if candidate_troncon_id in troncon_ids
+            else None
+        )
+        if troncon_id is None:
+            warnings.append(
+                f"{context}: linearId absent, invalide ou sans tronçon correspondant ; "
+                "géométrie A-B conservée et relation au tronçon non créée"
+            )
         geometry_wkt, geometry_kind, warning = desordre_geometry_from_source(
             doc.get("geometry"),
             doc.get("positionDebut"),
@@ -751,20 +773,25 @@ def prepare_core_migration(
                 date_fin=_optional_date(doc, "date_fin", context),
                 geometry_wkt=geometry_wkt,
                 geometry_kind=geometry_kind,
+                troncon_id=troncon_id,
+                reproject_on_troncon_eligible=(
+                    desordre_geometry_from_positions(
+                        doc.get("positionDebut"),
+                        doc.get("positionFin"),
+                        desordre_id=raw_id,
+                    )[1]
+                    == "linestring"
+                ),
                 valid=_required_bool(doc, "valid", context),
             )
         )
-        troncon_id = couchdb_id_to_uuid(
-            doc.get("linearId"), context=f"{context}.linearId"
-        )
-        if troncon_id not in troncon_ids:
-            raise CoreMigrationError(f"{context}: linearId référence un tronçon absent")
-        links_list.append(
-            LinkDesordreTronconRow(
-                desordre_id=desordre_id,
-                troncon_id=troncon_id,
+        if troncon_id is not None:
+            links_list.append(
+                LinkDesordreTronconRow(
+                    desordre_id=desordre_id,
+                    troncon_id=troncon_id,
+                )
             )
-        )
 
     desordres = tuple(desordres_list)
     links = tuple(links_list)
@@ -926,10 +953,61 @@ INSERT_STATEMENTS = {
         VALUES (%s, %s, %s, {geometry_sql()}, %s)
     """,
     "desordres": f"""
+        WITH source_geometry AS (
+            SELECT {geometry_sql()} AS geometry
+        )
         INSERT INTO public.desordres
             (id, type_desordre_id, designation, commentaire,
              date_debut, date_fin, geometry, valid)
-        VALUES (%s, %s, %s, %s, %s, %s, {geometry_sql()}, %s)
+        SELECT %s, %s, %s, %s, %s, %s,
+               CASE
+                   WHEN %s AND %s AND troncons.geometry IS NOT NULL
+                        AND ST_DWithin(
+                            ST_StartPoint(source_geometry.geometry),
+                            troncons.geometry,
+                            %s
+                        )
+                        AND ST_DWithin(
+                            ST_EndPoint(source_geometry.geometry),
+                            troncons.geometry,
+                            %s
+                        )
+                   THEN CASE
+                       WHEN ST_LineLocatePoint(
+                           troncons.geometry,
+                           ST_StartPoint(source_geometry.geometry)
+                       ) <= ST_LineLocatePoint(
+                           troncons.geometry,
+                           ST_EndPoint(source_geometry.geometry)
+                       )
+                       THEN ST_LineSubstring(
+                           troncons.geometry,
+                           ST_LineLocatePoint(
+                               troncons.geometry,
+                               ST_StartPoint(source_geometry.geometry)
+                           ),
+                           ST_LineLocatePoint(
+                               troncons.geometry,
+                               ST_EndPoint(source_geometry.geometry)
+                           )
+                       )
+                       ELSE ST_Reverse(ST_LineSubstring(
+                           troncons.geometry,
+                           ST_LineLocatePoint(
+                               troncons.geometry,
+                               ST_EndPoint(source_geometry.geometry)
+                           ),
+                           ST_LineLocatePoint(
+                               troncons.geometry,
+                               ST_StartPoint(source_geometry.geometry)
+                           )
+                       ))
+                   END
+                   ELSE source_geometry.geometry
+               END,
+               %s
+        FROM source_geometry
+        LEFT JOIN public.troncons ON troncons.id = %s
     """,
     "link_desordres_troncons": """
         INSERT INTO public.link_desordres_troncons (desordre_id, troncon_id)
@@ -968,7 +1046,15 @@ def _insert_prepared_core(
     cursor: Any,
     prepared: PreparedCoreMigration,
     crs_info: CRSInfo | None = None,
+    *,
+    reproject_on_troncon: bool = True,
+    on_troncon_tolerance: float = DEFAULT_ON_TRONCON_TOLERANCE,
 ) -> None:
+    if not math.isfinite(on_troncon_tolerance) or on_troncon_tolerance < 0:
+        raise CoreMigrationError(
+            "La tolérance de reconstruction sur le tronçon doit être un nombre "
+            "supérieur ou égal à 0."
+        )
     statements = dict(INSERT_STATEMENTS)
     geometry_expression = geometry_sql(crs_info)
     for table in ("troncons", "desordres"):
@@ -1013,14 +1099,19 @@ def _insert_prepared_core(
             "desordres",
             [
                 (
+                    row.geometry_wkt,
                     row.id,
                     row.type_desordre_id,
                     row.designation,
                     row.commentaire,
                     row.date_debut,
                     row.date_fin,
-                    row.geometry_wkt,
+                    reproject_on_troncon,
+                    row.reproject_on_troncon_eligible,
+                    on_troncon_tolerance,
+                    on_troncon_tolerance,
                     row.valid,
+                    row.troncon_id,
                 )
                 for row in prepared.desordres
             ],
@@ -1085,6 +1176,8 @@ def execute_core_migration(
     *,
     connector: Callable[..., Any] | None = None,
     crs_info: CRSInfo | None = None,
+    reproject_on_troncon: bool = True,
+    on_troncon_tolerance: float = DEFAULT_ON_TRONCON_TOLERANCE,
 ) -> CoreValidationResult:
     """Insère et valide tout le noyau dans une transaction PostgreSQL unique."""
 
@@ -1096,7 +1189,13 @@ def execute_core_migration(
                 if crs_info is not None:
                     validate_crs(cursor, crs_info)
                 ensure_target_empty(cursor)
-                _insert_prepared_core(cursor, prepared, crs_info)
+                _insert_prepared_core(
+                    cursor,
+                    prepared,
+                    crs_info,
+                    reproject_on_troncon=reproject_on_troncon,
+                    on_troncon_tolerance=on_troncon_tolerance,
+                )
                 return validate_core_migration(
                     cursor,
                     expected_counts=prepared.expected_counts,
@@ -1150,6 +1249,8 @@ def migrate_core(
     source_client: CouchDBClient | None = None,
     target_config: PostgreSQLConfig | None = None,
     connector: Callable[..., Any] | None = None,
+    reproject_on_troncon: bool = True,
+    on_troncon_tolerance: float = DEFAULT_ON_TRONCON_TOLERANCE,
 ) -> CoreMigrationReport:
     """Lit CouchDB, transforme, puis migre atomiquement vers PostgreSQL."""
 
@@ -1165,6 +1266,8 @@ def migrate_core(
         target_config,
         connector=connector,
         crs_info=crs_info,
+        reproject_on_troncon=reproject_on_troncon,
+        on_troncon_tolerance=on_troncon_tolerance,
     )
     return CoreMigrationReport(
         prepared=prepared,

@@ -550,6 +550,18 @@ pas CouchDB.
 sirs-postgre migrate-core
 ```
 
+La reconstruction sur le tronçon des désordres linéaires est activée par
+défaut, avec une tolérance métrique de `0.0001` m (0,1 mm). Elle peut être
+désactivée ou réglée explicitement :
+
+```bash
+sirs-postgre migrate-core --no-reproject-on-troncon
+sirs-postgre migrate-core --on-troncon-tolerance 0.001
+```
+
+La tolérance doit être un nombre positif ou nul et s'exprime en mètres dans le
+CRS cible EPSG:3950.
+
 La commande migre actuellement le noyau SIRS, les ouvrages, les aménagements
 hydrauliques, les plans/parcelles de gestion et la végétation.
 
@@ -807,12 +819,21 @@ Pour les seuls `Desordre` historiques, `geometry` CouchDB peut être une
 représentation projetée ou reconstruite par SIRS sur le tronçon. La migration
 utilise donc prioritairement `positionDebut` et `positionFin`, qui constituent
 la meilleure géométrie physique encore disponible : des positions identiques
-produisent un Point et des positions différentes une LineString à deux sommets.
+produisent toujours un Point. Pour des positions différentes, le comportement
+de base est une LineString directe A-B. Par défaut, si `linearId` désigne un
+tronçon migré et si A et B sont chacun à au plus `0.0001` m (0,1 mm) de sa
+géométrie canonique PostgreSQL, la migration reconstruit automatiquement la
+portion de ce tronçon comprise entre A et B. Son orientation reste A vers B.
+Cette reconstruction peut être désactivée avec
+`--no-reproject-on-troncon`, ou son seuil modifié avec
+`--on-troncon-tolerance <mètres>`.
 
 Les sommets intermédiaires d'une ancienne géométrie QGIS ont déjà été perdus
 lors de l'import historique dans SIRS et ne sont pas recréés. `geometry` n'est
 utilisée qu'en fallback lorsque les positions sont inexploitables. Cette règle
 est propre aux `Desordre` et ne s'applique pas aux autres classes géométriques.
+Le tronçon n'est jamais choisi par proximité : seul celui référencé par le
+`linearId` historique peut servir à la reconstruction.
 
 ---
 

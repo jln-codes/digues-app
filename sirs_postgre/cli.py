@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+import math
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -41,6 +42,20 @@ SOURCE_CLASSES = {
 CONFIG_ENV_PATH = Path(__file__).resolve().parent.parent / "config.env"
 
 
+def _non_negative_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "doit être un nombre supérieur ou égal à 0"
+        ) from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError(
+            "doit être un nombre supérieur ou égal à 0"
+        )
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sirs-postgre",
@@ -63,9 +78,28 @@ def build_parser() -> argparse.ArgumentParser:
         "init-schema",
         description="Crée le premier noyau métier PostgreSQL/PostGIS.",
     )
-    subparsers.add_parser(
+    migrate = subparsers.add_parser(
         "migrate-core",
         description="Migre le noyau CouchDB vers PostgreSQL/PostGIS.",
+    )
+    migrate.add_argument(
+        "--reproject-on-troncon",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Reconstruit les désordres linéaires sur leur tronçon lorsque leurs "
+            "extrémités sont dans la tolérance (activé par défaut)."
+        ),
+    )
+    migrate.add_argument(
+        "--on-troncon-tolerance",
+        type=_non_negative_float,
+        default=0.0001,
+        metavar="METRES",
+        help=(
+            "Tolérance de reconstruction sur le tronçon, en mètres "
+            "(défaut : 0.0001)."
+        ),
     )
     qgis_project = subparsers.add_parser(
         "qgis-project",
@@ -251,9 +285,12 @@ def run_qgis_project(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_migrate_core() -> int:
+def run_migrate_core(args: argparse.Namespace) -> int:
     try:
-        report = migrate_core()
+        report = migrate_core(
+            reproject_on_troncon=args.reproject_on_troncon,
+            on_troncon_tolerance=args.on_troncon_tolerance,
+        )
     except TargetNotEmptyError:
         print("[ERREUR] La base cible contient déjà des données. Utiliser :")
         print("sirs-postgre recreate")
@@ -584,7 +621,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "init-schema":
         return run_init_schema()
     if args.command == "migrate-core":
-        return run_migrate_core()
+        return run_migrate_core(args)
     if args.command == "qgis-project":
         return run_qgis_project(args)
     if args.command == "diagnose":

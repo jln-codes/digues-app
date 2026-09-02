@@ -198,9 +198,17 @@ des colonnes métier indépendantes.
 ### LineString
 
 - à la migration historique des `Desordre`, `positionDebut` et `positionFin`
-  produisent la LineString physique à deux sommets ; `Desordre.geometry`
-  CouchDB n'est pas prioritaire car SIRS peut l'avoir projetée ou reconstruite
-  sur le tronçon ;
+  sont prioritaires ; des positions identiques produisent toujours un Point ;
+- lorsque les positions diffèrent, elles produisent normalement une LineString
+  directe A-B ; si elles se trouvent toutes deux à au plus `0.0001` m du
+  tronçon désigné par `linearId`, la migration reconstruit par défaut la
+  sous-ligne du tronçon canonique PostgreSQL, orientée de A vers B ;
+- cette reconstruction peut être désactivée avec
+  `--no-reproject-on-troncon` et sa tolérance métrique réglée avec
+  `--on-troncon-tolerance <mètres>` ; aucun tronçon n'est choisi par proximité ;
+- `Desordre.geometry` CouchDB n'est pas prioritaire car SIRS peut l'avoir
+  projetée ou reconstruite sur le tronçon ; elle reste uniquement un fallback
+  lorsque les positions sont inexploitables ;
 - les sommets intermédiaires d'une ancienne géométrie QGIS, perdus lors de
   l'import historique dans SIRS, ne sont pas recréés ;
 - l'édition cartographique conserve la ligne complète ;

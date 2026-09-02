@@ -238,11 +238,41 @@ class CLITest(unittest.TestCase):
         with redirect_stdout(output):
             result = main(["migrate-core"])
         self.assertEqual(result, 0)
+        migrate.assert_called_once_with(
+            reproject_on_troncon=True,
+            on_troncon_tolerance=0.0001,
+        )
         generate_report.assert_called_once_with(client)
         text = output.getvalue()
         self.assertIn("audits/bilan.md", text)
         self.assertIn("audits/anomalies.json", text)
         self.assertIn("audits/anomalies.csv", text)
+
+    @patch(
+        "sirs_postgre.cli.migrate_core",
+        side_effect=RuntimeError("arrêt après lecture des options"),
+    )
+    def test_migrate_core_accepts_reprojection_options(self, migrate):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(
+                [
+                    "migrate-core",
+                    "--no-reproject-on-troncon",
+                    "--on-troncon-tolerance",
+                    "0.25",
+                ]
+            )
+        self.assertEqual(result, 1)
+        migrate.assert_called_once_with(
+            reproject_on_troncon=False,
+            on_troncon_tolerance=0.25,
+        )
+
+    def test_migrate_core_rejects_negative_or_non_finite_tolerance(self):
+        for value in ("-0.1", "nan", "inf"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                main(["migrate-core", "--on-troncon-tolerance", value])
 
     @patch("sirs_postgre.cli.initialize_postgresql_schema")
     @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
