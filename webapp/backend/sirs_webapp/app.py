@@ -53,7 +53,7 @@ from .queries import (
 )
 
 
-FRONTEND_DIRECTORY = Path(__file__).resolve().parents[2] / "web"
+FRONTEND_DIRECTORY = Path(__file__).resolve().parents[2] / "frontend"
 
 
 class GeoJSONResponse(JSONResponse):

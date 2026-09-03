@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from sirs_postgre.target import PostgreSQLConfig
 from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
-from sirs_postgre.web.models import (
+from sirs_webapp.models import (
     DesordreCreate,
     DigueCreate,
     LineStringGeometryUpdate,
@@ -21,7 +21,7 @@ from sirs_postgre.web.models import (
     SystemeEndiguementCreate,
     TronconCreate,
 )
-from sirs_postgre.web.queries import (
+from sirs_webapp.queries import (
     DIGUE_DETAIL_SQL,
     DESORDRE_OBSERVATIONS_SQL,
     DESORDRES_GEOJSON_SQL,
@@ -57,11 +57,11 @@ from sirs_postgre.web.queries import (
 )
 
 try:
-    from sirs_postgre.web.app import FRONTEND_DIRECTORY, app, web_show_uuid
+    from sirs_webapp.app import FRONTEND_DIRECTORY, app, web_show_uuid
 except ModuleNotFoundError as exc:
     if exc.name != "fastapi":
         raise
-    FRONTEND_DIRECTORY = Path(__file__).resolve().parents[1] / "web"
+    FRONTEND_DIRECTORY = Path(__file__).resolve().parents[1] / "frontend"
     app = None
     web_show_uuid = None
 
@@ -276,8 +276,12 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         self.assertIn("showCreatedObject", submission)
 
     def test_creation_queries_use_transactions_reloads_and_postgis_transform(self):
-        source = (Path(__file__).resolve().parents[1]
-                  / "sirs_postgre" / "web" / "queries.py").read_text()
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "backend"
+            / "sirs_webapp"
+            / "queries.py"
+        ).read_text()
         self.assertIn("with connection.transaction()", source)
         self.assertIn("return fetch_systeme_endiguement", source)
         self.assertIn("return fetch_digue", source)
@@ -928,7 +932,7 @@ class WebPostGISIntegrationTest(unittest.TestCase):
             import psycopg
 
             load_dotenv(
-                Path(__file__).resolve().parents[1] / "config.env",
+                Path(__file__).resolve().parents[2] / "config.env",
                 override=False,
             )
             cls.connection = psycopg.connect(

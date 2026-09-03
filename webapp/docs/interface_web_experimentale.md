@@ -6,8 +6,8 @@ l’interface définitive de SIRS.
 
 ## Architecture
 
-- `sirs_postgre/web/` : API FastAPI et requêtes PostgreSQL ;
-- `web/` : page HTML, styles et JavaScript Leaflet ;
+- `webapp/backend/sirs_webapp/` : API FastAPI et requêtes PostgreSQL ;
+- `webapp/frontend/` : page HTML, styles et JavaScript Leaflet ;
 - PostgreSQL/PostGIS : source de vérité, sans modification du schéma ni des
   géométries persistées.
 
@@ -466,8 +466,8 @@ médias aura été définie.
 Depuis la racine du dépôt :
 
 ```console
-python -m pip install -e .
-python -m uvicorn sirs_postgre.web.app:app --reload
+python -m pip install -e . -e webapp
+python -m uvicorn --app-dir webapp/backend sirs_webapp.app:app --reload
 ```
 
 Ouvrir ensuite <http://127.0.0.1:8000/>. La documentation automatique de l’API

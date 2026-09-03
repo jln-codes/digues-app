@@ -5,14 +5,11 @@
 `sirs-postgre` est un projet Python consacré à la transition de **SIRS Digues V2**
 depuis CouchDB vers PostgreSQL/PostGIS.
 
-Le dépôt contient aujourd'hui deux briques principales :
+Le dépôt public contient un **migrateur CouchDB → PostgreSQL/PostGIS** chargé de
+reconstruire de façon reproductible la base cible à partir d'une base SIRS
+Digues existante.
 
-1. une **application web métier** fondée sur FastAPI, Leaflet et
-   PostgreSQL/PostGIS ;
-2. un **migrateur CouchDB → PostgreSQL/PostGIS** chargé de reconstruire de façon
-   reproductible la base cible à partir d'une base SIRS Digues existante.
-
-Un générateur de projet QGIS complète ces deux briques pour les usages SIG
+Un générateur de projet QGIS complète le migrateur pour les usages SIG
 avancés et les contrôles dans QGIS.
 
 Le schéma historique SIRS Digues/CouchDB reste la **référence métier, technique
@@ -36,142 +33,24 @@ argumenté et documenté.
                          ┌──────────────────────┐
                          │ PostgreSQL / PostGIS │
                          │   modèle métier      │
-                         └───────┬──────┬───────┘
-                                 │      │
-                         SQL     │      │ SQL
-                                 │      │
-                    ┌────────────▼─┐  ┌─▼────────────┐
-                    │   FastAPI    │  │     QGIS     │
-                    │ API + web    │  │ usage SIG    │
-                    └──────┬───────┘  └──────────────┘
-                           │ HTTPS/HTTP
-                           ▼
-                    ┌──────────────┐
-                    │  Navigateur  │
-                    │   Leaflet    │
-                    └──────────────┘
+                         └───────────┬──────────┘
+                                     │ SQL
+                                     ▼
+                              ┌────────────┐
+                              │    QGIS    │
+                              │ usage SIG  │
+                              └────────────┘
 ```
 
 ### Principes
 
 - CouchDB reste la source de migration tant que la bascule n'est pas achevée.
-- PostgreSQL/PostGIS constitue la base cible et l'autorité métier/spatiale de
-  l'application web.
-- Le navigateur ne se connecte jamais directement à PostgreSQL.
-- FastAPI porte les accès applicatifs à PostgreSQL/PostGIS.
+- PostgreSQL/PostGIS constitue la base cible et l'autorité métier/spatiale.
 - Les calculs spatiaux et les règles de repérage restent côté
-  PostgreSQL/PostGIS ; ils ne sont pas réimplémentés en JavaScript.
+  PostgreSQL/PostGIS.
 - QGIS reste disponible comme interface SIG complémentaire.
 - La base PostgreSQL de développement reste actuellement recréable à partir de
   CouchDB.
-
----
-
-# Application web
-
-## Objectif
-
-L'application web constitue un prototype métier léger permettant de consulter
-et modifier les données SIRS directement depuis un navigateur.
-
-Architecture :
-
-```text
-Navigateur
-├── HTML / CSS / JavaScript
-├── Leaflet
-└── Leaflet.Editable
-        ↓
-     FastAPI
-        ↓
-PostgreSQL / PostGIS
-```
-
-Le frontend reste volontairement simple : pas de React, Vue, TypeScript, Node
-ou chaîne de build obligatoire.
-
-Les géométries sont exposées au navigateur en GeoJSON `EPSG:4326`.
-PostGIS conserve les géométries métier en `EPSG:3950` et réalise les
-transformations nécessaires.
-
-## Fonctions actuellement disponibles
-
-### Navigation patrimoniale
-
-La barre principale donne accès à la navigation :
-
-```text
-Système d'endiguement
-  └── Digue
-       └── Tronçon
-```
-
-Le panneau gauche permet de parcourir les systèmes, digues et tronçons. Les
-tronçons peuvent être sélectionnés, mis en évidence et cadrés sur la carte.
-
-### Désordres Point
-
-Un désordre Point peut être ouvert dans le panneau droit et localisé par quatre
-modes exclusifs :
-
-- modification X/Y en `EPSG:3950` ;
-- modification longitude/latitude en `EPSG:4326` ;
-- déplacement graphique du marqueur ;
-- repérage par borne, distance et sens lorsqu'exactement un tronçon est associé.
-
-Dans tous les cas, une seule famille de saisie est autoritaire pour
-l'opération :
-
-```text
-saisie utilisateur
-→ PostgreSQL/PostGIS
-→ triggers métier
-→ géométrie / coordonnées / repérage recalculés
-→ relecture serveur
-→ rafraîchissement du formulaire et de la carte
-```
-
-### Désordres LineString
-
-Les LineString peuvent être ouvertes puis éditées graphiquement avec
-Leaflet.Editable.
-
-L'édition :
-
-- conserve tous les sommets de la géométrie ;
-- permet de déplacer les sommets existants ;
-- permet d'ajouter un sommet via les poignées intermédiaires ;
-- reste locale tant que l'utilisateur n'a pas validé ;
-- peut être annulée sans écriture en base ;
-- envoie la géométrie GeoJSON au serveur uniquement lors de la validation ;
-- relit ensuite la géométrie réellement persistée par PostgreSQL.
-
-### Observations et photos
-
-Les observations sont consultables depuis la fiche d'un désordre selon la
-relation métier :
-
-```text
-Désordre
-  └── Observation
-       └── Photo
-```
-
-Les métadonnées des photos sont disponibles. Le stockage et le service du
-contenu binaire des médias restent à finaliser.
-
-## État du prototype web
-
-L'application web est actuellement une interface expérimentale de développement.
-Elle n'est pas encore une PWA complète et ne propose pas encore de
-synchronisation hors ligne.
-
-La création de nouveaux objets métier, l'édition des observations/photos et
-l'extension aux autres familles SIRS sont les prochaines briques prévues.
-
-Leaflet.Editable est actuellement chargé depuis un CDN. Pour un déploiement
-intranet ou PWA, cette dépendance devra être embarquée localement afin de ne pas
-dépendre d'un accès Internet externe.
 
 ---
 
@@ -187,17 +66,12 @@ Le projet nécessite au minimum :
 - PostGIS ;
 - l'extension PostgreSQL `pgcrypto`.
 
-Pour l'application web :
-
-- FastAPI ;
-- Uvicorn.
-
 Pour la génération du projet QGIS uniquement :
 
 - QGIS ;
 - PyQGIS 3.38 ou plus récent.
 
-**PyQGIS n'est pas requis pour lancer le migrateur ou l'application web.**
+**PyQGIS n'est pas requis pour lancer le migrateur.**
 
 ---
 
@@ -218,7 +92,6 @@ cd ~/Projects/sirs-postgre
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e .
-.venv/bin/python -m pip install fastapi uvicorn
 ```
 
 Activation facultative du venv :
@@ -251,7 +124,6 @@ Depuis la racine du projet :
 py -3 -m venv .venv
 .venv\Scripts\python.exe -m pip install --upgrade pip
 .venv\Scripts\python.exe -m pip install -e .
-.venv\Scripts\python.exe -m pip install fastapi uvicorn
 ```
 
 Activation sous `cmd.exe` :
@@ -296,7 +168,6 @@ puis d'y installer le projet :
 ```bash
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e .
-.venv/bin/python -m pip install fastapi uvicorn
 ```
 
 Vérification :
@@ -314,7 +185,7 @@ Installer QGIS/OSGeo4W normalement. La génération du projet QGIS doit être
 lancée avec l'environnement Python QGIS/OSGeo4W afin que `qgis.core` soit
 disponible.
 
-Le venv Python normal reste utilisé pour le migrateur et l'application web.
+Le venv Python normal reste utilisé pour le migrateur.
 
 La procédure Windows détaillée est documentée dans :
 
@@ -335,9 +206,8 @@ cp config.example.env config.env
 Sous Windows, copier le fichier manuellement ou avec la commande disponible
 dans le shell utilisé.
 
-La CLI et l'application chargent le fichier optionnel `config.env` situé à la
-racine du projet. Les variables déjà définies dans l'environnement restent
-prioritaires.
+La CLI charge le fichier optionnel `config.env` situé à la racine du projet.
+Les variables déjà définies dans l'environnement restent prioritaires.
 
 `config.example.env` est uniquement un modèle et ne doit contenir aucun secret.
 `config.env` contient la configuration locale et n'est pas versionné.
@@ -367,33 +237,6 @@ SIRS_POSTGRE_ADMIN_DATABASE
 ```
 
 et vaut `postgres` par défaut.
-
----
-
-# Lancer l'application web locale
-
-## Linux
-
-Depuis la racine du projet :
-
-```bash
-.venv/bin/python -m uvicorn sirs_postgre.web.app:app --reload
-```
-
-## Windows
-
-```cmd
-.venv\Scripts\python.exe -m uvicorn sirs_postgre.web.app:app --reload
-```
-
-Puis ouvrir :
-
-```text
-http://127.0.0.1:8000/
-```
-
-L'option `--reload` redémarre automatiquement le serveur de développement
-lorsque le code Python est modifié.
 
 ---
 
@@ -515,8 +358,8 @@ sirs-postgre recreate
 > **Attention — opération destructive :** cette commande exécute un
 > `DROP DATABASE` sur la base PostgreSQL cible configurée.
 
-Toute donnée créée directement dans PostgreSQL, QGIS ou l'application web depuis
-la dernière migration est supprimée.
+Toute donnée créée directement dans PostgreSQL ou QGIS depuis la dernière
+migration est supprimée.
 
 La commande :
 
@@ -983,8 +826,7 @@ vérifier notamment :
 - repérage ;
 - géométries ;
 - triggers ;
-- relecture après écriture ;
-- API web.
+- relecture après écriture.
 
 Les tests PyQGIS peuvent être ignorés lorsque l'environnement QGIS n'est pas
 disponible.
@@ -997,10 +839,6 @@ disponible.
 sirs_postgre/
 ├── cli.py
 ├── qgis_project.py
-├── web/
-│   ├── app.py
-│   ├── models.py
-│   └── queries.py
 ├── source/
 │   └── couchdb.py
 ├── target/
@@ -1020,13 +858,6 @@ sirs_postgre/
     ├── vegetation.py
     ├── source_overrides.py
     └── validation.py
-
-web/
-├── index.html
-├── css/
-│   └── app.css
-└── js/
-    └── map.js
 
 qgis/
 ├── sirs_postgre.qgz
@@ -1051,7 +882,6 @@ config.example.env
 - Une relation N-N réelle utilise une table `link_`.
 - Les référentiels utilisent le préfixe `ref_`.
 - Les vues utilisent le préfixe `view_`.
-- Les règles spatiales ne doivent pas être dupliquées dans le frontend.
 - Les corrections de migration doivent être reproductibles.
 - Les particularités d'une base source restent isolées et documentées.
 
@@ -1061,14 +891,10 @@ config.example.env
 
 Les développements prévus concernent notamment :
 
-- création de nouveaux objets depuis l'application web ;
-- édition des observations et photos ;
 - autres objets `Positionable` ;
 - prestations ;
 - intervenants ;
-- généralisation des formulaires métier ;
-- stockage et service des médias ;
-- préparation éventuelle d'une PWA et d'un fonctionnement hors ligne.
+- migration du stockage des médias.
 
 Chaque nouvelle brique doit être confrontée au modèle CouchDB historique avant
 de modifier le modèle PostgreSQL cible.

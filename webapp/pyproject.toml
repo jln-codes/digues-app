@@ -3,19 +3,20 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sirs-postgre"
+name = "sirs-webapp"
 version = "0.1.0"
-description = "Prototype autonome de migration de SIRS Digues vers PostgreSQL/PostGIS"
+description = "Application web privée pour SIRS PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115,<1",
     "psycopg[binary]>=3.2,<4",
+    "pydantic>=2,<3",
     "python-dotenv>=1.0,<2",
-    "requests>=2.31,<3",
+    "sirs-postgre>=0.1,<0.2",
+    "uvicorn>=0.34,<1",
 ]
 
-[project.scripts]
-sirs-postgre = "sirs_postgre.cli:main"
-
 [tool.setuptools.packages.find]
-include = ["sirs_postgre*"]
+where = ["backend"]
+include = ["sirs_webapp*"]
