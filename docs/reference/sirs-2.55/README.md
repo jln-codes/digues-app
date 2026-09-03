@@ -10,7 +10,7 @@ Les classes Java générées dans `target/generated-sources/fxmodel` sont produi
 
 Le corpus CouchDB observé ne constitue pas un inventaire exhaustif du modèle. Côté Java historique, plusieurs classes générées utilisent `@JsonInclude(Include.NON_EMPTY)`, ce qui permet l'absence de propriétés vides dans les documents CouchDB. Une analyse ponctuelle du code Java historique peut donc encore être utile pour comprendre certains comportements applicatifs, mais elle ne doit plus être nécessaire pour refaire l'inventaire structurel du modèle.
 
-Chaîne documentaire visée:
+Chaîne documentaire mise en œuvre:
 
 `sirs.ecore` + `labels/*.properties` -> `sirs-postgre generate-model-manifest` -> `sirs_model_manifest.json` -> registre de couverture du migrateur -> corpus CouchDB observé -> rapport de couverture / anomalies
 
@@ -34,9 +34,9 @@ Chaîne documentaire visée:
 - Les fichiers `.properties` ont été copiés sans modification.
 - Le modèle contient bien les classes attendues suivantes: `SystemeEndiguement`, `Digue`, `TronconDigue`, `Desordre`, `Observation`, `Photo`.
 
-## Rôle prévu
+## Rôle
 
-Cette copie doit devenir la référence locale pour l'inventaire structurel du modèle historique. La chaîne de travail prévue à terme est la suivante:
+Cette copie constitue la référence locale pour l'inventaire structurel du modèle historique. La chaîne de travail est la suivante:
 
 1. `sirs.ecore` et `labels/*.properties`
 2. extracteur déterministe `sirs-postgre generate-model-manifest`
@@ -47,4 +47,3 @@ Cette copie doit devenir la référence locale pour l'inventaire structurel du m
 
 Le manifeste `sirs_model_manifest.json` est un artefact généré. Il ne doit pas être édité manuellement pour ajouter, retirer ou corriger des champs: toute modification structurelle doit venir de `sirs.ecore`, et tout libellé doit venir de `labels/*.properties`.
 
-Cette chaîne n'est pas implémentée dans ce lot.

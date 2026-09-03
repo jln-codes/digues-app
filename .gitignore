@@ -11,3 +11,6 @@ build/
 *.egg-info/
 audits/
 qgis/sirs_postgre.qgz
+.codex/
+.agents/
+.dev.vars

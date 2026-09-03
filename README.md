@@ -438,6 +438,39 @@ recreate
 
 ---
 
+## `generate-model-manifest`
+
+```bash
+sirs-postgre generate-model-manifest
+```
+
+Cette commande régénère le manifeste structurel du modèle historique SIRS
+Digues 2.55 à partir de la référence versionnée dans :
+
+```text
+docs/reference/sirs-2.55/sirs.ecore
+docs/reference/sirs-2.55/labels/*.properties
+```
+
+Le manifeste produit est :
+
+```text
+docs/reference/sirs-2.55/sirs_model_manifest.json
+```
+
+Il décrit les classes Ecore, attributs, références, cardinalités, super-types et
+champs effectifs après héritage, enrichis lorsque possible avec leurs libellés
+métier. Le fichier est généré de manière déterministe et ne doit pas être édité
+manuellement.
+
+Cette référence permet d'auditer le migrateur contre le modèle SIRS 2.55 même
+lorsqu'un champ n'apparaît dans aucun document de la base CouchDB analysée.
+
+La provenance et les empreintes de la référence historique sont documentées
+dans `docs/reference/sirs-2.55/README.md`.
+
+---
+
 ## `diagnose`
 
 ```bash
@@ -452,10 +485,21 @@ audits/anomalies.json
 audits/anomalies.csv
 ```
 
-Elle découvre les valeurs `@class` et les clés JSON réellement présentes, puis
-les compare au registre de couverture.
+Elle confronte trois sources distinctes :
 
-Les statuts de couverture comprennent notamment :
+- le manifeste structurel SIRS 2.55 généré depuis `sirs.ecore`, qui décrit ce
+  qui existe dans le modèle historique ;
+- le registre de couverture de `migration/coverage.py`, qui décrit les décisions
+  du projet ;
+- les documents CouchDB, qui indiquent ce qui est effectivement rencontré dans
+  le corpus analysé.
+
+Le diagnostic ne déduit donc plus l'existence d'un champ de sa présence dans
+CouchDB. Un champ du modèle peut être signalé avec zéro occurrence. À
+l'inverse, une clé observée dans une classe Ecore connue mais absente du
+manifeste est distinguée par `UNKNOWN_OBSERVED_FIELD`.
+
+Les statuts de couverture des classes comprennent notamment :
 
 ```text
 MIGREE
@@ -464,6 +508,24 @@ NON_MIGREE
 TECHNIQUE_IGNORE
 REFERENTIEL_IGNORE
 ```
+
+Au niveau champ, le registre distingue :
+
+```text
+MIGRATED
+MIGRATED_AS_RELATION
+MIGRATED_AS_DERIVED
+RENAMED
+DEFERRED
+INTENTIONALLY_NOT_MIGRATED
+UNMIGRATED
+```
+
+Les classes entièrement différées restent représentées au niveau classe, sans
+produire artificiellement une anomalie pour chacune de leurs propriétés. Les
+sous-objets contenus tels que `Observation` et `Photo` sont audités selon leur
+propre classe Ecore, même lorsqu'ils ne constituent pas des documents CouchDB
+racines.
 
 Une classe ou un champ inconnu dans une autre base apparaît donc dans le bilan
 et, lorsqu'il est actionnable, dans le registre des anomalies.
@@ -481,7 +543,16 @@ Les trois fichiers produits ont des rôles distincts :
 - `anomalies.json` : registre structuré et persistant ;
 - `anomalies.csv` : export exploitable dans un tableur ou QGIS.
 
-Chaque entrée reçoit un `anomaly_id` déterministe.
+Chaque entrée reçoit un `anomaly_id` déterministe. Les anomalies de couverture
+par champ conservent notamment dans `details` le libellé métier, la classe
+déclarante, l'héritage, le type Ecore, la présence dans le corpus, les nombres
+d'occurrences et de valeurs non nulles, le statut de couverture et la référence
+du manifeste utilisé. `source_field` identifie le champ concerné.
+
+`UNMIGRATED_FIELD` reste la catégorie compatible pour un champ défini par le
+modèle mais sans décision de couverture suffisante. `UNKNOWN_OBSERVED_FIELD`
+désigne une clé effectivement observée dans CouchDB mais absente du manifeste
+SIRS 2.55 ; elle doit être qualifiée avant toute décision de migration.
 
 Les anomalies distinguent notamment :
 
@@ -713,13 +784,18 @@ et ne doivent jamais devenir implicitement des règles SIRS générales.
 # Variabilité des bases CouchDB sources
 
 Une base CouchDB donnée ne contient pas nécessairement toutes les classes ni
-tous les usages possibles du modèle SIRS Digues. Un corpus source particulier
-ne doit donc pas être traité comme une description exhaustive du schéma.
+tous les usages possibles du modèle SIRS Digues. Les valeurs vides peuvent en
+outre être absentes des documents sérialisés. Un corpus source particulier ne
+doit donc pas être traité comme une description exhaustive du schéma.
+
+La référence structurelle locale du modèle historique est le snapshot SIRS 2.55
+versionné sous `docs/reference/sirs-2.55/`, dont le manifeste est régénérable
+avec `sirs-postgre generate-model-manifest`.
 
 Par conséquent :
 
 ```text
-schéma SIRS de référence
+modèle SIRS 2.55 de référence
 ≠
 contenu d'une base source particulière
 ```
@@ -835,6 +911,7 @@ disponible.
 ```text
 sirs_postgre/
 ├── cli.py
+├── model_manifest.py
 ├── qgis_project.py
 ├── source/
 │   └── couchdb.py
@@ -856,6 +933,13 @@ sirs_postgre/
     ├── source_overrides.py
     └── validation.py
 
+docs/
+└── reference/
+    └── sirs-2.55/
+        ├── sirs.ecore
+        ├── sirs_model_manifest.json
+        └── labels/
+
 qgis/
 ├── sirs_postgre.qgz
 └── styles/
@@ -871,6 +955,8 @@ config.example.env
 - Le schéma SIRS Digues/CouchDB reste la référence métier générale.
 - La migration vers PostgreSQL doit être fidèle par défaut.
 - Tout écart au modèle historique doit être explicite, argumenté et documenté.
+- Le manifeste SIRS 2.55 décrit le modèle historique indépendamment des champs
+  effectivement rencontrés dans un corpus CouchDB.
 - Une absence dans un corpus source ne signifie pas qu'une structure SIRS est
   inutile.
 - PostgreSQL/PostGIS porte l'autorité métier et spatiale de la cible.
