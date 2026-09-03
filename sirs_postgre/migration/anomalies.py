@@ -40,6 +40,7 @@ CATEGORIES = frozenset(
         "UNKNOWN_CLASS",
         "PARTIALLY_MIGRATED_CLASS",
         "UNKNOWN_FIELD",
+        "UNKNOWN_OBSERVED_FIELD",
         "UNMIGRATED_FIELD",
         "UNKNOWN_REFERENCE_VALUE",
         "MISSING_REFERENCE_VALUE",
@@ -96,6 +97,7 @@ FAMILY_BY_CATEGORY = {
     "UNKNOWN_CLASS": "COVERAGE",
     "PARTIALLY_MIGRATED_CLASS": "COVERAGE",
     "UNKNOWN_FIELD": "COVERAGE",
+    "UNKNOWN_OBSERVED_FIELD": "COVERAGE",
     "UNMIGRATED_FIELD": "COVERAGE",
     "DEFERRED_FEATURE": "COVERAGE",
     "DEFERRED_MEDIA": "COVERAGE",
@@ -118,6 +120,7 @@ PREFIX_BY_CATEGORY = {
     "UNKNOWN_CLASS": "CLASS",
     "PARTIALLY_MIGRATED_CLASS": "CLASS",
     "UNKNOWN_FIELD": "FIELD",
+    "UNKNOWN_OBSERVED_FIELD": "FIELD",
     "UNMIGRATED_FIELD": "FIELD",
     "UNMIGRATED_MEDIA": "MEDIA",
     "DEFERRED_MEDIA": "MEDIA",
@@ -535,6 +538,39 @@ def collect_anomalies(
         class_name = str(row["class"])
         status = str(row["status"])
         known = bool(row.get("known"))
+        model_defined = bool(row.get("model_defined", True))
+        if (
+            known
+            and not model_defined
+            and row.get("total", 0)
+            and status in {"MIGREE", "PARTIELLE"}
+        ):
+            anomalies.append(
+                Anomaly.create(
+                    category="UNKNOWN_CLASS",
+                    severity="WARNING",
+                    source_database=source_database,
+                    source_class=class_name,
+                    stable_subject_id="model-manifest",
+                    message=(
+                        f"La classe {class_name} est couverte par le projet et observée "
+                        "dans CouchDB, mais absente du manifeste SIRS 2.55."
+                    ),
+                    details={
+                        "document_count": row["total"],
+                        "registered_in_coverage": True,
+                        "model_defined": False,
+                        "model_manifest": row.get("model_manifest"),
+                        "coverage_comment": row.get("comment"),
+                    },
+                    suggested_action=(
+                        "Identifier le module ou la version historique qui définit cette classe."
+                    ),
+                    correction_location="MIGRATOR",
+                    detected_value=row["total"],
+                    expected_value="classe présente dans le manifeste de référence",
+                )
+            )
         if status == "NON_MIGREE":
             category = "DEFERRED_FEATURE" if known else "UNKNOWN_CLASS"
             anomalies.append(
@@ -555,7 +591,11 @@ def collect_anomalies(
                     expected_value=0,
                 )
             )
-        elif status == "PARTIELLE" and not class_name.startswith("Ref"):
+        elif (
+            status == "PARTIELLE"
+            and model_defined
+            and not class_name.startswith("Ref")
+        ):
             anomalies.append(
                 Anomaly.create(
                     category="PARTIALLY_MIGRATED_CLASS",
@@ -569,32 +609,84 @@ def collect_anomalies(
                 )
             )
 
-        actionable_fields = [
-            field
-            for field in row.get("unanalysed", ())
-            if not field.startswith("_")
-            and field not in NON_ACTIONABLE_FIELDS
-            and not field.startswith(("distanceDebut", "distanceFin"))
-        ]
         if (
-            actionable_fields
+            model_defined
             and status in {"MIGREE", "PARTIELLE"}
             and not class_name.startswith("Ref")
         ):
-            anomalies.append(
-                Anomaly.create(
-                    category="UNMIGRATED_FIELD",
-                    severity="WARNING",
-                    source_database=source_database,
-                    source_class=class_name,
-                    source_field="*",
-                    message=f"{len(actionable_fields)} champ(s) métier restent non analysés pour {class_name}.",
-                    details={"fields": sorted(actionable_fields)},
-                    suggested_action="Qualifier ces champs puis les consommer ou les documenter explicitement.",
-                    correction_location="MIGRATOR",
-                    detected_value=sorted(actionable_fields),
-                )
-            )
+            inventory = row.get("field_inventory")
+            if inventory is not None:
+                for field_info in inventory:
+                    coverage_status = field_info.get("coverage_status")
+                    if coverage_status not in {"UNMIGRATED", "UNKNOWN_OBSERVED"}:
+                        continue
+                    field_name = str(field_info["source_field"])
+                    unknown_observed = coverage_status == "UNKNOWN_OBSERVED"
+                    category = (
+                        "UNKNOWN_OBSERVED_FIELD"
+                        if unknown_observed
+                        else "UNMIGRATED_FIELD"
+                    )
+                    observed = bool(field_info.get("observed_in_corpus"))
+                    details = dict(field_info)
+                    details["fields"] = [field_name]
+                    details["model_manifest"] = row.get("model_manifest")
+                    anomalies.append(
+                        Anomaly.create(
+                            category=category,
+                            severity="WARNING",
+                            source_database=source_database,
+                            source_class=class_name,
+                            stable_subject_id="coverage",
+                            source_field=field_name,
+                            target_table=field_info.get("target"),
+                            message=(
+                                f"Le champ observé {class_name}.{field_name} est absent "
+                                "du manifeste SIRS 2.55."
+                                if unknown_observed
+                                else f"Le champ modèle {class_name}.{field_name} n'est "
+                                f"pas couvert ({'observé' if observed else 'absent du corpus'})."
+                            ),
+                            details=details,
+                            suggested_action=(
+                                "Qualifier l'écart de version, l'extension ou la propriété technique."
+                                if unknown_observed
+                                else "Décider explicitement comment couvrir ce champ du modèle."
+                            ),
+                            correction_location="MIGRATOR",
+                            detected_value=field_info.get("occurrence_count"),
+                            expected_value=(
+                                "champ défini dans le manifeste"
+                                if unknown_observed
+                                else "statut de couverture explicite"
+                            ),
+                        )
+                    )
+            else:
+                # Compatibilité avec les appelants/tests qui fournissent encore
+                # les anciennes lignes de couverture fondées sur le seul corpus.
+                actionable_fields = [
+                    field
+                    for field in row.get("unanalysed", ())
+                    if not field.startswith("_")
+                    and field not in NON_ACTIONABLE_FIELDS
+                    and not field.startswith(("distanceDebut", "distanceFin"))
+                ]
+                if actionable_fields:
+                    anomalies.append(
+                        Anomaly.create(
+                            category="UNMIGRATED_FIELD",
+                            severity="WARNING",
+                            source_database=source_database,
+                            source_class=class_name,
+                            source_field="*",
+                            message=f"{len(actionable_fields)} champ(s) métier restent non analysés pour {class_name}.",
+                            details={"fields": sorted(actionable_fields)},
+                            suggested_action="Qualifier ces champs puis les consommer ou les documenter explicitement.",
+                            correction_location="MIGRATOR",
+                            detected_value=sorted(actionable_fields),
+                        )
+                    )
 
     index = _document_index(documents)
     ids_by_class: dict[str, set[str]] = {}

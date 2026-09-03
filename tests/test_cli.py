@@ -477,6 +477,19 @@ class CLITest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("[ERREUR] Source CouchDB", output.getvalue())
 
+    def test_generate_model_manifest_command_writes_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "manifest.json"
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = main(["generate-model-manifest", "--output", str(output_path)])
+            self.assertEqual(result, 0)
+            self.assertTrue(output_path.is_file())
+            text = output.getvalue()
+            self.assertIn("Manifeste modèle généré", text)
+            self.assertIn("SystemeEndiguement", text)
+            self.assertIn("Desordre", text)
+
 
 if __name__ == "__main__":
     unittest.main()

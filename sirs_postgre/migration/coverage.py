@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from sirs_postgre.source import CouchDBClient
 from sirs_postgre.source import CouchDBDatabaseInfo
+from sirs_postgre.model_manifest import DEFAULT_MANIFEST_PATH, PROJECT_ROOT
 
 from .anomalies import (
     AnomalyRegisterResult,
@@ -47,6 +49,7 @@ COMMON_IGNORED_FIELDS = frozenset(
         "dateMaj",
         "editedGeoCoordinate",
         "geometryMode",
+        "crsName",
         "latitudeMin",
         "latitudeMax",
         "longitudeMin",
@@ -59,6 +62,10 @@ COMMON_IGNORED_FIELDS = frozenset(
         "borne_fin_distance",
         "prDebut",
         "prFin",
+        "positionId",
+        "sourceId",
+        "typeCoteId",
+        "typePositionId",
         "systemeRepId",
     }
 )
@@ -71,6 +78,17 @@ class CoverageRule:
     consumed_fields: frozenset[str]
     ignored_fields: frozenset[str] = COMMON_IGNORED_FIELDS
     comment: str = ""
+    field_statuses: Mapping[str, str] = field(default_factory=dict)
+
+    def field_status(self, field_name: str) -> str:
+        explicit = self.field_statuses.get(field_name)
+        if explicit is not None:
+            return explicit
+        if field_name in self.consumed_fields:
+            return "MIGRATED"
+        if field_name in self.ignored_fields:
+            return "INTENTIONALLY_NOT_MIGRATED"
+        return "UNMIGRATED"
 
 
 @dataclass(frozen=True)
@@ -112,7 +130,12 @@ COVERAGE_REGISTRY: dict[str, CoverageRule] = {
     "RefTypeDesordre": CoverageRule("ref_types_desordre", "MIGREE", BASE_FIELDS | _fields("categorieId", "libelle")),
     "RefUrgence": CoverageRule("ref_urgences", "MIGREE", BASE_FIELDS | _fields("libelle")),
     "SystemeEndiguement": CoverageRule("systemes", "MIGREE", BASE_FIELDS | _fields("libelle")),
-    "Digue": CoverageRule("digues", "MIGREE", BASE_FIELDS | _fields("systemeEndiguementId", "libelle")),
+    "Digue": CoverageRule(
+        "digues",
+        "MIGREE",
+        BASE_FIELDS | _fields("systemeEndiguementId", "libelle"),
+        field_statuses={"systemeEndiguementId": "MIGRATED_AS_RELATION"},
+    ),
     "TronconDigue": CoverageRule(
         "troncons, link_troncons_bornes, observations, photos",
         "MIGREE",
@@ -122,6 +145,12 @@ COVERAGE_REGISTRY: dict[str, CoverageRule] = {
             "digueId", "libelle", "geometry", "borneIds",
             "systemeRepDefautId",
         ),
+        field_statuses={
+            "digueId": "MIGRATED_AS_RELATION",
+            "borneIds": "MIGRATED_AS_RELATION",
+            "systemeRepDefautId": "MIGRATED_AS_RELATION",
+            "photos": "MIGRATED_AS_RELATION",
+        },
     ),
     "SystemeReperage": CoverageRule(
         "systemes_reperage, link_systemes_reperage_bornes",
@@ -172,6 +201,38 @@ COVERAGE_REGISTRY: dict[str, CoverageRule] = {
             "Objet, rattachement, médias et prototype de repérage historique "
             "migrés ; prestations et champs spécialisés différés."
         ),
+        field_statuses={
+            "linearId": "MIGRATED_AS_RELATION",
+            "observations": "MIGRATED_AS_RELATION",
+            "prestationIds": "DEFERRED",
+            "prDebut": "MIGRATED_AS_DERIVED",
+            "prFin": "MIGRATED_AS_DERIVED",
+        },
+    ),
+    "Observation": CoverageRule(
+        "observations, photos",
+        "PARTIELLE",
+        _fields(
+            "date", "evolution", "designation", "valid", "photos", "urgenceId"
+        ),
+        comment=(
+            "Sous-objet contenu migré avec son propriétaire ; les champs non "
+            "consommés restent à qualifier."
+        ),
+        field_statuses={
+            "photos": "MIGRATED_AS_RELATION",
+            "urgenceId": "MIGRATED_AS_RELATION",
+        },
+    ),
+    "Photo": CoverageRule(
+        "photos",
+        "PARTIELLE",
+        _fields("chemin", "date", "designation", "valid"),
+        comment=(
+            "Sous-objet contenu migré via une observation existante ou "
+            "synthétique ; les champs non consommés restent à qualifier."
+        ),
+        field_statuses={"chemin": "RENAMED"},
     ),
     "AmenagementHydraulique": CoverageRule(
         "amenagements_hydrauliques, link_amenagements_troncons, observations, photos",
@@ -291,6 +352,143 @@ COVERAGE_REGISTRY["RefTypeAmenagementHydraulique"] = CoverageRule(
 )
 
 
+MODEL_FIELD_STATUSES = frozenset(
+    {
+        "MIGRATED",
+        "MIGRATED_AS_RELATION",
+        "MIGRATED_AS_DERIVED",
+        "RENAMED",
+        "DEFERRED",
+        "INTENTIONALLY_NOT_MIGRATED",
+        "UNMIGRATED",
+    }
+)
+COUCHDB_ENVELOPE_FIELDS = frozenset(
+    {"@class", "_attachments", "_id", "_rev", "id"}
+)
+
+
+def load_model_manifest(path: Path | None = None) -> dict[str, Any]:
+    """Charge et valide le minimum requis du manifeste SIRS versionné."""
+
+    selected = path or PROJECT_ROOT / DEFAULT_MANIFEST_PATH
+    try:
+        manifest = json.loads(selected.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Manifeste SIRS illisible ({selected}) : {exc}") from exc
+    classes = manifest.get("classes")
+    source = manifest.get("source")
+    if not isinstance(classes, dict) or not isinstance(source, dict):
+        raise RuntimeError(f"Manifeste SIRS invalide : {selected}")
+    return manifest
+
+
+def _contained_model_objects(
+    documents: Sequence[Mapping[str, Any]],
+    model_classes: Mapping[str, Any],
+) -> dict[str, list[Mapping[str, Any]]]:
+    """Indexe documents et sous-objets selon les références Ecore contenues."""
+
+    objects: defaultdict[str, list[Mapping[str, Any]]] = defaultdict(list)
+
+    def visit(class_name: str, value: Mapping[str, Any]) -> None:
+        objects[class_name].append(value)
+        class_model = model_classes.get(class_name)
+        if not isinstance(class_model, Mapping):
+            return
+        for model_field in class_model.get("effective_fields", ()):
+            if not isinstance(model_field, Mapping) or not model_field.get("containment"):
+                continue
+            target_class = model_field.get("type")
+            field_name = model_field.get("name")
+            if not isinstance(target_class, str) or not isinstance(field_name, str):
+                continue
+            nested = value.get(field_name)
+            if isinstance(nested, Mapping):
+                visit(target_class, nested)
+            elif isinstance(nested, list):
+                for item in nested:
+                    if isinstance(item, Mapping):
+                        visit(target_class, item)
+
+    for document in documents:
+        visit(short_class(document), document)
+    return dict(objects)
+
+
+def build_field_inventory(
+    documents: Sequence[Mapping[str, Any]],
+    manifest: Mapping[str, Any],
+) -> dict[str, tuple[dict[str, Any], ...]]:
+    """Confronte modèle, registre et occurrences sans confondre leurs rôles."""
+
+    model_classes = manifest.get("classes", {})
+    if not isinstance(model_classes, Mapping):
+        raise RuntimeError("Le manifeste SIRS ne contient pas de classes valides")
+    objects_by_class = _contained_model_objects(documents, model_classes)
+    inventories: dict[str, tuple[dict[str, Any], ...]] = {}
+    scoped_classes = {
+        class_name
+        for class_name, rule in COVERAGE_REGISTRY.items()
+        if rule.status in {"MIGREE", "PARTIELLE"}
+    } | set(objects_by_class)
+    for class_name in sorted(scoped_classes):
+        rule = rule_for(class_name)
+        objects = objects_by_class.get(class_name, ())
+        class_model = model_classes.get(class_name)
+        effective_fields = (
+            class_model.get("effective_fields", ())
+            if isinstance(class_model, Mapping)
+            else ()
+        )
+        model_by_name = {
+            str(item["name"]): item
+            for item in effective_fields
+            if isinstance(item, Mapping) and item.get("name")
+        }
+        observed_names = set().union(*(value.keys() for value in objects)) if objects else set()
+        field_names = set(model_by_name) | (observed_names - COUCHDB_ENVELOPE_FIELDS)
+        rows: list[dict[str, Any]] = []
+        for field_name in sorted(field_names):
+            model_field = model_by_name.get(field_name)
+            occurrence_count = sum(field_name in value for value in objects)
+            non_null_count = sum(
+                field_name in value and value.get(field_name) is not None
+                for value in objects
+            )
+            model_defined = model_field is not None
+            coverage_status = (
+                rule.field_status(field_name)
+                if model_defined
+                else "UNKNOWN_OBSERVED"
+            )
+            if coverage_status not in MODEL_FIELD_STATUSES | {"UNKNOWN_OBSERVED"}:
+                raise RuntimeError(
+                    f"Statut de couverture inconnu pour {class_name}.{field_name}: "
+                    f"{coverage_status}"
+                )
+            rows.append(
+                {
+                    "source_class": class_name,
+                    "source_field": field_name,
+                    "label": model_field.get("label") if model_defined else None,
+                    "declared_in": model_field.get("declared_in") if model_defined else None,
+                    "inherited": bool(model_field.get("inherited")) if model_defined else False,
+                    "kind": model_field.get("kind") if model_defined else None,
+                    "type": model_field.get("type") if model_defined else None,
+                    "model_defined": model_defined,
+                    "observed_in_corpus": occurrence_count > 0,
+                    "occurrence_count": occurrence_count,
+                    "non_null_count": non_null_count,
+                    "coverage_status": coverage_status,
+                    "target": rule.destination,
+                    "comment": rule.comment,
+                }
+            )
+        inventories[class_name] = tuple(rows)
+    return inventories
+
+
 def short_class(document: Mapping[str, Any]) -> str:
     value = document.get("@class")
     if not isinstance(value, str) or not value:
@@ -319,10 +517,22 @@ def diagnose_documents(
     output_path: Path = REPORT_PATH,
     source_database: str | None = None,
     validate_postgis: bool = False,
+    model_manifest: Mapping[str, Any] | None = None,
 ) -> CoverageResult:
     grouped: defaultdict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for document in documents:
         grouped[short_class(document)].append(document)
+
+    manifest = dict(model_manifest) if model_manifest is not None else load_model_manifest()
+    model_classes = manifest.get("classes", {})
+    objects_by_class = _contained_model_objects(documents, model_classes)
+    field_inventory = build_field_inventory(documents, manifest)
+    manifest_reference = {
+        "manifest": DEFAULT_MANIFEST_PATH.as_posix(),
+        "model_version": manifest.get("model_version"),
+        "source_ecore": manifest.get("source", {}).get("ecore"),
+        "source_ecore_sha256": manifest.get("source", {}).get("ecore_sha256"),
+    }
 
     database_document = next(
         (document for document in documents if document.get("_id") == "$sirs"),
@@ -369,15 +579,34 @@ def diagnose_documents(
     covered_documents = migrated_objects = 0
     non_migrated_documents = non_migrated_business = 0
 
-    for class_name in sorted(grouped):
-        class_documents = grouped[class_name]
+    for class_name in sorted(set(grouped) | set(field_inventory)):
+        class_documents = grouped.get(class_name, [])
+        class_objects = objects_by_class.get(class_name, class_documents)
         rule = rule_for(class_name)
-        status_counts[rule.status] += 1
-        observed = set().union(*(document.keys() for document in class_documents))
-        used = observed & set(rule.consumed_fields)
-        ignored = observed & set(rule.ignored_fields)
-        unanalysed = observed - used - ignored
-        total_fields += len(observed)
+        if class_objects:
+            status_counts[rule.status] += 1
+        inventory = field_inventory.get(class_name, ())
+        observed = {
+            item["source_field"] for item in inventory if item["observed_in_corpus"]
+        }
+        used = {
+            item["source_field"]
+            for item in inventory
+            if item["coverage_status"]
+            in {"MIGRATED", "MIGRATED_AS_RELATION", "MIGRATED_AS_DERIVED", "RENAMED"}
+        }
+        ignored = {
+            item["source_field"]
+            for item in inventory
+            if item["coverage_status"]
+            in {"DEFERRED", "INTENTIONALLY_NOT_MIGRATED"}
+        }
+        unanalysed = {
+            item["source_field"]
+            for item in inventory
+            if item["coverage_status"] in {"UNMIGRATED", "UNKNOWN_OBSERVED"}
+        }
+        total_fields += len(inventory)
         used_fields += len(used)
         ignored_fields += len(ignored)
         unanalysed_fields += len(unanalysed)
@@ -385,7 +614,7 @@ def diagnose_documents(
             covered_documents += len(class_documents)
             if not class_name.startswith("Ref"):
                 migrated_objects += len(class_documents)
-            migrated_count = len(class_documents)
+            migrated_count = len(class_objects)
         else:
             migrated_count = 0
         if rule.status in {"NON_MIGREE", "TECHNIQUE_IGNORE", "REFERENTIEL_IGNORE"}:
@@ -403,14 +632,18 @@ def diagnose_documents(
         rows.append(
             {
                 "class": class_name,
-                "total": len(class_documents),
+                "total": len(class_objects),
+                "document_total": len(class_documents),
                 "status": rule.status,
                 "destination": rule.destination,
                 "comment": rule.comment,
                 "migrated": migrated_count,
-                "remaining": len(class_documents) - migrated_count,
+                "remaining": len(class_objects) - migrated_count,
                 "known": class_name in COVERAGE_REGISTRY,
+                "model_defined": class_name in model_classes,
                 "unanalysed": tuple(sorted(unanalysed)),
+                "field_inventory": inventory,
+                "model_manifest": manifest_reference,
             }
         )
         if rule.status in {"MIGREE", "PARTIELLE"}:
@@ -419,8 +652,9 @@ def diagnose_documents(
                     f"### {class_name}",
                     "",
                     f"- Champs observés : {', '.join(f'`{x}`' for x in sorted(observed)) or 'aucun'}",
-                    f"- Champs utilisés : {', '.join(f'`{x}`' for x in sorted(used)) or 'aucun'}",
-                    f"- Champs ignorés et documentés : {', '.join(f'`{x}`' for x in sorted(ignored)) or 'aucun'}",
+                    f"- Champs définis par le modèle : {len([item for item in inventory if item['model_defined']])}",
+                    f"- Champs couverts : {', '.join(f'`{x}`' for x in sorted(used)) or 'aucun'}",
+                    f"- Champs différés ou volontairement non migrés : {', '.join(f'`{x}`' for x in sorted(ignored)) or 'aucun'}",
                     f"- Champs non analysés/non migrés : {', '.join(f'`{x}`' for x in sorted(unanalysed)) or 'aucun'}",
                     "",
                 ]
@@ -493,8 +727,15 @@ def diagnose_documents(
     lines = [
         "# Bilan généré de couverture SIRS → PostgreSQL",
         "",
-        "> Ce document est généré depuis les JSON réellement présents dans CouchDB. "
-        "Il ne décrit pas un modèle Java théorique.",
+        "> Ce document confronte le manifeste structurel SIRS 2.55, le registre "
+        "de couverture du projet et les JSON réellement présents dans CouchDB.",
+        "",
+        "## Provenance du modèle",
+        "",
+        f"- Manifeste : `{manifest_reference['manifest']}`",
+        f"- Version du modèle : `{_escape(manifest_reference['model_version'])}`",
+        f"- Ecore source : `{_escape(manifest_reference['source_ecore'])}`",
+        f"- SHA-256 Ecore : `{_escape(manifest_reference['source_ecore_sha256'])}`",
         "",
         "## A. Synthèse",
         "",
@@ -541,10 +782,11 @@ def diagnose_documents(
             *field_sections,
             "### Totaux de couverture des champs",
             "",
-            f"- Couples classe/champ source distincts observés : {total_fields}",
+            f"- Couples classe/champ du modèle ou observés : {total_fields}",
             f"- Couples utilisés : {used_fields}",
-            f"- Couples volontairement ignorés/documentés : {ignored_fields}",
+            f"- Couples différés ou volontairement ignorés/documentés : {ignored_fields}",
             f"- Couples non analysés/non migrés : {unanalysed_fields}",
+            "- Un champ du modèle reste audité même avec zéro occurrence dans le corpus.",
             "",
             "## E. Relations et sous-structures non migrées",
             "",

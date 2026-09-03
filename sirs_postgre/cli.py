@@ -21,6 +21,12 @@ from .migration.anomalies import (
 )
 from .migration.coverage import generate_coverage_report
 from .migration.crs import CRSInfo, resolve_source_crs
+from .model_manifest import (
+    DEFAULT_ECORE_PATH,
+    DEFAULT_LABELS_PATH,
+    DEFAULT_MANIFEST_PATH,
+    write_manifest,
+)
 from .source import connect_couchdb
 from .target import (
     PostgreSQLConfig,
@@ -145,6 +151,37 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("anomaly_id")
     resolve.add_argument("--status", required=True, choices=sorted(RESOLUTION_STATUSES))
     resolve.add_argument("--comment")
+    model_manifest = subparsers.add_parser(
+        "generate-model-manifest",
+        description="Génère le manifeste déterministe du modèle SIRS 2.55.",
+    )
+    model_manifest.add_argument(
+        "--ecore",
+        type=Path,
+        default=DEFAULT_ECORE_PATH,
+        help=(
+            "Snapshot Ecore à lire "
+            f"(défaut : {DEFAULT_ECORE_PATH.as_posix()})."
+        ),
+    )
+    model_manifest.add_argument(
+        "--labels",
+        type=Path,
+        default=DEFAULT_LABELS_PATH,
+        help=(
+            "Répertoire des libellés "
+            f"(défaut : {DEFAULT_LABELS_PATH.as_posix()})."
+        ),
+    )
+    model_manifest.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_MANIFEST_PATH,
+        help=(
+            "Fichier manifeste à écrire "
+            f"(défaut : {DEFAULT_MANIFEST_PATH.as_posix()})."
+        ),
+    )
     return parser
 
 
@@ -611,6 +648,45 @@ def run_anomalies(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_generate_model_manifest(args: argparse.Namespace) -> int:
+    try:
+        manifest = write_manifest(
+            args.output,
+            ecore_path=args.ecore,
+            labels_path=args.labels,
+        )
+    except Exception as exc:
+        print(f"[ERREUR] Génération du manifeste modèle : {exc}")
+        return 1
+
+    print(f"[OK] Manifeste modèle généré : {args.output.as_posix()}")
+    print(f"Classes : {manifest['summary']['class_count']}")
+    print(
+        "Classes document CouchDB : "
+        f"{manifest['summary']['couchdb_document_class_count']}"
+    )
+    print(f"Ecore SHA-256 : {manifest['source']['ecore_sha256']}")
+    print("Classes de contrôle :")
+    classes = manifest["classes"]
+    for class_name in (
+        "SystemeEndiguement",
+        "Digue",
+        "TronconDigue",
+        "Desordre",
+        "Observation",
+        "Photo",
+    ):
+        entry = classes[class_name]
+        super_types = ", ".join(entry["super_types"]) or "aucun"
+        couchdb = "oui" if entry["couchdb_document"] else "non"
+        print(
+            f"  {class_name}: déclarées={len(entry['declared_fields'])}, "
+            f"effectives={len(entry['effective_fields'])}, "
+            f"super_types={super_types}, couchDB_document={couchdb}"
+        )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv(dotenv_path=CONFIG_ENV_PATH, override=False)
     args = build_parser().parse_args(argv)
@@ -628,6 +704,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_diagnose(args)
     if args.command == "anomalies":
         return run_anomalies(args)
+    if args.command == "generate-model-manifest":
+        return run_generate_model_manifest(args)
     raise AssertionError(f"Commande inconnue : {args.command}")
 
 
