@@ -29,7 +29,7 @@ OWNER_FIELDS = (
 )
 
 # Namespace stable propre à sirs-postgre. Il rend les observations synthétiques
-# reproductibles sans dépendre d'un UUID ou d'un nom propre à cabbalr.
+# reproductibles sans dépendre d'un UUID ou d'un nom propre à un corpus source.
 SYNTHETIC_OBSERVATION_NAMESPACE = UUID("8708bb95-4705-5372-8382-11a4455aef50")
 
 

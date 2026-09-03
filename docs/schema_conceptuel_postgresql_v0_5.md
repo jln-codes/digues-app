@@ -169,7 +169,7 @@ Le modèle ne suppose pas :
 - que les PR sont égaux aux mètres depuis le premier sommet ;
 - que l'ordre de stockage des bornes définit le sens du système.
 
-Le corpus `cabbalr` est un cas simple avec un système élémentaire par tronçon et deux bornes, mais cette particularité ne devient pas une règle générique.
+Un corpus audité peut présenter le cas simple d'un système élémentaire par tronçon et de deux bornes, mais cette particularité ne devient pas une règle générique.
 
 ### 2.2 `borne_reperage`
 
@@ -1083,7 +1083,7 @@ BorneDigue
 TronconDigue.systemeRepDefautId
 ```
 
-sans présumer que tous les systèmes ressemblent au cas élémentaire observé dans `cabbalr`.
+sans présumer que tous les systèmes ressemblent au cas élémentaire observé dans un corpus particulier.
 
 ### 16.2 Objets `Positionable`
 

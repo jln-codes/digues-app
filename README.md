@@ -87,7 +87,7 @@ sudo apt install python3 python3-pip python3-venv
 Créer ensuite l'environnement virtuel depuis la racine du projet :
 
 ```bash
-cd ~/Projects/sirs-postgre
+cd sirs-postgre
 
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
@@ -625,8 +625,8 @@ géométrie reste autoritaire.
 | `Photo.chemin` | `photos.chemin_source` | chemin source conservé |
 
 Le mapping détaillé et exhaustif doit continuer à être audité contre le schéma
-SIRS historique. Une absence dans la base de développement `cabbalr` ne constitue
-pas une justification suffisante pour abandonner un champ ou une classe SIRS.
+SIRS historique. Une absence dans un corpus source particulier ne constitue pas
+une justification suffisante pour abandonner un champ ou une classe SIRS.
 
 ---
 
@@ -710,21 +710,18 @@ et ne doivent jamais devenir implicitement des règles SIRS générales.
 
 ---
 
-# Base CouchDB utilisée pendant le développement
+# Variabilité des bases CouchDB sources
 
-Le développement initial s'appuie principalement sur la base CouchDB
-`cabbalr`.
-
-Cette base reflète les données historiques d'une collectivité particulière. Elle
-ne contient pas nécessairement toutes les classes et tous les usages possibles
-du modèle SIRS Digues.
+Une base CouchDB donnée ne contient pas nécessairement toutes les classes ni
+tous les usages possibles du modèle SIRS Digues. Un corpus source particulier
+ne doit donc pas être traité comme une description exhaustive du schéma.
 
 Par conséquent :
 
 ```text
 schéma SIRS de référence
 ≠
-contenu particulier de cabbalr
+contenu d'une base source particulière
 ```
 
 Toute autre base doit commencer par :
@@ -751,7 +748,7 @@ Restent notamment à traiter ou généraliser :
 - plusieurs relations autour des prestations ;
 - le repérage des autres objets `Positionable`.
 
-La liste exhaustive et actualisée doit être lue dans :
+La liste exhaustive et actualisée est produite par `sirs-postgre diagnose` dans :
 
 ```text
 audits/bilan.md
@@ -874,7 +871,8 @@ config.example.env
 - Le schéma SIRS Digues/CouchDB reste la référence métier générale.
 - La migration vers PostgreSQL doit être fidèle par défaut.
 - Tout écart au modèle historique doit être explicite, argumenté et documenté.
-- Une absence dans `cabbalr` ne signifie pas qu'une structure SIRS est inutile.
+- Une absence dans un corpus source ne signifie pas qu'une structure SIRS est
+  inutile.
 - PostgreSQL/PostGIS porte l'autorité métier et spatiale de la cible.
 - Les UUID historiques sont conservés.
 - Les nouvelles lignes peuvent recevoir des UUID générés par PostgreSQL.

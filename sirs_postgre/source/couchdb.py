@@ -30,7 +30,7 @@ class CouchDBConfig:
     """Paramètres d'accès à une base CouchDB SIRS."""
 
     url: str = "http://127.0.0.1:5984"
-    database: str = "cabbalr"
+    database: str = "sirs_source"
     username: str | None = None
     password: str | None = None
     timeout: float = 60.0
@@ -79,7 +79,7 @@ class CouchDBConfig:
 
         prefix = f"SIRS_{selected.upper()}_"
         default_url = "http://127.0.0.1:5984" if selected == "local" else ""
-        default_database = "cabbalr" if selected == "local" else ""
+        default_database = "sirs_source" if selected == "local" else ""
         config = cls(
             url=os.getenv(f"{prefix}COUCHDB_URL", default_url),
             database=database or os.getenv(f"{prefix}DATABASE", default_database),

@@ -26,6 +26,7 @@ from sirs_postgre.migration.anomalies import (
     write_anomalies_json,
 )
 from sirs_postgre.migration.vegetation import MANUAL_REVIEW
+from sirs_postgre.migration.source_overrides import SourceMigrationOverrides
 
 
 DATABASE = "test_source"
@@ -211,13 +212,13 @@ class AnomalySerializationTest(unittest.TestCase):
             severity="WARNING",
             source_database=DATABASE,
             source_class="Vegetation",
-            stable_subject_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
+            stable_subject_id="00000000-0000-0000-0000-000000000201",
             source_field="geometry",
         )
         without_document = Anomaly.create(**values)
         with_document = Anomaly.create(
             **values,
-            source_document_id="ca7792c06baa3f909d82ec3731153d53",
+            source_document_id="00000000000000000000000000000201",
         )
         self.assertEqual(without_document.anomaly_id, with_document.anomaly_id)
 
@@ -227,14 +228,14 @@ class AnomalySerializationTest(unittest.TestCase):
             severity="WARNING",
             source_database=DATABASE,
             source_class="Vegetation",
-            stable_subject_id="ca7792c0-6baa-3f90-9d82-ec3731153d53",
-            source_document_id="ca7792c06baa3f909d82ec3731153d53",
+            stable_subject_id="00000000-0000-0000-0000-000000000201",
+            source_document_id="00000000000000000000000000000201",
             source_field="geometry",
         )
         old_payload = current.to_dict()
         old_payload.pop("source_document_id")
         old_payload.pop("source_object_id")
-        old_payload["source_id"] = "ca7792c0-6baa-3f90-9d82-ec3731153d53"
+        old_payload["source_id"] = "00000000-0000-0000-0000-000000000201"
         old_payload.update(
             status="ACCEPTED_AS_IS",
             resolution_comment="Décision historique",
@@ -250,7 +251,7 @@ class AnomalySerializationTest(unittest.TestCase):
         self.assertEqual(merged.first_detected_at, "2026-01-01T00:00:00Z")
         self.assertEqual(
             merged.source_document_id,
-            "ca7792c06baa3f909d82ec3731153d53",
+            "00000000000000000000000000000201",
         )
 
     def test_csv_actionable_view_uses_exactly_the_shared_cli_rule(self):
@@ -422,7 +423,7 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertNotIn("INVALID_GEOMETRY", {item.category for item in anomalies})
 
     def test_amenagement_polygon_is_not_checked_by_the_vegetation_parser(self):
-        source_id = "bb404c68-6144-992f-f4ec-d939ea005d75"
+        source_id = str(UUID(int=104))
         anomalies = self.collect(
             [
                 source_doc(
@@ -432,13 +433,13 @@ class AnomalyCollectionTest(unittest.TestCase):
                 )
             ],
             [coverage_row("AmenagementHydraulique", "PARTIELLE")],
-            database="cabbalr",
+            database="synthetic_source",
         )
         self.assertNotIn("INVALID_GEOMETRY", {item.category for item in anomalies})
         historical_false_positive = Anomaly.create(
             category="INVALID_GEOMETRY",
             severity="WARNING",
-            source_database="cabbalr",
+            source_database="synthetic_source",
             source_class="AmenagementHydraulique",
             stable_subject_id=source_id,
             source_document_id=source_id,
@@ -585,7 +586,7 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertIsNone(unknown.source_object_id)
 
     def test_migrated_technical_access_needs_no_parent_or_spatial_inference(self):
-        for database in ("cabbalr", "another_sirs_database"):
+        for database in ("synthetic_source", "another_sirs_database"):
             with self.subTest(database=database):
                 anomalies = self.collect(
                     [
@@ -815,7 +816,7 @@ class AnomalyCollectionTest(unittest.TestCase):
         self.assertEqual(duplicate.source_document_id, parent_id)
 
     def test_detects_source_overrides_and_manual_review(self):
-        amenagement_id = "496d26f14278405a4172bf66ec000321"
+        amenagement_id = UUID(int=21).hex
         vegetation_id = UUID(int=20)
         prepared = SimpleNamespace(
             vegetation=SimpleNamespace(
@@ -828,22 +829,29 @@ class AnomalyCollectionTest(unittest.TestCase):
                 ]
             )
         )
-        anomalies = self.collect(
-            [
-                source_doc("AmenagementHydraulique", amenagement_id),
-                source_doc(
-                    "PeuplementVegetation",
-                    vegetation_id.hex,
-                    geometry="POLYGON ((0 0, 1 0, 0 0, 0 0))",
-                ),
-            ],
-            [
-                coverage_row("AmenagementHydraulique", "PARTIELLE"),
-                coverage_row("PeuplementVegetation", "PARTIELLE"),
-            ],
-            database="cabbalr",
-            prepared=prepared,
+        overrides = SourceMigrationOverrides(
+            amenagement_type_by_id={amenagement_id: "ZEC"}
         )
+        with patch(
+            "sirs_postgre.migration.anomalies.get_source_overrides",
+            return_value=overrides,
+        ):
+            anomalies = self.collect(
+                [
+                    source_doc("AmenagementHydraulique", amenagement_id),
+                    source_doc(
+                        "PeuplementVegetation",
+                        vegetation_id.hex,
+                        geometry="POLYGON ((0 0, 1 0, 0 0, 0 0))",
+                    ),
+                ],
+                [
+                    coverage_row("AmenagementHydraulique", "PARTIELLE"),
+                    coverage_row("PeuplementVegetation", "PARTIELLE"),
+                ],
+                database="synthetic_source",
+                prepared=prepared,
+            )
         categories = [item.category for item in anomalies]
         self.assertIn("SOURCE_OVERRIDE", categories)
         self.assertIn("MANUAL_REVIEW", categories)

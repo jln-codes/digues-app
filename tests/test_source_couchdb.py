@@ -43,7 +43,7 @@ class CouchDBInfrastructureTest(unittest.TestCase):
     def test_local_profile_has_no_hardcoded_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
             config = CouchDBConfig.from_profile("local")
-        self.assertEqual(config.database, "cabbalr")
+        self.assertEqual(config.database, "sirs_source")
         self.assertIsNone(config.auth)
 
     def test_connect_uses_compatible_profile_environment(self):

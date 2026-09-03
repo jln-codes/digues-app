@@ -29,7 +29,7 @@ class FakeSourceClient:
     def check_connection(self):
         if self.check_error:
             raise self.check_error
-        return CouchDBSourceStatus("cabbalr", "3.4.2", 4_768)
+        return CouchDBSourceStatus("synthetic_source", "3.4.2", 4_768)
 
     def count_by_class(self, class_name):
         return {
@@ -43,7 +43,7 @@ class FakeSourceClient:
 
     def get_database_info(self):
         return CouchDBDatabaseInfo(
-            source_database="cabbalr",
+            source_database="synthetic_source",
             epsg_code="EPSG:3950",
             crs_wkt='PROJCS["RGF93 / CC50",AUTHORITY["EPSG","3950"]]',
             proj4="+proj=lcc",

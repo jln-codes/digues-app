@@ -271,10 +271,10 @@ class CoreTransformationTest(unittest.TestCase):
                 self.assertRegex(columns, rf"insert into public\.{table} \(id,")
 
     def test_couchdb_id_is_normalized_without_changing_bits(self):
-        compact = couchdb_id_to_uuid("001771be560d42069f0e1b185830d2b7")
-        canonical = couchdb_id_to_uuid("001771be-560d-4206-9f0e-1b185830d2b7")
+        compact = couchdb_id_to_uuid("00000000000000000000000000000123")
+        canonical = couchdb_id_to_uuid("00000000-0000-0000-0000-000000000123")
         self.assertEqual(compact, canonical)
-        self.assertEqual(compact.hex, "001771be560d42069f0e1b185830d2b7")
+        self.assertEqual(compact.hex, "00000000000000000000000000000123")
 
     def test_troncon_wkt_is_preserved(self):
         wkt = "LINESTRING (1.25 2.5, 3.75 4.0)"

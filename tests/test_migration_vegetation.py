@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from uuid import UUID
 
-from sirs_postgre.migration.source_overrides import get_source_overrides
+from sirs_postgre.migration.source_overrides import SourceMigrationOverrides
 from sirs_postgre.migration.vegetation import (
     DEGENERATE_LINE_TO_POINT,
     KEEP_GEOMETRY,
@@ -68,11 +68,12 @@ def source_fixture(source_class, document, *, parcelle_updates=None):
     return source
 
 
-def prepare(source, *, database="autre_base", troncons=None):
+def prepare(source, *, database="autre_base", troncons=None, overrides=None):
     return prepare_vegetation_migration(
         source,
         troncon_ids=troncons or {TRONCON_ID},
         source_database=database,
+        overrides=overrides,
     )
 
 
@@ -251,10 +252,10 @@ class VegetationStructureTest(unittest.TestCase):
         self.assertFalse(prepared.vegetation[0].valid)
         self.assertEqual(prepared.vegetation[0].commentaire, "Cerisier — texte brut")
 
-    def test_cabbalr_override_is_isolated_and_not_name_based(self):
-        bos3_id = "16f47274e17fbb21a37b9213fe0030a9"
+    def test_explicit_override_is_isolated_and_not_name_based(self):
+        synthetic_id = UUID(int=103).hex
         document = physical_document(
-            _id=bos3_id,
+            _id=synthetic_id,
             designation="Nom quelconque",
             geometry="POLYGON ((0 0, 0 0, 0 0, 0 0))",
             explicitGeometry="POLYGON ((20 20, 30 20, 30 30, 20 30, 20 20))",
@@ -265,15 +266,18 @@ class VegetationStructureTest(unittest.TestCase):
         )
         self.assertEqual(other.vegetation[0].geometry_method, MANUAL_REVIEW)
 
-        cabbalr = prepare(
-            source_fixture("PeuplementVegetation", document), database="cabbalr"
+        overridden = prepare(
+            source_fixture("PeuplementVegetation", document),
+            database="synthetic_source",
+            overrides=SourceMigrationOverrides(
+                vegetation_geometry_source_by_id={
+                    synthetic_id: "explicitGeometry"
+                }
+            ),
         )
         self.assertEqual(
-            cabbalr.vegetation[0].geometry_method,
+            overridden.vegetation[0].geometry_method,
             RECONSTRUCT_FROM_EXPLICIT_GEOMETRY,
-        )
-        self.assertFalse(
-            get_source_overrides("copie_externe").vegetation_geometry_source_by_id
         )
 
     def test_invalid_polygon_parser_detects_self_intersection(self):

@@ -8,7 +8,7 @@ from sirs_postgre.migration.amenagements import (
     prepare_amenagements_migration,
 )
 from sirs_postgre.migration.ouvrages import prepare_ouvrages_migration
-from sirs_postgre.migration.source_overrides import get_source_overrides
+from sirs_postgre.migration.source_overrides import SourceMigrationOverrides
 
 
 AMENAGEMENT_ID = "00000000-0000-0000-0000-000000000010"
@@ -109,10 +109,10 @@ class AmenagementsMigrationTest(unittest.TestCase):
                 source, troncon_ids=set(), source_database="autre_base"
             )
 
-    def test_current_uuid_and_name_have_no_effect_for_another_database(self):
-        current_id = "496d26f14278405a4172bf66ec000321"
+    def test_unconfigured_uuid_and_name_have_no_effect(self):
+        current_id = UUID(int=101).hex
         source = source_fixture(
-            amenagement_document(_id=current_id, designation="Gosnay 1")
+            amenagement_document(_id=current_id, designation="Fixture synthétique")
         )
         prepared = prepare_amenagements_migration(
             source, troncon_ids=set(), source_database="copie_externe"
@@ -120,15 +120,19 @@ class AmenagementsMigrationTest(unittest.TestCase):
         self.assertEqual(prepared.amenagements[0].type_id, "IND")
         self.assertTrue(any("type source absent" in warning for warning in prepared.warnings))
 
-    def test_current_database_override_is_isolated_by_database_name(self):
-        current_id = "496d26f14278405a4172bf66ec000321"
+    def test_explicit_override_is_applied_by_identifier(self):
+        current_id = UUID(int=102).hex
         source = source_fixture(amenagement_document(_id=current_id))
         prepared = prepare_amenagements_migration(
-            source, troncon_ids=set(), source_database="cabbalr"
+            source,
+            troncon_ids=set(),
+            source_database="synthetic_source",
+            overrides=SourceMigrationOverrides(
+                amenagement_type_by_id={current_id: "ZEC"}
+            ),
         )
         self.assertEqual(prepared.amenagements[0].type_id, "ZEC")
         self.assertTrue(any("override spécifique" in warning for warning in prepared.warnings))
-        self.assertFalse(get_source_overrides("autre_base").amenagement_type_by_id)
 
     def test_associated_ouvrage_uses_explicit_parent_and_dvs_type(self):
         associated = {

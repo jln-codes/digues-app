@@ -931,9 +931,9 @@ def collect_anomalies(
     }
     # Le parseur léger est réservé aux géométries de végétation pour lesquelles
     # ses limites ont été auditées. Une ancienne version l'appliquait aussi aux
-    # grands polygones d'aménagement : elle a produit un faux positif
-    # INVALID_GEOMETRY pour bb404c68-6144-992f-f4ec-d939ea005d75, pourtant
-    # accepté comme Polygon valide par la validation PostGIS de la migration.
+    # grands polygones d'aménagement : elle a produit un faux positif sur un
+    # objet pourtant accepté comme Polygon valide par la validation PostGIS de
+    # la migration.
     # Cette anomalie historique reste donc inactive et OPEN dans le registre.
     for source_class in (
         "ArbreVegetation",
