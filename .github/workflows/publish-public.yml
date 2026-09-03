@@ -1,0 +1,59 @@
+name: Publish public mirror
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout private repository
+        uses: actions/checkout@v4
+
+      - name: Prepare public tree
+        run: |
+          mkdir -p public-export
+
+          cp -R sirs_postgre public-export/
+          cp -R tests public-export/
+          cp -R docs public-export/
+          cp -R qgis public-export/
+
+          cp pyproject.toml public-export/
+          cp README.md public-export/
+          cp config.example.env public-export/
+
+      - name: Checkout public repository
+        uses: actions/checkout@v4
+        with:
+          repository: jln-codes/sirs-postgre-public
+          token: ${{ secrets.PUBLIC_REPO_TOKEN }}
+          path: public-repo
+
+      - name: Replace public repository contents
+        run: |
+          cd public-repo
+
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+
+          cp -R ../public-export/. .
+
+      - name: Commit and push changes
+        run: |
+          cd public-repo
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No public changes to publish."
+            exit 0
+          fi
+
+          git commit -m "Sync public mirror from sirs-postgre"
+          git push
