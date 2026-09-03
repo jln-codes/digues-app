@@ -34,16 +34,16 @@ jobs:
 
           cd public-export
 
-          for item in * .*; do
+          while IFS= read -r item; do
             case "$item" in
-              .|..|sirs_postgre|tests|docs|qgis|pyproject.toml|README.md|config.example.env)
+              sirs_postgre|tests|docs|qgis|pyproject.toml|README.md|config.example.env)
                 ;;
               *)
                 echo "ERROR: unexpected item in public export: $item"
                 exit 1
                 ;;
             esac
-          done
+          done < <(find . -mindepth 1 -maxdepth 1 -printf '%f\n')
 
           test ! -e webapp
           test ! -e private
