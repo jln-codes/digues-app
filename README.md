@@ -2,7 +2,7 @@
 
 ## Présentation
 
-`sirs-postgre` est un projet Python consacré à la transition de **SIRS Digues V2**
+sirs-postgre est un projet Python consacré à la transition de **SIRS Digues V2**
 depuis CouchDB vers PostgreSQL/PostGIS.
 
 Le dépôt public contient un **migrateur CouchDB → PostgreSQL/PostGIS** chargé de
