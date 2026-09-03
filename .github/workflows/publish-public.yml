@@ -15,6 +15,8 @@ jobs:
 
       - name: Prepare public tree
         run: |
+          set -e
+
           mkdir -p public-export
 
           cp -R sirs_postgre public-export/
@@ -26,6 +28,31 @@ jobs:
           cp README.md public-export/
           cp config.example.env public-export/
 
+      - name: Validate public export
+        run: |
+          set -e
+
+          cd public-export
+
+          for item in * .*; do
+            case "$item" in
+              .|..|sirs_postgre|tests|docs|qgis|pyproject.toml|README.md|config.example.env)
+                ;;
+              *)
+                echo "ERROR: unexpected item in public export: $item"
+                exit 1
+                ;;
+            esac
+          done
+
+          test ! -e webapp
+          test ! -e private
+          test ! -e config.env
+          test ! -e audits
+          test ! -e .venv
+
+          echo "Public export validation passed."
+
       - name: Checkout public repository
         uses: actions/checkout@v4
         with:
@@ -35,6 +62,8 @@ jobs:
 
       - name: Replace public repository contents
         run: |
+          set -e
+
           cd public-repo
 
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
@@ -43,6 +72,8 @@ jobs:
 
       - name: Commit and push changes
         run: |
+          set -e
+
           cd public-repo
 
           git config user.name "github-actions[bot]"
@@ -56,4 +87,4 @@ jobs:
           fi
 
           git commit -m "Sync public mirror from sirs-postgre"
-          git push
+          git push origin main
