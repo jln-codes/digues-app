@@ -1,6 +1,8 @@
 import json
+import inspect
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import unittest
@@ -233,10 +235,10 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
         for expected in (
-            'id="desordre-create-editor"',
+            'id="desordre-editor"',
             '<option value="Point">Point</option>',
-            '<option value="LineString">Ligne</option>',
-            '<option value="Polygon">Polygone</option>',
+            '<option value="LineString">LineString</option>',
+            '<option value="Polygon">Polygon</option>',
             'id="desordre-create-troncons"',
         ):
             self.assertIn(expected, page)
@@ -373,26 +375,86 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
         css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
         self.assertIn("Choisissez votre mode d’édition", page)
-        for identifier in ("line-coordinate-editor", "line-bornage-editor",
+        for identifier in ("desordre-create-line-coordinates", "desordre-create-bornage",
                            "polygon-representative-point"):
             self.assertIn(f'id="{identifier}"', page)
         self.assertIn('id="polygon-representative-x" type="text" readonly', page)
-        polygon_section = page.split('id="polygon-representative-point"', 1)[1]
-        polygon_section = polygon_section.split("</section>", 1)[0]
-        self.assertNotIn('name="line-edit-mode"', polygon_section)
+        self.assertNotIn('name="line-edit-mode"', page)
         self.assertIn('data-layer-toggle="Polygon"', page)
         self.assertNotIn("L.control.layers", script)
         self.assertIn("map.removeLayer(layer)", script)
         self.assertIn('fetchJson("/api/config")', script)
         self.assertIn("body:not(.show-uuid) .technical-identifier", css)
 
+    def test_disorder_forms_share_visual_components_without_id_selectors(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+        self.assertEqual(page.count('class="disorder-form"'), 1)
+        self.assertIn('id="desordre-editor" class="disorder-form"', page)
+        self.assertNotIn('id="desordre-create-editor"', page)
+        self.assertNotIn('id="point-editor"', page)
+        self.assertNotIn('id="line-editor"', page)
+        self.assertEqual(page.count('class="form-section"'), 4)
+        self.assertIn(
+            'id="desordre-localisation" class="form-section localisation-editor"',
+            page,
+        )
+        self.assertIn(
+            'id="desordre-create-bornage-end" class="form-section"',
+            page,
+        )
+        self.assertIn(
+            'id="desordre-create-geometry" '
+            'class="line-geometry-editor geometry-editor"',
+            page,
+        )
+        self.assertIn('id="point-map-editor" hidden', page)
+        self.assertIn('id="line-map-editor" hidden', page)
+        for common_rule in (
+            ".disorder-form label",
+            ".disorder-form input",
+            ".disorder-form .checkbox-field",
+            ".form-section",
+            ".form-section > legend",
+            ".disorder-form input[readonly]",
+            ".geometry-editor",
+        ):
+            self.assertIn(common_rule, css)
+        for obsolete_selector in (
+            "#desordre-create-editor label",
+            "#point-editor label",
+            "#line-editor label",
+            "#desordre-create-editor fieldset",
+            "#point-editor fieldset",
+        ):
+            self.assertNotIn(obsolete_selector, css)
+
+    def test_shared_form_styles_preserve_hidden_modes_and_control_ids(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+        hidden_rule = css.split(".disorder-form [hidden]", 1)[1].split("}", 1)[0]
+        mode_hidden_rule = css.split(
+            ".mode-selector .authority-choice[hidden]", 1
+        )[1].split("}", 1)[0]
+        self.assertIn("display: none !important", hidden_rule)
+        self.assertIn("display: none !important", mode_hidden_rule)
+        for identifier in (
+            "desordre-create-geometry-type",
+            "desordre-mode-selector",
+            "polygon-representative-point",
+            "bornage-mode",
+            "reproject-bornage",
+            "save-line-bornage",
+        ):
+            self.assertEqual(page.count(f'id="{identifier}"'), 1)
+
     def test_frontend_centralizes_modes_and_never_queries_empty_reperage(self):
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
-        self.assertEqual(page.count('class="disorder-form"'), 3)
+        self.assertEqual(page.count('class="disorder-form"'), 1)
         self.assertIn("function availableDisorderModes", script)
         self.assertIn('return ["map"]', script)
-        self.assertIn('["map", "coordinates"]', script)
+        self.assertIn('const modes = ["map", "xy", "lonlat"]', script)
         self.assertIn(".filter(Boolean)", script)
         availability = script.split(
             "async function refreshCreationReperageAvailability", 1
@@ -403,6 +465,102 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         self.assertIn("requestVersion !== creationReperageRequestVersion", availability)
         self.assertNotIn("Not Found", script)
 
+    def test_disorder_mode_selectors_use_direct_compact_authorities(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+
+        def choices(name):
+            pattern = (
+                rf'<input[^>]*name="{re.escape(name)}"[^>]*value="([^"]+)"[^>]*>'
+                rf'\s*([^<]+?)\s*</label>'
+            )
+            return re.findall(pattern, page)
+
+        expected_full = [
+            ("map", "Carto"),
+            ("xy", "X/Y"),
+            ("lonlat", "Lat/Lon"),
+            ("bornage", "Bornage"),
+        ]
+        self.assertEqual(choices("desordre-mode"), expected_full)
+        for obsolete_name in (
+            "desordre-point-method", "desordre-line-method",
+            "desordre-polygon-method", "coordinate-family", "line-edit-mode",
+        ):
+            self.assertEqual(choices(obsolete_name), [])
+
+        self.assertNotRegex(
+            page,
+            r'<input[^>]*type="radio"[^>]*value="coordinates"',
+        )
+        self.assertNotRegex(page, r'>\s*Coordonnées\s*</(?:label|button)>')
+        self.assertIn(
+            'desordreCreateLineCrs.value = method === "lonlat" '
+            '? "EPSG:4326" : "EPSG:3950"',
+            script,
+        )
+        mode_rule = css.split(".mode-selector {", 1)[1].split("}", 1)[0]
+        choice_rule = css.split(
+            ".mode-selector .authority-choice {", 1
+        )[1].split("}", 1)[0]
+        self.assertIn("flex-wrap: nowrap", mode_rule)
+        self.assertIn("gap: 0.25rem", mode_rule)
+        self.assertIn("padding: 0.45rem 0.35rem", choice_rule)
+        self.assertIn("white-space: nowrap", choice_rule)
+
+    def test_single_disorder_editor_routes_state_to_existing_operations(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+
+        self.assertEqual(page.count('<form id="desordre-editor"'), 1)
+        self.assertEqual(page.count('class="disorder-form"'), 1)
+        self.assertEqual(
+            script.count('desordreEditorForm.addEventListener("submit"'), 1
+        )
+        for state_field in (
+            "mode,", "geometryType,", "objectId,", "data,",
+        ):
+            self.assertIn(state_field, script.split(
+                "function setDisorderEditorState", 1
+            )[1].split("}", 1)[0])
+        self.assertIn('setDisorderEditorState("create", "Point")', script)
+        for geometry_type in ("Point", "LineString", "Polygon"):
+            self.assertIn(
+                f'prepareDisorderEditorForEdit("{geometry_type}"', script
+            )
+
+        self.assertIn('fetchJson("/api/desordres", {', script)
+        self.assertIn('saveLineRequest("/endpoints"', script)
+        self.assertIn('saveLineRequest("/reperage"', script)
+        self.assertIn(')}/geometry`', script)
+        self.assertIn(')}/reperage`', script)
+        self.assertIn("st_setpoint", inspect.getsource(
+            update_line_desordre_endpoints
+        ).lower())
+
+        html_ids = set(re.findall(r'id="([^"]+)"', page))
+        queried_ids = set(re.findall(
+            r'document\.querySelector\("#([^"]+)"\)', script
+        ))
+        self.assertEqual(queried_ids - html_ids, set())
+        for removed_id in (
+            "desordre-create-editor", "point-editor", "line-editor",
+        ):
+            self.assertNotIn(removed_id, page)
+            self.assertNotIn(f'#{removed_id}', script)
+
+        create_shell = script.split("async function openDesordreCreation", 1)[1]
+        create_shell = create_shell.split("function closeDesordreDraft", 1)[0]
+        self.assertIn("editorTabs.hidden = true", create_shell)
+        for opener in ("openPointEditor", "openLineEditor"):
+            edit_shell = script.split(f"function {opener}", 1)[1]
+            edit_shell = edit_shell.split("\n}", 1)[0]
+            self.assertIn("editorTabs.hidden = false", edit_shell)
+        polygon_shell = script.split("function renderPolygonServerFeature", 1)[1]
+        polygon_shell = polygon_shell.split("\n}", 1)[0]
+        self.assertIn("editorTabs.hidden = false", polygon_shell)
+
     def test_create_linestring_bornage_follows_rendered_troncon_cardinality(self):
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
         css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
@@ -411,7 +569,7 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         )[1].split("function setModeChoiceAvailability", 1)[0]
         choice_source = "function setModeChoiceAvailability" + script.split(
             "function setModeChoiceAvailability", 1
-        )[1].split("function renderCreationModeChoices", 1)[0]
+        )[1].split("function creationBornageChoiceState", 1)[0]
         node = shutil.which("node")
         if node is None:
             self.skipTest("Node.js indisponible pour le test DOM sans navigateur.")
@@ -449,20 +607,20 @@ process.stdout.write(JSON.stringify(states));
             ".mode-selector .authority-choice[hidden]", 1
         )[1].split("}", 1)[0]
         self.assertIn("display: none !important", hidden_rule)
-        renderer = script.split("function renderCreationModeChoices", 1)[1].split(
+        renderer = script.split("function renderDisorderModeChoices", 1)[1].split(
             "function updateLineCoordinateLabels", 1
         )[0]
-        self.assertIn("desordreCreateLineBornageChoice", renderer)
+        self.assertIn("desordreBornageChoice", renderer)
         selection_handler = script.split(
             'desordreCreateTroncons.addEventListener("change"', 1
         )[1].split('startDesordreDrawButton.addEventListener', 1)[0]
         self.assertLess(
-            selection_handler.index("renderCreationModeChoices(false)"),
+            selection_handler.index("renderDisorderModeChoices(false)"),
             selection_handler.index("refreshCreationReperageAvailability()"),
         )
         payload_builder = script.split("function buildDesordreCreationPayload", 1)[1]
         payload_builder = payload_builder.split(
-            'submitDesordreCreateButton.addEventListener', 1
+            'function configureDesordreLayer', 1
         )[0]
         self.assertIn('if (!modes.includes("bornage"))', payload_builder)
 
@@ -500,7 +658,7 @@ process.stdout.write(JSON.stringify({
         )
         self.assertEqual(result["zero"], {"visible": False, "enabled": False})
         self.assertEqual(result["many"], {"visible": False, "enabled": False})
-        renderer = script.split("function renderCreationModeChoices", 1)[1].split(
+        renderer = script.split("function renderDisorderModeChoices", 1)[1].split(
             "function updateLineCoordinateLabels", 1
         )[0]
         self.assertIn("creationBornageChoiceState", renderer)
@@ -568,78 +726,80 @@ process.stdout.write(JSON.stringify({
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
         for identifier in (
             'id="bornage-mode"',
-            'name="coordinate-family" value="bornage"',
-            'id="reperage-troncon"',
-            'id="reperage-borne"',
-            'id="reperage-distance"',
-            'id="reperage-sens"',
-            'id="reperage-pr"',
+            'name="desordre-mode" value="bornage"',
+            'id="desordre-create-troncons"',
+            'id="line-reperage-summary"',
+            'id="desordre-create-borne-start"',
+            'id="desordre-create-distance-start"',
+            'id="desordre-create-sense-start"',
         ):
             self.assertIn(identifier, page)
-        self.assertIn("buildReperagePayload", script)
+        main_context = page.split('id="desordre-create-bornage"', 1)[0]
+        bornage_panel = page.split('id="desordre-create-bornage"', 1)[1].split(
+            "</section>", 1
+        )[0]
+        self.assertIn("Tronçons concernés", main_context)
+        self.assertIn("Repérage actuel", main_context)
+        self.assertNotIn("Tronçon associé", bornage_panel)
+        self.assertNotIn("Système de repérage", bornage_panel)
+        self.assertNotIn("PR calculé", bornage_panel)
+        for editable_label in ("Borne", "Distance (m)", "Sens"):
+            self.assertIn(editable_label, bornage_panel)
+        self.assertIn("buildPointReperagePayload", script)
         self.assertIn("borne_debut_id: reperageFields.borne.value", script)
         self.assertIn("distance_debut_m: distance", script)
         self.assertIn("position_debut_relative: reperageFields.sens.value", script)
+        self.assertIn("currentReperage = reperage", script)
+        self.assertIn("options.systeme_reperage_id", script)
         self.assertIn("/reperage`", script)
-        self.assertIn("renderServerFeature(feature)", script)
+        self.assertIn("renderPointServerFeature(feature)", script)
         self.assertIn("updatePointLayer(feature)", script)
 
     def test_reproject_buttons_and_warnings_match_editable_geometry_types(self):
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
-        point_actions = page.split('id="cancel-edit"', 1)[1].split("</div>", 1)[0]
-        line_actions = page.split('id="line-bornage-editor"', 1)[1].split(
+        bornage_actions = page.split('id="desordre-bornage-actions"', 1)[1].split(
             "</section>", 1
         )[0]
-        self.assertIn('id="reproject-point-bornage"', point_actions)
+        self.assertIn('id="reproject-bornage"', bornage_actions)
         self.assertLess(
-            point_actions.index('id="reproject-point-bornage"'),
-            point_actions.index('id="save-edit"'),
+            bornage_actions.index('id="reproject-bornage"'),
+            bornage_actions.index('id="save-line-bornage"'),
         )
-        self.assertIn('id="reproject-line-bornage"', line_actions)
-        self.assertLess(
-            line_actions.index('id="reproject-line-bornage"'),
-            line_actions.index('id="save-line-bornage"'),
-        )
-        self.assertEqual(page.count('>Reprojeter</button>'), 2)
+        self.assertEqual(page.count('>Reprojeter</button>'), 1)
         self.assertIn("modifier le bornage repositionne le point", page)
         self.assertIn("Les sommets de la géométrie actuelle sont perdus", page)
         self.assertIn(
-            'reprojectPointBornageButton.hidden = family !== "bornage"',
+            'desordreBornageActions.hidden = !editing || method !== "bornage"',
             script,
         )
-        self.assertIn("editorForm.requestSubmit()", script)
+        self.assertIn("desordreEditorForm.requestSubmit()", script)
         self.assertIn("applyLineReperage", script)
-        polygon_editor = script.split("function showReadonlyPolygon", 1)[1].split(
-            "desordreCreateForm.addEventListener", 1
+        polygon_editor = script.split("function renderPolygonServerFeature", 1)[1].split(
+            "desordreEditorForm.addEventListener", 1
         )[0]
-        self.assertIn("editorForm.hidden = true", polygon_editor)
-        self.assertIn("lineEditorForm.hidden = true", polygon_editor)
-        self.assertIn("desordreCreateBornage.hidden = true", polygon_editor)
+        self.assertIn('prepareDisorderEditorForEdit("Polygon"', polygon_editor)
+        self.assertIn("renderDisorderModeChoices(false)", polygon_editor)
 
     def test_reproject_actions_use_current_payload_without_dirty_check(self):
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
-        point_handler = script.split(
-            'reprojectPointBornageButton.addEventListener("click"', 1
-        )[1].split(");\n});", 1)[0]
-        line_handler = script.split(
-            'reprojectLineBornageButton.addEventListener("click"', 1
+        handler = script.split(
+            'reprojectBornageButton.addEventListener("click"', 1
         )[1].split("saveLineBornageButton.addEventListener", 1)[0]
-        self.assertIn("editorForm.requestSubmit(", point_handler)
-        self.assertIn("applyLineReperage", line_handler)
-        self.assertNotIn("initialFormValues", point_handler)
-        self.assertNotIn("initialLineReperageValues", line_handler)
+        self.assertIn("desordreEditorForm.requestSubmit(", handler)
+        self.assertIn("applyLineReperage", handler)
+        self.assertNotIn("initialFormValues", handler)
+        self.assertNotIn("initialLineReperageValues", handler)
 
     def test_frontend_has_explicit_linestring_editing_without_drag_writes(self):
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
         self.assertIn("leaflet-editable@1.2.0", page)
         for identifier in (
-            'id="line-editor"',
+            'id="desordre-editor"',
             'id="start-line-edit"',
             'id="validate-line-edit"',
             'id="cancel-line-edit"',
-            'id="line-vertex-count"',
         ):
             self.assertIn(identifier, page)
         self.assertIn("activeLineLayer.enableEdit(map)", script)
@@ -652,6 +812,47 @@ process.stdout.write(JSON.stringify({
         )[0]
         self.assertNotIn("fetchJson", editing_handler)
         self.assertNotIn('method: "PUT"', editing_handler)
+
+    def test_disorder_geometry_type_and_reperage_labels_remain_stable(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+
+        self.assertIn("Type de géométrie", page)
+        for geometry_type in ("Point", "LineString", "Polygon"):
+            self.assertIn(
+                f'<option value="{geometry_type}">{geometry_type}</option>',
+                page,
+            )
+        self.assertNotIn("Nombre de sommets", page)
+        self.assertNotIn('id="line-vertex-count"', page)
+        self.assertNotIn("Repérage relu", page)
+        self.assertIn("Repérage actuel", page)
+        self.assertNotIn("vertexCount", script)
+
+        renderer = script.split("function renderLineServerFeature", 1)[1].split(
+            "function lineBornageDraftModified", 1
+        )[0]
+        self.assertIn(
+            "disorderFields.geometryType.value = feature.geometry.type;",
+            renderer,
+        )
+        self.assertNotIn("properties.type_geometrie", renderer)
+        self.assertIn("disorderFields.reperage.value", renderer)
+
+        point_renderer = script.split("function renderPointServerFeature", 1)[1].split(
+            "function lineReperageSummary", 1
+        )[0]
+        self.assertIn(
+            "disorderFields.reperage.value = lineReperageSummary(properties.reperage);",
+            point_renderer,
+        )
+        controls = script.split("function updateDisorderEditorControls", 1)[1].split(
+            "async function refreshCreationReperageAvailability", 1
+        )[0]
+        self.assertIn(
+            "desordreLineDerived.hidden = !editing || (!point && !line);",
+            controls,
+        )
 
 
 class PointUpdateValidationTest(unittest.TestCase):

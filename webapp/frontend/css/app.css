@@ -417,8 +417,7 @@ main {
 }
 
 .editor-tabs[hidden],
-#heritage-object-editor [hidden],
-#desordre-create-editor [hidden] {
+#heritage-object-editor [hidden] {
   display: none;
 }
 
@@ -472,10 +471,12 @@ main {
   display: none;
 }
 
+.disorder-form [hidden] {
+  display: none !important;
+}
+
 #heritage-object-editor label,
-#desordre-create-editor label,
-#point-editor label,
-#line-editor label {
+.disorder-form label {
   color: #39473f;
   display: grid;
   font-size: 0.82rem;
@@ -485,15 +486,9 @@ main {
 
 #heritage-object-editor input,
 #heritage-object-editor select,
-#desordre-create-editor input,
-#desordre-create-editor select,
-#desordre-create-editor textarea,
-#point-editor input,
-#point-editor textarea,
-#point-editor select,
-#line-editor input,
-#line-editor textarea,
-#line-editor select {
+.disorder-form input,
+.disorder-form select,
+.disorder-form textarea {
   border: 1px solid #aebbb3;
   border-radius: 0.3rem;
   font: inherit;
@@ -513,10 +508,8 @@ main {
   gap: 0.45rem;
 }
 
-#desordre-create-editor .checkbox-field,
-#desordre-create-editor .authority-choice,
-#point-editor .checkbox-field,
-#line-editor .checkbox-field {
+.disorder-form .checkbox-field,
+.disorder-form .authority-choice {
   align-items: center;
   display: flex;
   gap: 0.45rem;
@@ -524,8 +517,8 @@ main {
 
 .mode-selector {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
 }
 
 .mode-selector .authority-choice {
@@ -533,7 +526,12 @@ main {
   border: 1px solid #bdc9c1;
   border-radius: 0.35rem;
   cursor: pointer;
-  padding: 0.45rem 0.65rem;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+  padding: 0.45rem 0.35rem;
+  text-align: center;
+  white-space: nowrap;
 }
 
 /* Une règle flex plus spécifique ne doit pas réafficher un mode retiré. */
@@ -560,28 +558,8 @@ main {
   grid-template-columns: 1fr 1fr;
 }
 
-.endpoint-grid fieldset,
+.form-section,
 .derived-information {
-  border: 1px solid #cdd6d0;
-  border-radius: 0.35rem;
-  display: grid;
-  gap: 0.6rem;
-  margin: 0;
-  padding: 0.7rem;
-}
-
-body:not(.show-uuid) .technical-identifier {
-  display: none !important;
-}
-
-#desordre-create-editor .checkbox-field input,
-#desordre-create-editor .authority-choice input,
-#point-editor .checkbox-field input,
-#line-editor .checkbox-field input {
-  width: auto;
-}
-
-#desordre-create-editor fieldset {
   border: 1px solid #cdd6d0;
   border-radius: 0.35rem;
   display: grid;
@@ -590,7 +568,16 @@ body:not(.show-uuid) .technical-identifier {
   padding: 0.8rem;
 }
 
-#desordre-create-editor legend {
+body:not(.show-uuid) .technical-identifier {
+  display: none !important;
+}
+
+.disorder-form .checkbox-field input,
+.disorder-form .authority-choice input {
+  width: auto;
+}
+
+.form-section > legend {
   font-size: 0.85rem;
   font-weight: 700;
 }
@@ -599,16 +586,14 @@ body:not(.show-uuid) .technical-identifier {
   width: auto;
 }
 
-#point-editor input[readonly],
-#line-editor input[readonly],
-#line-editor textarea[readonly] {
+.disorder-form input[readonly],
+.disorder-form textarea[readonly] {
   background: #f0f3f1;
   color: #66736c;
 }
 
 .bornage-fields {
   background: #f7f9f8;
-  border-left: 3px solid #568268;
   display: grid;
   gap: 0.7rem;
   padding: 0.7rem;
@@ -625,36 +610,6 @@ body:not(.show-uuid) .technical-identifier {
   font-weight: 650;
   margin: 0;
   padding: 0.65rem 0.75rem;
-}
-
-#point-editor fieldset {
-  border: 1px solid #cdd6d0;
-  border-radius: 0.35rem;
-  display: grid;
-  gap: 0.7rem;
-  margin: 0;
-  padding: 0.8rem;
-}
-
-#point-editor legend {
-  font-size: 0.85rem;
-  font-weight: 700;
-}
-
-#point-editor .authority-choice {
-  align-items: center;
-  display: flex;
-  gap: 0.4rem;
-}
-
-#point-editor .authority-choice input {
-  width: auto;
-}
-
-#line-editor .authority-choice {
-  align-items: center;
-  display: flex;
-  gap: 0.4rem;
 }
 
 .field-help {
@@ -709,35 +664,18 @@ body:not(.show-uuid) .technical-identifier {
   font-weight: 600;
 }
 
-.map-position-editor {
+.geometry-editor {
   border-top: 1px solid #dce2de;
   display: grid;
   gap: 0.55rem;
   padding-top: 0.85rem;
 }
 
-.line-geometry-editor {
-  border-top: 1px solid #dce2de;
-  display: grid;
-  gap: 0.55rem;
-  padding-top: 0.85rem;
-}
-
-.line-geometry-editor > strong {
+.geometry-editor > strong {
   font-size: 0.88rem;
 }
 
-.line-geometry-editor > p {
-  color: #66736c;
-  font-size: 0.78rem;
-  margin: 0;
-}
-
-.map-position-editor > strong {
-  font-size: 0.88rem;
-}
-
-.map-position-editor > p,
+.geometry-editor > p,
 .graphic-status {
   color: #66736c;
   font-size: 0.78rem;

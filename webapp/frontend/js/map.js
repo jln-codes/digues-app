@@ -34,7 +34,7 @@ const tronconDrawStatus = document.querySelector("#troncon-draw-status");
 const tronconDrawActions = document.querySelector("#troncon-draw-actions");
 const cancelTronconDrawButton = document.querySelector("#cancel-troncon-draw");
 const restoreTronconDrawButton = document.querySelector("#restore-troncon-draw");
-const desordreCreateForm = document.querySelector("#desordre-create-editor");
+const desordreEditorForm = document.querySelector("#desordre-editor");
 const desordreCreateIdField = document.querySelector("#desordre-create-id-field");
 const desordreCreateId = document.querySelector("#desordre-create-id");
 const desordreCreateDesignation = document.querySelector("#desordre-create-designation");
@@ -45,7 +45,8 @@ const desordreCreateDateFin = document.querySelector("#desordre-create-date-fin"
 const desordreCreateValid = document.querySelector("#desordre-create-valid");
 const desordreCreateTroncons = document.querySelector("#desordre-create-troncons");
 const desordreCreateGeometryType = document.querySelector("#desordre-create-geometry-type");
-const desordreCreatePointMethods = document.querySelector("#desordre-create-point-methods");
+const desordreXyChoice = document.querySelector("#desordre-xy-choice");
+const desordreLonlatChoice = document.querySelector("#desordre-lonlat-choice");
 const desordreCreateXy = document.querySelector("#desordre-create-xy");
 const desordreCreateLonlat = document.querySelector("#desordre-create-lonlat");
 const desordreCreateX = document.querySelector("#desordre-create-x");
@@ -65,9 +66,7 @@ const desordreCreateMessage = document.querySelector("#desordre-create-message")
 const desordreCreateActions = document.querySelector("#desordre-create-actions");
 const cancelDesordreCreateButton = document.querySelector("#cancel-desordre-create");
 const submitDesordreCreateButton = document.querySelector("#submit-desordre-create");
-const desordreCreatePointBornageChoice = document.querySelector("#desordre-create-point-bornage-choice");
-const desordreCreateLineMethods = document.querySelector("#desordre-create-line-methods");
-const desordreCreateLineBornageChoice = document.querySelector("#desordre-create-line-bornage-choice");
+const desordreBornageChoice = document.querySelector("#desordre-bornage-choice");
 const desordreCreateLineCoordinates = document.querySelector("#desordre-create-line-coordinates");
 const desordreCreateLineCrs = document.querySelector("#desordre-create-line-crs");
 const desordreCreateLineStart1 = document.querySelector("#desordre-create-line-start-1");
@@ -75,7 +74,6 @@ const desordreCreateLineStart2 = document.querySelector("#desordre-create-line-s
 const desordreCreateLineEnd1 = document.querySelector("#desordre-create-line-end-1");
 const desordreCreateLineEnd2 = document.querySelector("#desordre-create-line-end-2");
 const desordreCreateBornage = document.querySelector("#desordre-create-bornage");
-const desordreCreateBornageContext = document.querySelector("#desordre-create-bornage-context");
 const desordreCreateBornageEnd = document.querySelector("#desordre-create-bornage-end");
 const desordreCreateBorneStart = document.querySelector("#desordre-create-borne-start");
 const desordreCreateDistanceStart = document.querySelector("#desordre-create-distance-start");
@@ -88,32 +86,29 @@ const polygonRepresentativeX = document.querySelector("#polygon-representative-x
 const polygonRepresentativeY = document.querySelector("#polygon-representative-y");
 const polygonRepresentativeLongitude = document.querySelector("#polygon-representative-longitude");
 const polygonRepresentativeLatitude = document.querySelector("#polygon-representative-latitude");
-const editorForm = document.querySelector("#point-editor");
-const lineEditorForm = document.querySelector("#line-editor");
+const desordreLineDerived = document.querySelector("#desordre-line-derived");
 const editorObjectTitle = document.querySelector("#editor-object-title");
 const editorObjectSubtitle = document.querySelector("#editor-object-subtitle");
 const editorTabs = document.querySelector(".editor-tabs");
-const editorMessage = document.querySelector("#editor-message");
-const saveButton = document.querySelector("#save-edit");
-const reprojectPointBornageButton = document.querySelector("#reproject-point-bornage");
-const cancelEditButton = document.querySelector("#cancel-edit");
+const editorMessage = desordreCreateMessage;
+const saveButton = submitDesordreCreateButton;
+const cancelEditButton = cancelDesordreCreateButton;
 const closeEditorButton = document.querySelector("#close-editor");
 const startMapPositionButton = document.querySelector("#start-map-position");
 const mapPositionActions = document.querySelector("#map-position-actions");
 const mapPositionStatus = document.querySelector("#map-position-status");
 const validateMapPositionButton = document.querySelector("#validate-map-position");
 const cancelMapPositionButton = document.querySelector("#cancel-map-position");
-const lineEditorMessage = document.querySelector("#line-editor-message");
+const pointMapEditor = document.querySelector("#point-map-editor");
+const lineEditorMessage = desordreCreateMessage;
 const startLineEditButton = document.querySelector("#start-line-edit");
 const lineGeometryActions = document.querySelector("#line-geometry-actions");
 const lineGeometryStatus = document.querySelector("#line-geometry-status");
 const validateLineEditButton = document.querySelector("#validate-line-edit");
 const cancelLineEditButton = document.querySelector("#cancel-line-edit");
 const bornageModeRadio = document.querySelector("#bornage-mode");
-const pointBornageModeChoice = document.querySelector("#point-bornage-mode-choice");
-const pointEditTroncon = document.querySelector("#point-edit-troncon");
-const bornageAvailability = document.querySelector("#bornage-availability");
-const bornageFields = document.querySelector("#bornage-fields");
+const pointEditTroncon = desordreCreateTroncons;
+const bornageFields = desordreCreateBornage;
 const generalTabButton = document.querySelector("#general-tab-button");
 const observationsTabButton = document.querySelector("#observations-tab-button");
 const generalTab = document.querySelector("#general-tab");
@@ -137,59 +132,47 @@ const lightboxCaption = document.querySelector("#lightbox-caption");
 const closeLightboxButton = document.querySelector("#close-lightbox");
 const previousPhotoButton = document.querySelector("#previous-photo");
 const nextPhotoButton = document.querySelector("#next-photo");
-const fields = {
-  id: document.querySelector("#desordre-id"),
-  designation: document.querySelector("#designation"),
-  type: document.querySelector("#type-desordre"),
-  commentaire: document.querySelector("#commentaire"),
-  dateDebut: document.querySelector("#point-date-debut"),
-  dateFin: document.querySelector("#point-date-fin"),
-  valid: document.querySelector("#point-valid"),
-  x: document.querySelector("#coord-x"),
-  y: document.querySelector("#coord-y"),
-  longitude: document.querySelector("#longitude"),
-  latitude: document.querySelector("#latitude"),
-};
-const reperageFields = {
-  troncon: document.querySelector("#reperage-troncon"),
-  systeme: document.querySelector("#reperage-systeme"),
-  borne: document.querySelector("#reperage-borne"),
-  distance: document.querySelector("#reperage-distance"),
-  sens: document.querySelector("#reperage-sens"),
-  pr: document.querySelector("#reperage-pr"),
-};
-const lineFields = {
-  id: document.querySelector("#line-desordre-id"),
-  designation: document.querySelector("#line-designation"),
-  type: document.querySelector("#line-type-desordre"),
-  commentaire: document.querySelector("#line-commentaire"),
-  dateDebut: document.querySelector("#line-date-debut"),
-  dateFin: document.querySelector("#line-date-fin"),
-  valid: document.querySelector("#line-valid"),
-  geometryType: document.querySelector("#line-geometry-type"),
-  vertexCount: document.querySelector("#line-vertex-count"),
+const disorderFields = {
+  id: desordreCreateId,
+  designation: desordreCreateDesignation,
+  type: desordreCreateTypeReference,
+  commentaire: desordreCreateCommentaire,
+  dateDebut: desordreCreateDateDebut,
+  dateFin: desordreCreateDateFin,
+  valid: desordreCreateValid,
+  x: desordreCreateX,
+  y: desordreCreateY,
+  longitude: desordreCreateLongitude,
+  latitude: desordreCreateLatitude,
+  geometryType: desordreCreateGeometryType,
   reperage: document.querySelector("#line-reperage-summary"),
 };
-const lineEditTroncons = document.querySelector("#line-edit-troncons");
+const reperageFields = {
+  borne: desordreCreateBorneStart,
+  distance: desordreCreateDistanceStart,
+  sens: desordreCreateSenseStart,
+};
+const lineEditTroncons = desordreCreateTroncons;
 const lineMapEditor = document.querySelector("#line-map-editor");
-const lineCoordinateEditor = document.querySelector("#line-coordinate-editor");
-const lineBornageEditor = document.querySelector("#line-bornage-editor");
-const lineEditBornageChoice = document.querySelector("#line-edit-bornage-choice");
-const lineEndpointsCrs = document.querySelector("#line-endpoints-crs");
-const lineStart1 = document.querySelector("#line-start-1");
-const lineStart2 = document.querySelector("#line-start-2");
-const lineEnd1 = document.querySelector("#line-end-1");
-const lineEnd2 = document.querySelector("#line-end-2");
+const lineCoordinateEditor = desordreCreateLineCoordinates;
+const lineEndpointsCrs = desordreCreateLineCrs;
+const lineStart1 = desordreCreateLineStart1;
+const lineStart2 = desordreCreateLineStart2;
+const lineEnd1 = desordreCreateLineEnd1;
+const lineEnd2 = desordreCreateLineEnd2;
 const saveLineEndpointsButton = document.querySelector("#save-line-endpoints");
-const lineBorneStart = document.querySelector("#line-borne-start");
-const lineDistanceStart = document.querySelector("#line-distance-start");
-const lineSenseStart = document.querySelector("#line-sense-start");
-const lineBorneEnd = document.querySelector("#line-borne-end");
-const lineDistanceEnd = document.querySelector("#line-distance-end");
-const lineSenseEnd = document.querySelector("#line-sense-end");
-const reprojectLineBornageButton = document.querySelector("#reproject-line-bornage");
+const lineBorneStart = desordreCreateBorneStart;
+const lineDistanceStart = desordreCreateDistanceStart;
+const lineSenseStart = desordreCreateSenseStart;
+const lineBorneEnd = desordreCreateBorneEnd;
+const lineDistanceEnd = desordreCreateDistanceEnd;
+const lineSenseEnd = desordreCreateSenseEnd;
+const reprojectBornageButton = document.querySelector("#reproject-bornage");
 const saveLineBornageButton = document.querySelector("#save-line-bornage");
-const saveLineMetadataButton = document.querySelector("#save-line-metadata");
+const lineCoordinateActions = document.querySelector("#line-coordinate-actions");
+const desordreBornageActions = document.querySelector("#desordre-bornage-actions");
+const pointBornageWarning = document.querySelector("#point-bornage-warning");
+const lineBornageWarning = document.querySelector("#line-bornage-warning");
 
 let activePointLayer = null;
 let lastServerFeature = null;
@@ -221,7 +204,23 @@ let desordrePointLayer = null;
 let desordreLineLayer = null;
 let desordrePolygonLayer = null;
 let showUuid = false;
-let editorState = { mode: "edit", objectType: null };
+let editorState = {
+  mode: "edit",
+  objectType: null,
+  geometryType: null,
+  objectId: null,
+  data: null,
+};
+
+function setDisorderEditorState(mode, geometryType, objectId = null, data = null) {
+  editorState = {
+    mode,
+    objectType: "desordre",
+    geometryType,
+    objectId,
+    data,
+  };
+}
 let provisionalTronconLayer = null;
 let cancelledTronconGeometry = null;
 let provisionalDesordreLayer = null;
@@ -949,19 +948,13 @@ function fillDesordreTronconOptions() {
   );
 }
 
-function desordrePointMethod() {
-  return desordreCreateForm.elements["desordre-point-method"].value || "map";
-}
-
-function desordreLineMethod() {
-  return desordreCreateForm.elements["desordre-line-method"].value || "map";
+function selectedDesordreMode() {
+  return desordreEditorForm.elements["desordre-mode"].value || "map";
 }
 
 function availableDisorderModes(geometryType, tronconCount, reperageAvailable) {
   if (geometryType === "Polygon") return ["map"];
-  const modes = geometryType === "Point"
-    ? ["map", "xy", "lonlat"]
-    : ["map", "coordinates"];
+  const modes = ["map", "xy", "lonlat"];
   if (tronconCount === 1 && reperageAvailable) modes.push("bornage");
   return modes;
 }
@@ -983,35 +976,27 @@ function setModeChoiceState(choice, { visible, enabled }) {
   if (input) input.disabled = !enabled;
 }
 
-function renderCreationModeChoices(reperageAvailable = false) {
-  const geometryType = desordreCreateGeometryType.value;
+function renderDisorderModeChoices(reperageAvailable = false) {
+  const geometryType = editorState.geometryType || desordreCreateGeometryType.value;
   const tronconCount = selectedDesordreTronconIds().length;
   const modes = availableDisorderModes(
     geometryType,
     tronconCount,
     reperageAvailable,
   );
-  const bornageState = creationBornageChoiceState(
-    geometryType, tronconCount, reperageAvailable,
-  );
-  setModeChoiceState(
-    desordreCreatePointBornageChoice,
-    geometryType === "Point"
-      ? bornageState : { visible: false, enabled: false },
-  );
-  setModeChoiceState(
-    desordreCreateLineBornageChoice,
-    geometryType === "LineString"
-      ? bornageState : { visible: false, enabled: false },
-  );
-  if (geometryType !== "Polygon") {
-    const groupName = geometryType === "Point"
-      ? "desordre-point-method" : "desordre-line-method";
-    const selectedMethod = desordreCreateForm.elements[groupName].value || "map";
-    if (!modes.includes(selectedMethod)) {
-      desordreCreateForm.elements[groupName].value = "map";
-      updateDesordreCreationControls();
-    }
+  setModeChoiceAvailability(desordreXyChoice, modes.includes("xy"));
+  setModeChoiceAvailability(desordreLonlatChoice, modes.includes("lonlat"));
+  if (editorState.mode === "create") {
+    setModeChoiceState(
+      desordreBornageChoice,
+      creationBornageChoiceState(geometryType, tronconCount, reperageAvailable),
+    );
+  } else {
+    setModeChoiceAvailability(desordreBornageChoice, modes.includes("bornage"));
+  }
+  if (!modes.includes(selectedDesordreMode())) {
+    desordreEditorForm.elements["desordre-mode"].value = "map";
+    updateDisorderEditorControls();
   }
   return modes;
 }
@@ -1123,25 +1108,51 @@ function restoreDesordreDraft() {
   updateDesordreDraftStatus("Dessin restauré localement — aucune écriture en base.");
 }
 
-function updateDesordreCreationControls() {
-  const geometryType = desordreCreateGeometryType.value;
+function updateDisorderEditorControls() {
+  const geometryType = editorState.geometryType || desordreCreateGeometryType.value;
   const point = geometryType === "Point";
   const line = geometryType === "LineString";
-  const method = point ? desordrePointMethod() : line ? desordreLineMethod() : "map";
-  desordreCreatePointMethods.hidden = !point;
-  desordreCreateLineMethods.hidden = !line;
+  const editing = editorState.mode === "edit";
+  const method = geometryType === "Polygon" ? "map" : selectedDesordreMode();
+  disorderFields.x.readOnly = method !== "xy";
+  disorderFields.y.readOnly = method !== "xy";
+  disorderFields.longitude.readOnly = method !== "lonlat";
+  disorderFields.latitude.readOnly = method !== "lonlat";
   desordreCreateXy.hidden = !point || method !== "xy";
   desordreCreateLonlat.hidden = !point || method !== "lonlat";
-  desordreCreateLineCoordinates.hidden = !line || method !== "coordinates";
+  const lineCoordinateMode = line && ["xy", "lonlat"].includes(method);
+  desordreCreateLineCoordinates.hidden = !lineCoordinateMode;
+  if (lineCoordinateMode) {
+    desordreCreateLineCrs.value = method === "lonlat" ? "EPSG:4326" : "EPSG:3950";
+    updateLineCoordinateLabels(
+      desordreCreateLineCoordinates,
+      desordreCreateLineCrs.value,
+    );
+  }
   desordreCreateBornage.hidden = method !== "bornage";
   desordreCreateBornageEnd.hidden = point;
   desordreCreateGeometry.hidden = method !== "map";
+  startDesordreDrawButton.hidden = editing && geometryType !== "Polygon";
+  if (editing && geometryType !== "Polygon") {
+    desordreDrawStatus.hidden = true;
+    desordreDrawActions.hidden = true;
+  }
+  pointMapEditor.hidden = !editing || !point || method !== "map";
+  lineMapEditor.hidden = !editing || !line || method !== "map";
+  lineCoordinateActions.hidden = !editing || !line || !lineCoordinateMode;
+  desordreBornageActions.hidden = !editing || method !== "bornage";
+  pointBornageWarning.hidden = !editing || !point || method !== "bornage";
+  lineBornageWarning.hidden = !editing || !line || method !== "bornage";
+  saveLineBornageButton.hidden = !editing || !line || method !== "bornage";
+  desordreLineDerived.hidden = !editing || (!point && !line);
+  polygonRepresentativePoint.hidden = !editing || geometryType !== "Polygon";
   desordreCreateGeometryTitle.textContent = point
     ? "Placement cartographique"
     : `Dessin ${geometryType === "LineString" ? "de la ligne" : "du polygone"}`;
   desordreCreateGeometryHelp.textContent = geometryType === "Polygon"
     ? "Extension web du modèle historique : l'emprise reste libre et sans repérage éditable."
-    : "Le dessin reste local jusqu’à « Créer ».";
+    : editing ? "La géométrie reste provisoire jusqu’à validation."
+      : "Le dessin reste local jusqu’à « Créer ».";
   startDesordreDrawButton.textContent = point
     ? "Placer le Point"
     : geometryType === "LineString" ? "Dessiner la ligne" : "Dessiner le polygone";
@@ -1160,7 +1171,7 @@ async function refreshCreationReperageAvailability() {
   const eligible = availableDisorderModes(
     geometryType, ids.length, true,
   ).includes("bornage");
-  renderCreationModeChoices(false);
+  renderDisorderModeChoices(false);
   if (!eligible) {
     return;
   }
@@ -1176,15 +1187,13 @@ async function refreshCreationReperageAvailability() {
       return;
     }
     creationReperageAvailable = true;
-    renderCreationModeChoices(true);
-    desordreCreateBornageContext.textContent =
-      `${options.troncon_libelle} — ${options.systeme_reperage_libelle}`;
+    renderDisorderModeChoices(true);
     fillBorneSelect(desordreCreateBorneStart, options.bornes);
     fillBorneSelect(desordreCreateBorneEnd, options.bornes);
   } catch (error) {
     if (requestVersion === creationReperageRequestVersion) {
       creationReperageAvailable = false;
-      renderCreationModeChoices(false);
+      renderDisorderModeChoices(false);
       desordreCreateMessage.textContent =
         "Le repérage n’est pas disponible pour le tronçon sélectionné.";
       desordreCreateMessage.classList.remove("error");
@@ -1199,7 +1208,7 @@ async function openDesordreCreation() {
   ]);
   clearTronconDraft();
   clearDesordreDraft();
-  editorState = { mode: "create", objectType: "desordre" };
+  setDisorderEditorState("create", "Point");
   lastServerFeature = null;
   requestedDesordreId = null;
   editorObjectTitle.textContent = "Nouveau désordre";
@@ -1208,12 +1217,10 @@ async function openDesordreCreation() {
   generalTab.hidden = false;
   observationsTab.hidden = true;
   heritageObjectForm.hidden = true;
-  editorForm.hidden = true;
-  lineEditorForm.hidden = true;
-  desordreCreateForm.reset();
+  desordreEditorForm.reset();
   creationReperageAvailable = false;
   updateLineCoordinateLabels(desordreCreateLineCoordinates, desordreCreateLineCrs.value);
-  desordreCreateForm.hidden = false;
+  desordreEditorForm.hidden = false;
   desordreCreateIdField.hidden = true;
   desordreCreateValid.checked = true;
   desordreCreateGeometryType.disabled = false;
@@ -1223,7 +1230,7 @@ async function openDesordreCreation() {
   validateDesordreDrawButton.hidden = true;
   polygonRepresentativePoint.hidden = true;
   desordreCreateActions.hidden = false;
-  Array.from(desordreCreateForm.elements).forEach((element) => {
+  Array.from(desordreEditorForm.elements).forEach((element) => {
     element.disabled = false;
   });
   fillDesordreReferenceOptions();
@@ -1232,8 +1239,8 @@ async function openDesordreCreation() {
   previousDesordreGeometryType = "Point";
   desordreCreateMessage.textContent = "";
   desordreCreateMessage.classList.remove("error");
-  updateDesordreCreationControls();
-  renderCreationModeChoices(false);
+  updateDisorderEditorControls();
+  renderDisorderModeChoices(false);
   await refreshCreationReperageAvailability();
   editorPanel.hidden = false;
   desordreCreateDesignation.focus();
@@ -1241,8 +1248,8 @@ async function openDesordreCreation() {
 
 function closeDesordreDraft() {
   clearDesordreDraft();
-  desordreCreateForm.reset();
-  desordreCreateForm.hidden = true;
+  desordreEditorForm.reset();
+  desordreEditorForm.hidden = true;
   editorPanel.hidden = true;
   editorState = { mode: "edit", objectType: null };
 }
@@ -1278,9 +1285,7 @@ async function openHeritageCreation(objectType) {
   generalTab.hidden = false;
   observationsTab.hidden = true;
   heritageObjectForm.hidden = false;
-  desordreCreateForm.hidden = true;
-  editorForm.hidden = true;
-  lineEditorForm.hidden = true;
+  desordreEditorForm.hidden = true;
   heritageObjectIdField.hidden = true;
   heritageObjectId.value = "";
   heritageObjectLabel.value = "";
@@ -1514,6 +1519,7 @@ desordreCreateGeometryType.addEventListener("change", () => {
     return;
   }
   previousDesordreGeometryType = desordreCreateGeometryType.value;
+  editorState.geometryType = desordreCreateGeometryType.value;
   cancelledDesordreGeometry = null;
   const selectedIds = selectedDesordreTronconIds();
   const point = desordreCreateGeometryType.value === "Point";
@@ -1525,36 +1531,10 @@ desordreCreateGeometryType.addEventListener("change", () => {
     { multiple: !point },
   );
   lastAcceptedCreationTronconIds = selectedDesordreTronconIds();
-  updateDesordreCreationControls();
+  updateDisorderEditorControls();
   creationReperageAvailable = false;
-  renderCreationModeChoices(false);
+  renderDisorderModeChoices(false);
   refreshCreationReperageAvailability();
-});
-
-Array.from(desordreCreateForm.elements["desordre-point-method"]).forEach((radio) => {
-  radio.addEventListener("change", (event) => {
-    if (provisionalDesordreLayer && event.target.value !== "map") {
-      desordreCreateForm.elements["desordre-point-method"].value = "map";
-      desordreCreateMessage.textContent =
-        "Annulez explicitement le Point cartographique avant de changer de mode.";
-      desordreCreateMessage.classList.add("error");
-      return;
-    }
-    updateDesordreCreationControls();
-  });
-});
-
-Array.from(desordreCreateForm.elements["desordre-line-method"]).forEach((radio) => {
-  radio.addEventListener("change", (event) => {
-    if (provisionalDesordreLayer && event.target.value !== "map") {
-      desordreCreateForm.elements["desordre-line-method"].value = "map";
-      desordreCreateMessage.textContent =
-        "Annulez explicitement la ligne cartographique avant de changer de mode.";
-      desordreCreateMessage.classList.add("error");
-      return;
-    }
-    updateDesordreCreationControls();
-  });
 });
 
 desordreCreateLineCrs.addEventListener("change", () => {
@@ -1562,11 +1542,12 @@ desordreCreateLineCrs.addEventListener("change", () => {
 });
 
 desordreCreateTroncons.addEventListener("change", () => {
+  if (editorState.mode !== "create") return;
   const ids = selectedDesordreTronconIds();
   const geometryType = desordreCreateGeometryType.value;
   const method = geometryType === "Point"
-    ? desordrePointMethod() : geometryType === "LineString"
-      ? desordreLineMethod() : "map";
+    ? selectedDesordreMode() : geometryType === "LineString"
+      ? selectedDesordreMode() : "map";
   if (method === "bornage" && ids.length !== 1 && creationBornageDraftModified()) {
     fillTronconSelect(
       desordreCreateTroncons,
@@ -1580,12 +1561,12 @@ desordreCreateTroncons.addEventListener("change", () => {
   }
   lastAcceptedCreationTronconIds = ids;
   creationReperageAvailable = false;
-  renderCreationModeChoices(false);
+  renderDisorderModeChoices(false);
   refreshCreationReperageAvailability();
 });
 
 startDesordreDrawButton.addEventListener("click", () => {
-  if (editorState.mode === "edit" && editorState.objectType === "desordre_polygon") {
+  if (editorState.mode === "edit" && editorState.geometryType === "Polygon") {
     if (!activePolygonLayer?.enableEdit) return;
     polygonEditActive = true;
     activePolygonLayer.enableEdit(map);
@@ -1631,7 +1612,7 @@ cancelDesordreDrawButton.addEventListener("click", () => {
       .slice(0, -1)
       .map(([longitude, latitude]) => [latitude, longitude]));
     activePolygonLayer.setLatLngs(geometry);
-    showReadonlyPolygon(lastServerFeature, activePolygonLayer);
+    renderPolygonServerFeature(lastServerFeature, activePolygonLayer);
     return;
   }
   clearDesordreDraft({ keepRestorable: true });
@@ -1643,11 +1624,19 @@ cancelDesordreDrawButton.addEventListener("click", () => {
 
 restoreDesordreDrawButton.addEventListener("click", restoreDesordreDraft);
 cancelDesordreCreateButton.addEventListener("click", () => {
-  if (editorState.mode === "edit" && editorState.objectType === "desordre_polygon") {
-    showReadonlyPolygon(lastServerFeature, activePolygonLayer);
-  } else {
-    closeDesordreDraft();
+  if (editorState.mode === "edit" && editorState.geometryType === "Polygon") {
+    renderPolygonServerFeature(lastServerFeature, activePolygonLayer);
+    return;
   }
+  if (editorState.mode === "edit") {
+    if (graphicEditActive) {
+      stopGraphicEdit({ restore: true });
+    } else {
+      restoreLastServerState();
+    }
+    return;
+  }
+  closeDesordreDraft();
 });
 
 validateDesordreDrawButton.addEventListener("click", async () => {
@@ -1661,7 +1650,7 @@ validateDesordreDrawButton.addEventListener("click", async () => {
     activePolygonLayer.disableEdit();
     polygonEditActive = false;
     updatePolygonLayer(feature);
-    showReadonlyPolygon(feature, activePolygonLayer);
+    renderPolygonServerFeature(feature, activePolygonLayer);
     desordreCreateMessage.textContent =
       "Polygone et point représentatif recalculé relus depuis PostgreSQL.";
   } catch (error) {
@@ -1689,8 +1678,8 @@ function buildDesordreCreationPayload() {
   const geometryType = desordreCreateGeometryType.value;
   payload.geometry_type = geometryType;
   const method = geometryType === "Point"
-    ? desordrePointMethod()
-    : geometryType === "LineString" ? desordreLineMethod() : "map";
+    ? selectedDesordreMode()
+    : geometryType === "LineString" ? selectedDesordreMode() : "map";
   if (geometryType === "Point" && method === "xy") {
     if (desordreCreateX.value === "" || desordreCreateY.value === "") {
       throw new Error("X et Y doivent être renseignés ensemble.");
@@ -1699,7 +1688,7 @@ function buildDesordreCreationPayload() {
     payload.coord_y_3950 = Number(desordreCreateY.value);
     return payload;
   }
-  if (geometryType === "LineString" && method === "coordinates") {
+  if (geometryType === "LineString" && ["xy", "lonlat"].includes(method)) {
     const values = [
       desordreCreateLineStart1.value, desordreCreateLineStart2.value,
       desordreCreateLineEnd1.value, desordreCreateLineEnd2.value,
@@ -1787,16 +1776,16 @@ function configureDesordreLayer(feature, layer) {
         return;
       }
       const position = layer.getLatLng();
-      fields.longitude.value = coordinate(position.lng, 6);
-      fields.latitude.value = coordinate(position.lat, 6);
+      disorderFields.longitude.value = coordinate(position.lng, 6);
+      disorderFields.latitude.value = coordinate(position.lat, 6);
     });
     layer.on("dragend", () => {
       if (!graphicEditActive || layer !== activePointLayer) {
         return;
       }
       provisionalLatLng = layer.getLatLng();
-      fields.longitude.value = coordinate(provisionalLatLng.lng, 6);
-      fields.latitude.value = coordinate(provisionalLatLng.lat, 6);
+      disorderFields.longitude.value = coordinate(provisionalLatLng.lng, 6);
+      disorderFields.latitude.value = coordinate(provisionalLatLng.lat, 6);
       validateMapPositionButton.disabled = false;
       mapPositionStatus.textContent = "Position provisoire — validez ou annulez le déplacement.";
     });
@@ -1826,19 +1815,18 @@ function addCreatedDesordreToMap(feature) {
   return createdLayer;
 }
 
-function showReadonlyPolygon(feature, layer = activePolygonLayer) {
+function renderPolygonServerFeature(feature, layer = activePolygonLayer) {
   const properties = feature.properties;
   activePolygonLayer = layer;
   lastServerFeature = feature;
-  editorState = { mode: "edit", objectType: "desordre_polygon" };
+  prepareDisorderEditorForEdit("Polygon", properties.id);
+  editorState.data = feature;
   editorObjectTitle.textContent = "Désordre polygonal";
   editorObjectSubtitle.textContent = "État relu depuis PostgreSQL — géométrie cartographique";
   editorTabs.hidden = false;
   showEditorTab("general");
   heritageObjectForm.hidden = true;
-  editorForm.hidden = true;
-  lineEditorForm.hidden = true;
-  desordreCreateForm.hidden = false;
+  desordreEditorForm.hidden = false;
   desordreCreateIdField.hidden = false;
   desordreCreateId.value = properties.id;
   desordreCreateDesignation.value = properties.designation || "";
@@ -1853,22 +1841,16 @@ function showReadonlyPolygon(feature, layer = activePolygonLayer) {
       String(option.value),
     );
   });
-  desordreCreatePointMethods.hidden = true;
-  desordreCreateLineMethods.hidden = true;
-  desordreCreateLineCoordinates.hidden = true;
-  desordreCreateBornage.hidden = true;
-  desordreCreateGeometry.hidden = false;
+  desordreEditorForm.elements["desordre-mode"].value = "map";
+  renderDisorderModeChoices(false);
+  updateDisorderEditorControls();
   startDesordreDrawButton.hidden = false;
   startDesordreDrawButton.textContent = "Modifier le polygone sur la carte";
-  desordreDrawStatus.textContent =
-    `${properties.nombre_sommets} sommet(s) relu(s) depuis PostgreSQL.`;
+  desordreDrawStatus.textContent = "Géométrie relue depuis PostgreSQL.";
   desordreDrawStatus.hidden = false;
   desordreDrawActions.hidden = true;
   validateDesordreDrawButton.hidden = true;
   desordreCreateActions.hidden = false;
-  Array.from(desordreCreateForm.elements).forEach((element) => {
-    element.disabled = false;
-  });
   desordreCreateGeometryType.disabled = true;
   desordreCreateId.disabled = true;
   submitDesordreCreateButton.textContent = "Enregistrer";
@@ -1884,12 +1866,12 @@ function showReadonlyPolygon(feature, layer = activePolygonLayer) {
   editorPanel.hidden = false;
 }
 
-desordreCreateForm.addEventListener("submit", async (event) => {
+desordreEditorForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (creationRequestInFlight) {
     return;
   }
-  if (editorState.mode === "edit" && editorState.objectType === "desordre_polygon") {
+  if (editorState.mode === "edit" && editorState.geometryType === "Polygon") {
     creationRequestInFlight = true;
     try {
       const feature = await fetchJson(
@@ -1908,7 +1890,7 @@ desordreCreateForm.addEventListener("submit", async (event) => {
           }),
         },
       );
-      showReadonlyPolygon(feature, activePolygonLayer);
+      renderPolygonServerFeature(feature, activePolygonLayer);
       if (activePolygonLayer) activePolygonLayer.feature = feature;
       desordreCreateMessage.textContent = "Informations relues depuis PostgreSQL.";
     } catch (error) {
@@ -1917,6 +1899,22 @@ desordreCreateForm.addEventListener("submit", async (event) => {
     } finally {
       creationRequestInFlight = false;
     }
+    return;
+  }
+  if (editorState.mode === "edit" && editorState.geometryType === "LineString") {
+    saveLineRequest("", {
+      designation: optionalPayloadValue(disorderFields.designation.value),
+      type_desordre_id: optionalPayloadValue(disorderFields.type.value),
+      commentaire: optionalPayloadValue(disorderFields.commentaire.value),
+      date_debut: optionalPayloadValue(disorderFields.dateDebut.value),
+      date_fin: optionalPayloadValue(disorderFields.dateFin.value),
+      valid: disorderFields.valid.checked,
+      troncon_ids: selectedValues(lineEditTroncons),
+    }, "Informations et rattachements relus depuis PostgreSQL.");
+    return;
+  }
+  if (editorState.mode === "edit" && editorState.geometryType === "Point") {
+    await savePointDesordre();
     return;
   }
   if (editorState.mode !== "create") return;
@@ -1947,7 +1945,7 @@ desordreCreateForm.addEventListener("submit", async (event) => {
     } else if (feature.geometry.type === "LineString") {
       await openLineEditor(feature.properties.id, layer);
     } else {
-      showReadonlyPolygon(feature, layer);
+      renderPolygonServerFeature(feature, layer);
     }
   } catch (error) {
     console.error("Création du désordre impossible", error);
@@ -1961,13 +1959,10 @@ desordreCreateForm.addEventListener("submit", async (event) => {
   }
 });
 
-function selectedCoordinateFamily() {
-  return editorForm.elements["coordinate-family"].value || null;
-}
-
 function generalEditInProgress() {
-  return lineEditActive || graphicEditActive
-    || ![null, "map"].includes(selectedCoordinateFamily()) || textFieldsChanged();
+  return lineEditActive || graphicEditActive || polygonEditActive
+    || selectedDesordreMode() !== "map"
+    || (editorState.geometryType === "Point" && textFieldsChanged());
 }
 
 generalTabButton.addEventListener("click", () => showEditorTab("general"));
@@ -2011,25 +2006,26 @@ document.addEventListener("keydown", (event) => {
 });
 
 function updateCoordinateInputs() {
-  const family = selectedCoordinateFamily();
-  fields.x.readOnly = family !== "xy";
-  fields.y.readOnly = family !== "xy";
-  fields.longitude.readOnly = family !== "lonlat";
-  fields.latitude.readOnly = family !== "lonlat";
+  const family = selectedDesordreMode();
+  const bornageAuthority = editorState.mode === "edit" && family === "bornage";
+  disorderFields.x.readOnly = family !== "xy";
+  disorderFields.y.readOnly = family !== "xy";
+  disorderFields.longitude.readOnly = family !== "lonlat";
+  disorderFields.latitude.readOnly = family !== "lonlat";
   bornageFields.hidden = family !== "bornage";
-  fields.designation.disabled = family === "bornage" || graphicEditActive;
-  fields.commentaire.disabled = family === "bornage" || graphicEditActive;
-  fields.type.disabled = family === "bornage" || graphicEditActive;
-  fields.dateDebut.disabled = family === "bornage" || graphicEditActive;
-  fields.dateFin.disabled = family === "bornage" || graphicEditActive;
-  fields.valid.disabled = family === "bornage" || graphicEditActive;
-  pointEditTroncon.disabled = family === "bornage" || graphicEditActive;
+  disorderFields.designation.disabled = bornageAuthority || graphicEditActive;
+  disorderFields.commentaire.disabled = bornageAuthority || graphicEditActive;
+  disorderFields.type.disabled = bornageAuthority || graphicEditActive;
+  disorderFields.dateDebut.disabled = bornageAuthority || graphicEditActive;
+  disorderFields.dateFin.disabled = bornageAuthority || graphicEditActive;
+  disorderFields.valid.disabled = bornageAuthority || graphicEditActive;
+  pointEditTroncon.disabled = bornageAuthority || graphicEditActive;
   startMapPositionButton.disabled = family !== "map";
-  reprojectPointBornageButton.hidden = family !== "bornage";
+  updateDisorderEditorControls();
 }
 
 function clearCoordinateAuthority() {
-  Array.from(editorForm.elements["coordinate-family"]).forEach((radio) => {
+  Array.from(desordreEditorForm.elements["desordre-mode"]).forEach((radio) => {
     radio.checked = radio.value === "map";
   });
   updateCoordinateInputs();
@@ -2037,12 +2033,12 @@ function clearCoordinateAuthority() {
 
 function textFieldsChanged() {
   return initialFormValues && (
-    fields.designation.value !== initialFormValues.designation
-    || fields.commentaire.value !== initialFormValues.commentaire
-    || fields.type.value !== initialFormValues.type_desordre_id
-    || fields.dateDebut.value !== initialFormValues.date_debut
-    || fields.dateFin.value !== initialFormValues.date_fin
-    || fields.valid.checked !== initialFormValues.valid
+    disorderFields.designation.value !== initialFormValues.designation
+    || disorderFields.commentaire.value !== initialFormValues.commentaire
+    || disorderFields.type.value !== initialFormValues.type_desordre_id
+    || disorderFields.dateDebut.value !== initialFormValues.date_debut
+    || disorderFields.dateFin.value !== initialFormValues.date_fin
+    || disorderFields.valid.checked !== initialFormValues.valid
     || pointEditTroncon.value !== initialFormValues.troncon_id
   );
 }
@@ -2052,14 +2048,14 @@ function setGraphicControls(active) {
   startMapPositionButton.hidden = active;
   mapPositionActions.hidden = !active;
   saveButton.disabled = active;
-  fields.designation.disabled = active || selectedCoordinateFamily() === "bornage";
-  fields.commentaire.disabled = active || selectedCoordinateFamily() === "bornage";
-  fields.type.disabled = active || selectedCoordinateFamily() === "bornage";
-  fields.dateDebut.disabled = active || selectedCoordinateFamily() === "bornage";
-  fields.dateFin.disabled = active || selectedCoordinateFamily() === "bornage";
-  fields.valid.disabled = active || selectedCoordinateFamily() === "bornage";
-  pointEditTroncon.disabled = active || selectedCoordinateFamily() === "bornage";
-  Array.from(editorForm.elements["coordinate-family"]).forEach((radio) => {
+  disorderFields.designation.disabled = active || selectedDesordreMode() === "bornage";
+  disorderFields.commentaire.disabled = active || selectedDesordreMode() === "bornage";
+  disorderFields.type.disabled = active || selectedDesordreMode() === "bornage";
+  disorderFields.dateDebut.disabled = active || selectedDesordreMode() === "bornage";
+  disorderFields.dateFin.disabled = active || selectedDesordreMode() === "bornage";
+  disorderFields.valid.disabled = active || selectedDesordreMode() === "bornage";
+  pointEditTroncon.disabled = active || selectedDesordreMode() === "bornage";
+  Array.from(desordreEditorForm.elements["desordre-mode"]).forEach((radio) => {
     radio.disabled = active || (
       radio.value === "bornage" && !currentReperage?.disponible
     );
@@ -2080,22 +2076,7 @@ function renderReperage(reperage) {
     "Point", currentReperage.nombre_troncons, currentReperage.disponible,
   );
   bornageModeRadio.disabled = !modes.includes("bornage");
-  pointBornageModeChoice.hidden = !modes.includes("bornage");
-  bornageAvailability.hidden = !currentReperage.disponible;
-  bornageAvailability.textContent = currentReperage.disponible
-    ? "Disponible : un seul tronçon est associé."
-    : `Repérage indisponible : ${text(
-      currentReperage.motif_indisponibilite,
-      "contexte incomplet.",
-    )}`;
-  reperageFields.troncon.value = text(
-    currentReperage.troncon_libelle,
-    showUuid ? inputText(currentReperage.troncon_id) : "Tronçon sans libellé",
-  );
-  reperageFields.systeme.value = text(
-    currentReperage.systeme_reperage_libelle,
-    showUuid ? inputText(currentReperage.systeme_reperage_id) : "Système sans libellé",
-  );
+  desordreBornageChoice.hidden = !modes.includes("bornage");
   reperageFields.borne.replaceChildren();
   const bornes = Array.isArray(currentReperage.bornes)
     ? currentReperage.bornes
@@ -2126,7 +2107,6 @@ function renderReperage(reperage) {
   );
   reperageFields.sens.value = currentReperage.position_debut_relative
     || "SUR_BORNE";
-  reperageFields.pr.value = coordinate(currentReperage.pr_debut, 2);
 }
 
 function stopGraphicEdit({ restore }) {
@@ -2143,40 +2123,50 @@ function stopGraphicEdit({ restore }) {
   }
 }
 
-function renderServerFeature(feature) {
+function renderPointServerFeature(feature) {
   const properties = feature.properties || {};
   lastServerFeature = feature;
-  fields.id.value = inputText(properties.id);
-  fields.designation.value = inputText(properties.designation);
-  fillTypeSelect(fields.type, properties.type_desordre_id);
+  editorState.objectId = properties.id;
+  editorState.data = feature;
+  desordreCreateGeometryType.value = "Point";
+  disorderFields.id.value = inputText(properties.id);
+  disorderFields.designation.value = inputText(properties.designation);
+  fillTypeSelect(disorderFields.type, properties.type_desordre_id);
   fillTronconSelect(
     pointEditTroncon,
     properties.troncon_ids || [],
     { multiple: false },
   );
-  fields.commentaire.value = inputText(properties.commentaire);
-  fields.dateDebut.value = inputText(properties.date_debut);
-  fields.dateFin.value = inputText(properties.date_fin);
-  fields.valid.checked = Boolean(properties.valid);
-  fields.x.value = coordinate(properties.coord_x_3950, 2);
-  fields.y.value = coordinate(properties.coord_y_3950, 2);
-  fields.longitude.value = coordinate(properties.longitude_4326, 6);
-  fields.latitude.value = coordinate(properties.latitude_4326, 6);
+  disorderFields.commentaire.value = inputText(properties.commentaire);
+  disorderFields.dateDebut.value = inputText(properties.date_debut);
+  disorderFields.dateFin.value = inputText(properties.date_fin);
+  disorderFields.valid.checked = Boolean(properties.valid);
+  disorderFields.x.value = coordinate(properties.coord_x_3950, 2);
+  disorderFields.y.value = coordinate(properties.coord_y_3950, 2);
+  disorderFields.longitude.value = coordinate(properties.longitude_4326, 6);
+  disorderFields.latitude.value = coordinate(properties.latitude_4326, 6);
   renderReperage(properties.reperage);
+  disorderFields.reperage.value = lineReperageSummary(properties.reperage);
   initialFormValues = {
-    designation: fields.designation.value,
-    commentaire: fields.commentaire.value,
-    type_desordre_id: fields.type.value,
-    date_debut: fields.dateDebut.value,
-    date_fin: fields.dateFin.value,
-    valid: fields.valid.checked,
+    designation: disorderFields.designation.value,
+    commentaire: disorderFields.commentaire.value,
+    type_desordre_id: disorderFields.type.value,
+    date_debut: disorderFields.dateDebut.value,
+    date_fin: disorderFields.dateFin.value,
+    valid: disorderFields.valid.checked,
     troncon_id: pointEditTroncon.value,
-    x: fields.x.value,
-    y: fields.y.value,
-    longitude: fields.longitude.value,
-    latitude: fields.latitude.value,
+    x: disorderFields.x.value,
+    y: disorderFields.y.value,
+    longitude: disorderFields.longitude.value,
+    latitude: disorderFields.latitude.value,
   };
   clearCoordinateAuthority();
+  desordreCreateIdField.hidden = false;
+  desordreCreateGeometryType.disabled = true;
+  submitDesordreCreateButton.textContent = "Enregistrer";
+  cancelDesordreCreateButton.textContent = "Annuler les modifications";
+  renderDisorderModeChoices(Boolean(properties.reperage?.disponible));
+  updateDisorderEditorControls();
   editorMessage.textContent = "";
   editorMessage.classList.remove("error");
 }
@@ -2202,26 +2192,27 @@ function lineReperageSummary(reperage) {
 function renderLineServerFeature(feature) {
   const properties = feature.properties || {};
   lastServerFeature = feature;
-  lineFields.id.value = inputText(properties.id);
-  lineFields.designation.value = inputText(properties.designation);
-  fillTypeSelect(lineFields.type, properties.type_desordre_id);
-  lineFields.commentaire.value = inputText(properties.commentaire);
-  lineFields.dateDebut.value = inputText(properties.date_debut);
-  lineFields.dateFin.value = inputText(properties.date_fin);
-  lineFields.valid.checked = Boolean(properties.valid);
+  editorState.objectId = properties.id;
+  editorState.data = feature;
+  disorderFields.id.value = inputText(properties.id);
+  disorderFields.designation.value = inputText(properties.designation);
+  fillTypeSelect(disorderFields.type, properties.type_desordre_id);
+  disorderFields.commentaire.value = inputText(properties.commentaire);
+  disorderFields.dateDebut.value = inputText(properties.date_debut);
+  disorderFields.dateFin.value = inputText(properties.date_fin);
+  disorderFields.valid.checked = Boolean(properties.valid);
   fillTronconSelect(lineEditTroncons, properties.troncon_ids || []);
-  lineFields.geometryType.value = text(properties.type_geometrie, "LineString");
-  lineFields.vertexCount.value = inputText(properties.nombre_sommets);
-  lineFields.reperage.value = lineReperageSummary(properties.reperage);
+  disorderFields.geometryType.value = feature.geometry.type;
+  disorderFields.reperage.value = lineReperageSummary(properties.reperage);
   const modes = availableDisorderModes(
     "LineString",
     (properties.troncon_ids || []).length,
     properties.reperage?.disponible,
   );
-  setModeChoiceAvailability(lineEditBornageChoice, modes.includes("bornage"));
-  const activeMode = lineEditorForm.elements["line-edit-mode"].value || "map";
+  setModeChoiceAvailability(desordreBornageChoice, modes.includes("bornage"));
+  const activeMode = desordreEditorForm.elements["desordre-mode"].value || "map";
   if (activeMode === "bornage" && !properties.reperage?.disponible) {
-    lineEditorForm.elements["line-edit-mode"].value = "map";
+    desordreEditorForm.elements["desordre-mode"].value = "map";
   }
   const crs = lineEndpointsCrs.value || "EPSG:3950";
   if (crs === "EPSG:4326") {
@@ -2250,20 +2241,14 @@ function renderLineServerFeature(feature) {
     distanceEnd: lineDistanceEnd.value,
     senseEnd: lineSenseEnd.value,
   };
-  updateLineModeControls();
+  desordreCreateIdField.hidden = false;
+  desordreCreateGeometryType.disabled = true;
+  submitDesordreCreateButton.textContent = "Enregistrer";
+  cancelDesordreCreateButton.textContent = "Annuler les modifications";
+  renderDisorderModeChoices(Boolean(properties.reperage?.disponible));
+  updateDisorderEditorControls();
   lineEditorMessage.textContent = "";
   lineEditorMessage.classList.remove("error");
-}
-
-function selectedLineMode() {
-  return lineEditorForm.elements["line-edit-mode"].value || "map";
-}
-
-function updateLineModeControls() {
-  const mode = selectedLineMode();
-  lineMapEditor.hidden = mode !== "map";
-  lineCoordinateEditor.hidden = mode !== "coordinates";
-  lineBornageEditor.hidden = mode !== "bornage";
 }
 
 function lineBornageDraftModified() {
@@ -2278,6 +2263,9 @@ function lineBornageDraftModified() {
 }
 
 lineEditTroncons.addEventListener("change", () => {
+  if (editorState.mode !== "edit" || editorState.geometryType !== "LineString") {
+    return;
+  }
   const selected = selectedValues(lineEditTroncons);
   const persisted = (lastServerFeature?.properties?.troncon_ids || []).map(String);
   const sameSelection = selected.length === persisted.length
@@ -2285,7 +2273,7 @@ lineEditTroncons.addEventListener("change", () => {
   const bornageAvailable = sameSelection
     && selected.length === 1
     && Boolean(lastServerFeature?.properties?.reperage?.disponible);
-  if (selectedLineMode() === "bornage" && !bornageAvailable) {
+  if (selectedDesordreMode() === "bornage" && !bornageAvailable) {
     if (lineBornageDraftModified()) {
       fillTronconSelect(lineEditTroncons, persisted);
       lineEditorMessage.textContent =
@@ -2293,10 +2281,10 @@ lineEditTroncons.addEventListener("change", () => {
       lineEditorMessage.classList.add("error");
       return;
     }
-    lineEditorForm.elements["line-edit-mode"].value = "map";
+    desordreEditorForm.elements["desordre-mode"].value = "map";
   }
-  setModeChoiceAvailability(lineEditBornageChoice, bornageAvailable);
-  updateLineModeControls();
+  setModeChoiceAvailability(desordreBornageChoice, bornageAvailable);
+  updateDisorderEditorControls();
 });
 
 function selectedValues(select) {
@@ -2364,6 +2352,26 @@ function updatePolygonLayer(feature) {
   activePolygonLayer.feature = feature;
 }
 
+function prepareDisorderEditorForEdit(geometryType, objectId) {
+  setDisorderEditorState("edit", geometryType, objectId);
+  desordreEditorForm.reset();
+  Array.from(desordreEditorForm.elements).forEach((element) => {
+    element.disabled = false;
+  });
+  desordreEditorForm.elements["desordre-mode"].value = "map";
+  desordreCreateGeometryType.value = geometryType;
+  desordreCreateGeometryType.disabled = true;
+  desordreCreateTroncons.multiple = geometryType !== "Point";
+  desordreCreateTroncons.size = geometryType === "Point" ? 1 : 5;
+  desordreCreateIdField.hidden = false;
+  desordreEditorForm.hidden = false;
+  submitDesordreCreateButton.textContent = "Enregistrer";
+  cancelDesordreCreateButton.textContent = "Annuler les modifications";
+  desordreCreateActions.hidden = false;
+  validateDesordreDrawButton.hidden = true;
+  updateDisorderEditorControls();
+}
+
 function setLineEditControls(active) {
   lineEditActive = active;
   startLineEditButton.hidden = active;
@@ -2408,15 +2416,13 @@ async function openPointEditor(id, layer) {
   activePointLayer?.dragging?.disable();
   clearSelectedLine();
   requestedDesordreId = id;
-  editorState = { mode: "edit", objectType: "desordre_point" };
+  prepareDisorderEditorForEdit("Point", id);
   activePointLayer = layer;
   editorObjectTitle.textContent = "Désordre ponctuel";
   editorObjectSubtitle.textContent = "État relu depuis PostgreSQL";
   editorTabs.hidden = false;
   heritageObjectForm.hidden = true;
-  desordreCreateForm.hidden = true;
-  editorForm.hidden = false;
-  lineEditorForm.hidden = true;
+  desordreEditorForm.hidden = false;
   observationsLoadedFor = null;
   currentObservationPhotos = [];
   observationsList.replaceChildren();
@@ -2434,7 +2440,7 @@ async function openPointEditor(id, layer) {
     if (feature.type !== "Feature" || feature.geometry?.type !== "Point") {
       throw new Error("Réponse ponctuelle invalide.");
     }
-    renderServerFeature(feature);
+    renderPointServerFeature(feature);
     updatePointLayer(feature);
   } catch (error) {
     console.error("Lecture du désordre impossible", error);
@@ -2463,7 +2469,7 @@ async function openLineEditor(id, layer) {
   activePointLayer = null;
   clearSelectedLine();
   requestedDesordreId = id;
-  editorState = { mode: "edit", objectType: "desordre_line" };
+  prepareDisorderEditorForEdit("LineString", id);
   activeLineLayer = layer;
   selectedLineLayer = layer;
   setLineStyle("selected");
@@ -2477,9 +2483,7 @@ async function openLineEditor(id, layer) {
   editorObjectSubtitle.textContent = "Géométrie relue depuis PostgreSQL";
   editorTabs.hidden = false;
   heritageObjectForm.hidden = true;
-  desordreCreateForm.hidden = true;
-  editorForm.hidden = true;
-  lineEditorForm.hidden = false;
+  desordreEditorForm.hidden = false;
   editorPanel.hidden = false;
   lineEditorMessage.textContent = "Chargement…";
   lineEditorMessage.classList.remove("error");
@@ -2519,7 +2523,7 @@ async function openPolygonEditor(id, _layer) {
     if (feature.geometry?.type !== "Polygon") {
       throw new Error("Réponse Polygon invalide.");
     }
-    showReadonlyPolygon(feature, _layer);
+    renderPolygonServerFeature(feature, _layer);
   } catch (error) {
     desordreCreateMessage.textContent = `Lecture impossible : ${error.message}`;
     desordreCreateMessage.classList.add("error");
@@ -2528,7 +2532,7 @@ async function openPolygonEditor(id, _layer) {
 
 function restoreLastServerState() {
   if (lastServerFeature?.geometry?.type === "Point") {
-    renderServerFeature(lastServerFeature);
+    renderPointServerFeature(lastServerFeature);
     updatePointLayer(lastServerFeature);
   } else if (lastServerFeature?.geometry?.type === "LineString") {
     renderLineServerFeature(lastServerFeature);
@@ -2540,14 +2544,14 @@ function changedNullableText(current, initial) {
   return current === initial ? undefined : current || null;
 }
 
-function buildUpdatePayload() {
+function buildPointUpdatePayload() {
   const payload = {};
   const designation = changedNullableText(
-    fields.designation.value,
+    disorderFields.designation.value,
     initialFormValues.designation,
   );
   const commentaire = changedNullableText(
-    fields.commentaire.value,
+    disorderFields.commentaire.value,
     initialFormValues.commentaire,
   );
   if (designation !== undefined) {
@@ -2556,49 +2560,49 @@ function buildUpdatePayload() {
   if (commentaire !== undefined) {
     payload.commentaire = commentaire;
   }
-  if (fields.type.value !== initialFormValues.type_desordre_id) {
-    payload.type_desordre_id = optionalPayloadValue(fields.type.value);
+  if (disorderFields.type.value !== initialFormValues.type_desordre_id) {
+    payload.type_desordre_id = optionalPayloadValue(disorderFields.type.value);
   }
-  if (fields.dateDebut.value !== initialFormValues.date_debut) {
-    payload.date_debut = fields.dateDebut.value || null;
+  if (disorderFields.dateDebut.value !== initialFormValues.date_debut) {
+    payload.date_debut = disorderFields.dateDebut.value || null;
   }
-  if (fields.dateFin.value !== initialFormValues.date_fin) {
-    payload.date_fin = fields.dateFin.value || null;
+  if (disorderFields.dateFin.value !== initialFormValues.date_fin) {
+    payload.date_fin = disorderFields.dateFin.value || null;
   }
-  if (fields.valid.checked !== initialFormValues.valid) {
-    payload.valid = fields.valid.checked;
+  if (disorderFields.valid.checked !== initialFormValues.valid) {
+    payload.valid = disorderFields.valid.checked;
   }
   if (pointEditTroncon.value !== initialFormValues.troncon_id) {
     payload.troncon_ids = pointEditTroncon.value
       ? [pointEditTroncon.value] : [];
   }
 
-  const family = selectedCoordinateFamily();
+  const family = selectedDesordreMode();
   if (family === "xy") {
-    if (!fields.x.value || !fields.y.value) {
+    if (!disorderFields.x.value || !disorderFields.y.value) {
       throw new Error("X et Y doivent être renseignés ensemble.");
     }
-    if (fields.x.value !== initialFormValues.x || fields.y.value !== initialFormValues.y) {
-      payload.coord_x_3950 = fields.x.value !== initialFormValues.x
-        ? Number(fields.x.value)
+    if (disorderFields.x.value !== initialFormValues.x || disorderFields.y.value !== initialFormValues.y) {
+      payload.coord_x_3950 = disorderFields.x.value !== initialFormValues.x
+        ? Number(disorderFields.x.value)
         : lastServerFeature.properties.coord_x_3950;
-      payload.coord_y_3950 = fields.y.value !== initialFormValues.y
-        ? Number(fields.y.value)
+      payload.coord_y_3950 = disorderFields.y.value !== initialFormValues.y
+        ? Number(disorderFields.y.value)
         : lastServerFeature.properties.coord_y_3950;
     }
   } else if (family === "lonlat") {
-    if (!fields.longitude.value || !fields.latitude.value) {
+    if (!disorderFields.longitude.value || !disorderFields.latitude.value) {
       throw new Error("Longitude et latitude doivent être renseignées ensemble.");
     }
     if (
-      fields.longitude.value !== initialFormValues.longitude
-      || fields.latitude.value !== initialFormValues.latitude
+      disorderFields.longitude.value !== initialFormValues.longitude
+      || disorderFields.latitude.value !== initialFormValues.latitude
     ) {
-      payload.longitude_4326 = fields.longitude.value !== initialFormValues.longitude
-        ? Number(fields.longitude.value)
+      payload.longitude_4326 = disorderFields.longitude.value !== initialFormValues.longitude
+        ? Number(disorderFields.longitude.value)
         : lastServerFeature.properties.longitude_4326;
-      payload.latitude_4326 = fields.latitude.value !== initialFormValues.latitude
-        ? Number(fields.latitude.value)
+      payload.latitude_4326 = disorderFields.latitude.value !== initialFormValues.latitude
+        ? Number(disorderFields.latitude.value)
         : lastServerFeature.properties.latitude_4326;
     }
   }
@@ -2608,7 +2612,7 @@ function buildUpdatePayload() {
   return payload;
 }
 
-function buildReperagePayload() {
+function buildPointReperagePayload() {
   if (!currentReperage?.disponible) {
     throw new Error("Le repérage n’est pas disponible pour ce désordre.");
   }
@@ -2632,28 +2636,49 @@ function buildReperagePayload() {
   };
 }
 
-Array.from(editorForm.elements["coordinate-family"]).forEach((radio) => {
+Array.from(desordreEditorForm.elements["desordre-mode"]).forEach((radio) => {
   radio.addEventListener("change", (event) => {
-    if (event.target.value === "xy") {
-      fields.longitude.value = initialFormValues.longitude;
-      fields.latitude.value = initialFormValues.latitude;
-    } else if (event.target.value === "lonlat") {
-      fields.x.value = initialFormValues.x;
-      fields.y.value = initialFormValues.y;
-    } else if (event.target.value === "bornage") {
-      if (textFieldsChanged()) {
-        event.target.checked = false;
-        editorMessage.textContent =
-          "Enregistrez ou annulez les champs généraux avant le mode Bornage.";
-        editorMessage.classList.add("error");
-      } else {
-        fields.x.value = initialFormValues.x;
-        fields.y.value = initialFormValues.y;
-        fields.longitude.value = initialFormValues.longitude;
-        fields.latitude.value = initialFormValues.latitude;
+    const geometryType = editorState.geometryType || desordreCreateGeometryType.value;
+    if (editorState.mode === "create") {
+      if (provisionalDesordreLayer && event.target.value !== "map") {
+        desordreEditorForm.elements["desordre-mode"].value = "map";
+        desordreCreateMessage.textContent =
+          "Annulez explicitement la géométrie cartographique avant de changer de mode.";
+        desordreCreateMessage.classList.add("error");
+        return;
       }
+      updateDisorderEditorControls();
+      return;
     }
-    updateCoordinateInputs();
+    if (geometryType === "Point") {
+      if (event.target.value === "xy") {
+        disorderFields.longitude.value = initialFormValues.longitude;
+        disorderFields.latitude.value = initialFormValues.latitude;
+      } else if (event.target.value === "lonlat") {
+        disorderFields.x.value = initialFormValues.x;
+        disorderFields.y.value = initialFormValues.y;
+      } else if (event.target.value === "bornage") {
+        if (textFieldsChanged()) {
+          desordreEditorForm.elements["desordre-mode"].value = "map";
+          editorMessage.textContent =
+            "Enregistrez ou annulez les champs généraux avant le mode Bornage.";
+          editorMessage.classList.add("error");
+        } else {
+          disorderFields.x.value = initialFormValues.x;
+          disorderFields.y.value = initialFormValues.y;
+          disorderFields.longitude.value = initialFormValues.longitude;
+          disorderFields.latitude.value = initialFormValues.latitude;
+        }
+      }
+      updateCoordinateInputs();
+      return;
+    }
+    updateDisorderEditorControls();
+    if (geometryType === "LineString"
+        && ["xy", "lonlat"].includes(selectedDesordreMode())
+        && lastServerFeature?.geometry?.type === "LineString") {
+      renderLineServerFeature(lastServerFeature);
+    }
   });
 });
 
@@ -2661,14 +2686,6 @@ reperageFields.sens.addEventListener("change", () => {
   if (reperageFields.sens.value === "SUR_BORNE") {
     reperageFields.distance.value = "0.00";
   }
-});
-
-reprojectPointBornageButton.addEventListener("click", () => {
-  editorForm.requestSubmit();
-});
-
-Array.from(lineEditorForm.elements["line-edit-mode"]).forEach((radio) => {
-  radio.addEventListener("change", updateLineModeControls);
 });
 
 lineEndpointsCrs.addEventListener("change", () => {
@@ -2704,18 +2721,6 @@ async function saveLineRequest(path, payload, successMessage) {
     lineRequestInFlight = false;
   }
 }
-
-saveLineMetadataButton.addEventListener("click", () => {
-  saveLineRequest("", {
-    designation: optionalPayloadValue(lineFields.designation.value),
-    type_desordre_id: optionalPayloadValue(lineFields.type.value),
-    commentaire: optionalPayloadValue(lineFields.commentaire.value),
-    date_debut: optionalPayloadValue(lineFields.dateDebut.value),
-    date_fin: optionalPayloadValue(lineFields.dateFin.value),
-    valid: lineFields.valid.checked,
-    troncon_ids: selectedValues(lineEditTroncons),
-  }, "Informations et rattachements relus depuis PostgreSQL.");
-});
 
 saveLineEndpointsButton.addEventListener("click", () => {
   const values = [lineStart1, lineStart2, lineEnd1, lineEnd2]
@@ -2761,7 +2766,11 @@ function applyLineReperage(successMessage) {
   saveLineRequest("/reperage", payload, successMessage);
 }
 
-reprojectLineBornageButton.addEventListener("click", () => {
+reprojectBornageButton.addEventListener("click", () => {
+  if (editorState.geometryType === "Point") {
+    desordreEditorForm.requestSubmit();
+    return;
+  }
   applyLineReperage(
     "Ligne reprojetée depuis le bornage ; la géométrie libre a été remplacée.",
   );
@@ -2782,7 +2791,7 @@ saveLineBornageButton.addEventListener("click", () => {
 });
 
 startMapPositionButton.addEventListener("click", () => {
-  if (selectedCoordinateFamily() !== "map") {
+  if (selectedDesordreMode() !== "map") {
     editorMessage.textContent =
       "Annulez d’abord le mode d’édition numérique des coordonnées.";
     editorMessage.classList.add("error");
@@ -2815,8 +2824,8 @@ map.on("click", (event) => {
   // donc distinct de la navigation tactile normale.
   provisionalLatLng = event.latlng;
   activePointLayer.setLatLng(provisionalLatLng);
-  fields.longitude.value = coordinate(provisionalLatLng.lng, 6);
-  fields.latitude.value = coordinate(provisionalLatLng.lat, 6);
+  disorderFields.longitude.value = coordinate(provisionalLatLng.lng, 6);
+  disorderFields.latitude.value = coordinate(provisionalLatLng.lat, 6);
   validateMapPositionButton.disabled = false;
   mapPositionStatus.textContent =
     "Position provisoire choisie sur la carte — validez ou annulez.";
@@ -2853,7 +2862,7 @@ validateMapPositionButton.addEventListener("click", async () => {
       },
     );
     stopGraphicEdit({ restore: false });
-    renderServerFeature(feature);
+    renderPointServerFeature(feature);
     updatePointLayer(feature);
     editorMessage.textContent =
       "Position validée — marqueur et coordonnées relus depuis PostgreSQL.";
@@ -2893,7 +2902,6 @@ map.on("editable:editing", (event) => {
   validateLineEditButton.disabled = false;
   lineGeometryStatus.textContent =
     "Géométrie provisoire — validez ou annulez les sommets.";
-  lineFields.vertexCount.value = String(activeLineLayer.getLatLngs().length);
 });
 
 startLineEditButton.addEventListener("click", () => {
@@ -2973,17 +2981,16 @@ validateLineEditButton.addEventListener("click", async () => {
   }
 });
 
-editorForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+async function savePointDesordre() {
   if (!lastServerFeature) {
     return;
   }
   let payload;
-  const family = selectedCoordinateFamily();
+  const family = selectedDesordreMode();
   try {
     payload = family === "bornage"
-      ? buildReperagePayload()
-      : buildUpdatePayload();
+      ? buildPointReperagePayload()
+      : buildPointUpdatePayload();
   } catch (error) {
     editorMessage.textContent = error.message;
     editorMessage.classList.add("error");
@@ -3007,7 +3014,7 @@ editorForm.addEventListener("submit", async (event) => {
         body: JSON.stringify(payload),
       },
     );
-    renderServerFeature(feature);
+    renderPointServerFeature(feature);
     updatePointLayer(feature);
     editorMessage.textContent = "Enregistré — valeurs relues depuis PostgreSQL.";
   } catch (error) {
@@ -3017,15 +3024,7 @@ editorForm.addEventListener("submit", async (event) => {
   } finally {
     saveButton.disabled = false;
   }
-});
-
-cancelEditButton.addEventListener("click", () => {
-  if (graphicEditActive) {
-    stopGraphicEdit({ restore: true });
-  } else {
-    restoreLastServerState();
-  }
-});
+}
 
 closeEditorButton.addEventListener("click", () => {
   if (editorState.mode === "create") {
