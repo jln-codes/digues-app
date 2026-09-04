@@ -9,6 +9,7 @@ from digues_app.target.schema import (
     INDEX_DEFINITIONS,
     SCHEMA_DDL,
     TABLE_DEFINITIONS,
+    render_schema_ddl,
 )
 
 
@@ -19,6 +20,7 @@ def normalized(statement):
 class FakeSchemaCursor:
     def __init__(self):
         self.executed = []
+        self.query = ""
 
     def __enter__(self):
         return self
@@ -27,12 +29,18 @@ class FakeSchemaCursor:
         return False
 
     def execute(self, query, params=None):
+        self.query = str(query)
         self.executed.append((str(query), params))
 
     def fetchone(self):
         return ("3.4.2", "1.3")
 
     def fetchall(self):
+        if "FROM pg_extension" in self.query:
+            return [
+                ("postgis", "3.4.2", "extensions"),
+                ("pgcrypto", "1.3", "extensions"),
+            ]
         return [(table,) for table in EXPECTED_TABLES]
 
 
@@ -675,9 +683,22 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertIs(calls[0]["autocommit"], False)
         self.assertEqual(status.tables, EXPECTED_TABLES)
         self.assertEqual(status.pgcrypto_version, "1.3")
+        self.assertEqual(status.postgis_schema, "extensions")
         executed_ddl = [query for query, _params in connection.cursor_instance.executed]
-        for statement in SCHEMA_DDL:
+        for statement in render_schema_ddl("extensions"):
             self.assertIn(statement, executed_ddl)
+
+    def test_schema_ddl_renders_postgis_search_path_from_extension_schema(self):
+        default_ddl = normalized(" ".join(SCHEMA_DDL))
+        supabase_like_ddl = normalized(" ".join(render_schema_ddl("extensions")))
+
+        self.assertIn("set search_path = pg_catalog, public", default_ddl)
+        self.assertNotIn("__sirs_postgis_search_path_suffix__", default_ddl)
+        self.assertIn(
+            'set search_path = pg_catalog, public, "extensions"',
+            supabase_like_ddl,
+        )
+        self.assertNotIn("__sirs_postgis_search_path_suffix__", supabase_like_ddl)
 
 
 if __name__ == "__main__":

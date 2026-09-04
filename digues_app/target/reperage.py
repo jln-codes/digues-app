@@ -37,7 +37,7 @@ FUNCTION_DEFINITIONS = {
         LANGUAGE plpgsql
         STABLE
         PARALLEL SAFE
-        SET search_path = pg_catalog, public
+        SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_troncon_geometry geometry;
@@ -307,7 +307,7 @@ FUNCTION_DEFINITIONS = {
         LANGUAGE plpgsql
         STABLE
         PARALLEL SAFE
-        SET search_path = pg_catalog, public
+        SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_troncon_geometry geometry;
@@ -548,7 +548,7 @@ FUNCTION_DEFINITIONS = {
         LANGUAGE plpgsql
         STABLE
         PARALLEL SAFE
-        SET search_path = pg_catalog, public
+        SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_troncon_geometry geometry;
@@ -721,7 +721,7 @@ FUNCTION_DEFINITIONS = {
         LANGUAGE plpgsql
         STABLE
         PARALLEL SAFE
-        SET search_path = pg_catalog, public
+        SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_troncon_geometry geometry;

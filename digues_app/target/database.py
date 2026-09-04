@@ -8,7 +8,7 @@ import os
 import re
 from typing import Any
 
-from .schema import EXPECTED_TABLES, SCHEMA_DDL
+from .schema import EXPECTED_TABLES, quote_identifier, render_schema_ddl
 
 
 PROTECTED_DATABASE_NAMES = frozenset({"postgres", "template0", "template1"})
@@ -159,6 +159,8 @@ class PostgreSQLStatus:
     postgis_version: str | None
     schema_tables: frozenset[str] = frozenset()
     pgcrypto_version: str | None = None
+    postgis_schema: str | None = None
+    pgcrypto_schema: str | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +169,8 @@ class PostgreSQLRecreateStatus:
     terminated_connections: int
     postgis_version: str
     pgcrypto_version: str
+    postgis_schema: str | None = None
+    pgcrypto_schema: str | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +178,16 @@ class PostgreSQLSchemaStatus:
     tables: tuple[str, ...]
     postgis_version: str
     pgcrypto_version: str
+    postgis_schema: str | None = None
+    pgcrypto_schema: str | None = None
+
+
+@dataclass(frozen=True)
+class PostgreSQLExtensionStatus:
+    postgis_version: str
+    postgis_schema: str
+    pgcrypto_version: str
+    pgcrypto_schema: str
 
 
 def validate_recreatable_database_name(
@@ -208,6 +222,60 @@ def _default_connector() -> Callable[..., Any]:
     return psycopg.connect
 
 
+def extension_search_path(*schemas: str | None) -> str:
+    """Construit un search_path portable pour public et les extensions."""
+
+    selected = ["pg_catalog", "public"]
+    for schema in schemas:
+        if schema is None or schema in selected:
+            continue
+        selected.append(schema)
+    return ", ".join(
+        schema if schema in {"pg_catalog", "public"} else quote_identifier(schema)
+        for schema in selected
+    )
+
+
+def read_extension_status(cursor: Any) -> PostgreSQLExtensionStatus:
+    cursor.execute(
+        """
+        SELECT e.extname, e.extversion, n.nspname
+        FROM pg_extension AS e
+        JOIN pg_namespace AS n ON n.oid = e.extnamespace
+        WHERE e.extname = ANY(%s)
+        """,
+        (["postgis", "pgcrypto"],),
+    )
+    extensions = {
+        str(name): (str(version), str(schema))
+        for name, version, schema in cursor.fetchall()
+    }
+    missing = [name for name in ("postgis", "pgcrypto") if name not in extensions]
+    if missing:
+        raise PostgreSQLSchemaError(
+            "Extensions PostgreSQL requises absentes : " + ", ".join(missing)
+        )
+    postgis_version, postgis_schema = extensions["postgis"]
+    pgcrypto_version, pgcrypto_schema = extensions["pgcrypto"]
+    return PostgreSQLExtensionStatus(
+        postgis_version=postgis_version,
+        postgis_schema=postgis_schema,
+        pgcrypto_version=pgcrypto_version,
+        pgcrypto_schema=pgcrypto_schema,
+    )
+
+
+def configure_extension_search_path(cursor: Any) -> PostgreSQLExtensionStatus:
+    """Configure la session courante pour résoudre PostGIS et pgcrypto."""
+
+    status = read_extension_status(cursor)
+    cursor.execute(
+        "SELECT set_config('search_path', %s, false)",
+        (extension_search_path(status.postgis_schema, status.pgcrypto_schema),),
+    )
+    return status
+
+
 def check_connection(
     config: PostgreSQLConfig | None = None,
     *,
@@ -224,7 +292,13 @@ def check_connection(
                     "SELECT current_database(), current_user, "
                     "current_setting('server_version'), "
                     "(SELECT extversion FROM pg_extension WHERE extname = 'postgis'), "
-                    "(SELECT extversion FROM pg_extension WHERE extname = 'pgcrypto')"
+                    "(SELECT extversion FROM pg_extension WHERE extname = 'pgcrypto'), "
+                    "(SELECT n.nspname FROM pg_extension AS e "
+                    "JOIN pg_namespace AS n ON n.oid = e.extnamespace "
+                    "WHERE e.extname = 'postgis'), "
+                    "(SELECT n.nspname FROM pg_extension AS e "
+                    "JOIN pg_namespace AS n ON n.oid = e.extnamespace "
+                    "WHERE e.extname = 'pgcrypto')"
                 )
                 row = cursor.fetchone()
                 cursor.execute(
@@ -249,6 +323,8 @@ def check_connection(
         postgis_version=str(row[3]) if row[3] is not None else None,
         schema_tables=schema_tables,
         pgcrypto_version=str(row[4]) if row[4] is not None else None,
+        postgis_schema=str(row[5]) if row[5] is not None else None,
+        pgcrypto_schema=str(row[6]) if row[6] is not None else None,
     )
 
 
@@ -264,21 +340,8 @@ def initialize_schema(
     try:
         with connect(**selected.connect_kwargs(autocommit=False)) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT "
-                    "(SELECT extversion FROM pg_extension WHERE extname = 'postgis'), "
-                    "(SELECT extversion FROM pg_extension WHERE extname = 'pgcrypto')"
-                )
-                extensions_row = cursor.fetchone()
-                if not extensions_row or extensions_row[0] is None:
-                    raise PostgreSQLSchemaError(
-                        "PostGIS doit être activée avant l'initialisation du schéma"
-                    )
-                if extensions_row[1] is None:
-                    raise PostgreSQLSchemaError(
-                        "pgcrypto doit être activée avant l'initialisation du schéma"
-                    )
-                for statement in SCHEMA_DDL:
+                extensions = configure_extension_search_path(cursor)
+                for statement in render_schema_ddl(extensions.postgis_schema):
                     cursor.execute(statement)
                 cursor.execute(
                     "SELECT table_name FROM information_schema.tables "
@@ -305,8 +368,10 @@ def initialize_schema(
 
     return PostgreSQLSchemaStatus(
         tables=EXPECTED_TABLES,
-        postgis_version=str(extensions_row[0]),
-        pgcrypto_version=str(extensions_row[1]),
+        postgis_version=extensions.postgis_version,
+        pgcrypto_version=extensions.pgcrypto_version,
+        postgis_schema=extensions.postgis_schema,
+        pgcrypto_schema=extensions.pgcrypto_schema,
     )
 
 
@@ -364,6 +429,7 @@ def recreate_database(
             with target_connection.cursor() as cursor:
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS postgis")
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+                extensions = configure_extension_search_path(cursor)
                 cursor.execute(
                     "SELECT current_database(), "
                     "(SELECT extversion FROM pg_extension WHERE extname = 'postgis'), "
@@ -394,4 +460,6 @@ def recreate_database(
         terminated_connections=terminated_connections,
         postgis_version=str(target_status[1]),
         pgcrypto_version=str(target_status[2]),
+        postgis_schema=extensions.postgis_schema,
+        pgcrypto_schema=extensions.pgcrypto_schema,
     )

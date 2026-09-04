@@ -251,8 +251,12 @@ def _check_target() -> None:
             "authentification locale réussie"
         )
     postgis = status.postgis_version or "non installée dans cette base"
+    if status.postgis_schema:
+        postgis = f"{postgis} (schema {status.postgis_schema})"
     print(f"     PostGIS: {postgis}")
     pgcrypto = status.pgcrypto_version or "non installée dans cette base"
+    if status.pgcrypto_schema:
+        pgcrypto = f"{pgcrypto} (schema {status.pgcrypto_schema})"
     print(f"     pgcrypto: {pgcrypto}")
     print("Tables métier :")
     for table in EXPECTED_TABLES:
@@ -287,8 +291,8 @@ def run_recreate() -> int:
         print(f"[OK] Connexions fermées : {status.terminated_connections}")
     print(f"[OK] Base supprimée : {status.database}")
     print(f"[OK] Base créée : {status.database}")
-    print(f"[OK] PostGIS activée : {status.postgis_version}")
-    print(f"[OK] pgcrypto activée : {status.pgcrypto_version}")
+    print(f"[OK] PostGIS activée : {status.postgis_version} (schema {status.postgis_schema})")
+    print(f"[OK] pgcrypto activée : {status.pgcrypto_version} (schema {status.pgcrypto_schema})")
     print("[OK] Base cible prête")
     return 0
 
@@ -301,8 +305,14 @@ def run_init_schema() -> int:
         print(f"[ERREUR] Initialisation du schéma : {config.redact_secrets(str(exc))}")
         return 1
     print(f"[OK] Schéma métier initialisé dans : {config.target_database}")
-    print(f"[OK] PostGIS disponible : {status.postgis_version}")
-    print(f"[OK] pgcrypto disponible : {status.pgcrypto_version}")
+    print(
+        f"[OK] PostGIS disponible : {status.postgis_version} "
+        f"(schema {status.postgis_schema})"
+    )
+    print(
+        f"[OK] pgcrypto disponible : {status.pgcrypto_version} "
+        f"(schema {status.pgcrypto_schema})"
+    )
     for table in status.tables:
         print(f"[OK] Table présente : {table}")
     return 0

@@ -323,6 +323,8 @@ class CLITest(unittest.TestCase):
             tables=EXPECTED_TABLES,
             postgis_version="3.4.2",
             pgcrypto_version="1.3",
+            postgis_schema="extensions",
+            pgcrypto_schema="extensions",
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -331,7 +333,7 @@ class CLITest(unittest.TestCase):
         initialize_schema.assert_called_once_with(config)
         text = output.getvalue()
         self.assertIn("[OK] Schéma métier initialisé", text)
-        self.assertIn("[OK] pgcrypto disponible : 1.3", text)
+        self.assertIn("[OK] pgcrypto disponible : 1.3 (schema extensions)", text)
         self.assertIn("[OK] Table présente : photos", text)
 
     @patch("digues_app.cli.recreate_postgresql")
@@ -346,6 +348,8 @@ class CLITest(unittest.TestCase):
             terminated_connections=2,
             postgis_version="3.4.2",
             pgcrypto_version="1.3",
+            postgis_schema="extensions",
+            pgcrypto_schema="extensions",
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -356,8 +360,8 @@ class CLITest(unittest.TestCase):
         self.assertIn("[OK] Connexions fermées : 2", text)
         self.assertIn("[OK] Base supprimée : digues_app", text)
         self.assertIn("[OK] Base créée : digues_app", text)
-        self.assertIn("[OK] PostGIS activée : 3.4.2", text)
-        self.assertIn("[OK] pgcrypto activée : 1.3", text)
+        self.assertIn("[OK] PostGIS activée : 3.4.2 (schema extensions)", text)
+        self.assertIn("[OK] pgcrypto activée : 1.3 (schema extensions)", text)
         self.assertIn("[OK] Base cible prête", text)
 
     @patch("digues_app.cli.run_check", return_value=0)

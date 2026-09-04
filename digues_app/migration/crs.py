@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from digues_app.source import CouchDBDatabaseInfo
-from digues_app.target import PostgreSQLConfig
+from digues_app.target import PostgreSQLConfig, configure_extension_search_path
 
 
 TARGET_SRID = 3950
@@ -185,6 +185,7 @@ def validate_crs_with_postgis(
     selected = config or PostgreSQLConfig.from_env()
     with psycopg.connect(**selected.connect_kwargs(autocommit=True)) as connection:
         with connection.cursor() as cursor:
+            configure_extension_search_path(cursor)
             validate_crs(cursor, crs_info)
 
 

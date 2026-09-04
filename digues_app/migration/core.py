@@ -12,7 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from digues_app.source import CouchDBClient, connect_couchdb
-from digues_app.target import PostgreSQLConfig
+from digues_app.target import PostgreSQLConfig, configure_extension_search_path
 from digues_app.target.schema import EXPECTED_TABLES
 
 from .amenagements import (
@@ -1186,6 +1186,7 @@ def execute_core_migration(
     try:
         with connect(**selected.connect_kwargs(autocommit=False)) as connection:
             with connection.cursor() as cursor:
+                configure_extension_search_path(cursor)
                 if crs_info is not None:
                     validate_crs(cursor, crs_info)
                 ensure_target_empty(cursor)

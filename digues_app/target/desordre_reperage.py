@@ -105,7 +105,7 @@ FUNCTION_DEFINITIONS = {
             p_desordre_id UUID,
             p_systeme_reperage_id UUID DEFAULT NULL
         ) RETURNS TEXT
-        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public
+        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_nombre_troncons INTEGER;
@@ -223,7 +223,7 @@ FUNCTION_DEFINITIONS = {
     "appliquer_desordre_reperage": """
         CREATE OR REPLACE FUNCTION public.appliquer_desordre_reperage()
         RETURNS trigger
-        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public
+        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_nombre_troncons INTEGER;
@@ -326,7 +326,7 @@ FUNCTION_DEFINITIONS = {
     "recalculer_desordre_apres_geometrie": """
         CREATE OR REPLACE FUNCTION public.recalculer_desordre_apres_geometrie()
         RETURNS trigger
-        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public
+        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         BEGIN
             IF current_setting('sirs.reperage_guard', true)
@@ -340,7 +340,7 @@ FUNCTION_DEFINITIONS = {
     "recalculer_desordre_apres_lien_troncon": """
         CREATE OR REPLACE FUNCTION public.recalculer_desordre_apres_lien_troncon()
         RETURNS trigger
-        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public
+        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         BEGIN
             IF TG_OP IN ('DELETE', 'UPDATE') THEN
@@ -358,7 +358,7 @@ FUNCTION_DEFINITIONS = {
     "inverser_troncon": """
         CREATE OR REPLACE FUNCTION public.inverser_troncon(p_troncon_id UUID)
         RETURNS INTEGER
-        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public
+        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_desordre_id UUID;
@@ -388,7 +388,7 @@ FUNCTION_DEFINITIONS = {
     "editer_desordre_point": """
         CREATE OR REPLACE FUNCTION public.editer_desordre_point()
         RETURNS trigger
-        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public
+        LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__
         AS $function$
         DECLARE
             v_geometry geometry(Point, 3950);

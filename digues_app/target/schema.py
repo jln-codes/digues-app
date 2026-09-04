@@ -10,6 +10,31 @@ from .desordre_reperage import (
     VIEW_DEFINITIONS,
 )
 
+POSTGIS_SEARCH_PATH_SUFFIX_PLACEHOLDER = "__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__"
+
+
+def quote_identifier(identifier: str) -> str:
+    """Quote un identifiant PostgreSQL pour une clause search_path statique."""
+
+    if not identifier or "\x00" in identifier:
+        raise ValueError("Identifiant PostgreSQL invalide")
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def postgis_search_path_suffix(postgis_schema: str | None) -> str:
+    if postgis_schema is None or postgis_schema in {"public", "pg_catalog"}:
+        return ""
+    return ", " + quote_identifier(postgis_schema)
+
+
+def render_schema_ddl(postgis_schema: str | None = "public") -> tuple[str, ...]:
+    suffix = postgis_search_path_suffix(postgis_schema)
+    return tuple(
+        statement.replace(POSTGIS_SEARCH_PATH_SUFFIX_PLACEHOLDER, suffix)
+        for statement in SCHEMA_DDL_TEMPLATE
+    )
+
+
 TABLE_DEFINITIONS = {
     "systemes": """
         CREATE TABLE IF NOT EXISTS public.systemes (
@@ -603,7 +628,7 @@ INDEX_DEFINITIONS = {
     **DESORDRE_REPERAGE_INDEX_DEFINITIONS,
 }
 
-SCHEMA_DDL = tuple(
+SCHEMA_DDL_TEMPLATE = tuple(
     statement.strip()
     for statement in (
         *TABLE_DEFINITIONS.values(),
@@ -616,3 +641,5 @@ SCHEMA_DDL = tuple(
         *DESORDRE_REPERAGE_VIEW_TRIGGER_DDL,
     )
 )
+
+SCHEMA_DDL = render_schema_ddl("public")

@@ -14,6 +14,9 @@ from digues_app.target.reperage import (
 from digues_app.target.schema import SCHEMA_DDL
 
 
+POSTGIS_SEARCH_PATH_SUFFIX_PLACEHOLDER = "__SIRS_POSTGIS_SEARCH_PATH_SUFFIX__"
+
+
 class ReperageFunctionSchemaTest(unittest.TestCase):
     def test_functions_are_part_of_schema_ddl(self):
         self.assertEqual(
@@ -26,7 +29,10 @@ class ReperageFunctionSchemaTest(unittest.TestCase):
             },
         )
         for statement in REPERAGE_FUNCTION_DDL:
-            self.assertIn(statement, SCHEMA_DDL)
+            self.assertIn(
+                statement.replace(POSTGIS_SEARCH_PATH_SUFFIX_PLACEHOLDER, ""),
+                SCHEMA_DDL,
+            )
 
     def test_public_engine_is_explicit_and_read_only(self):
         sql = "\n".join(REPERAGE_FUNCTION_DDL).lower()

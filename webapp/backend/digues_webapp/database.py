@@ -9,7 +9,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from digues_app.target import PostgreSQLConfig
+from digues_app.target import PostgreSQLConfig, configure_extension_search_path
 
 
 CONFIG_ENV_PATH = Path(__file__).resolve().parents[3] / "config.env"
@@ -33,6 +33,12 @@ def _connection(*, read_only: bool) -> Iterator[Any]:
         if options:
             kwargs["options"] = options
         connection = psycopg.connect(**kwargs)
+        try:
+            with connection.cursor() as cursor:
+                configure_extension_search_path(cursor)
+        except Exception:
+            connection.close()
+            raise
     except Exception as exc:
         location = config.safe_location if config else "configuration cible"
         raise WebDatabaseError(

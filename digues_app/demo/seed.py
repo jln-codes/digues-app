@@ -15,7 +15,7 @@ from datetime import date, timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid5
 
-from digues_app.target import PostgreSQLConfig
+from digues_app.target import PostgreSQLConfig, configure_extension_search_path
 from digues_app.target.schema import EXPECTED_TABLES
 
 
@@ -667,13 +667,12 @@ def _ensure_schema_compatible(cursor: Any) -> None:
     if missing:
         raise DemoSeedError("Schema SIRS incomplet : " + ", ".join(missing))
 
-    cursor.execute(
-        "SELECT f_table_name, type, srid FROM public.geometry_columns "
-        "WHERE f_table_schema = 'public' "
-        "AND f_table_name = ANY(%s) AND f_geometry_column = 'geometry'",
-        (["troncons", "bornes_reperage", "desordres"],),
+    geometries = _read_geometry_column_typmods(
+        cursor,
+        schema="public",
+        tables=("troncons", "bornes_reperage", "desordres"),
+        column="geometry",
     )
-    geometries = {row[0]: (str(row[1]).upper(), int(row[2])) for row in cursor.fetchall()}
     expected = {
         "troncons": ("LINESTRING", 3950),
         "bornes_reperage": ("POINT", 3950),
@@ -694,6 +693,36 @@ def _ensure_schema_compatible(cursor: Any) -> None:
     )
     if any(value is None for value in cursor.fetchone()):
         raise DemoSeedError("Fonctions de reperage SIRS absentes ou incompatibles.")
+
+
+def _read_geometry_column_typmods(
+    cursor: Any,
+    *,
+    schema: str,
+    tables: Sequence[str],
+    column: str,
+) -> dict[str, tuple[str, int]]:
+    """Lit le typmod PostGIS reel des colonnes geometry du schema courant."""
+
+    cursor.execute(
+        """
+        SELECT c.relname,
+               postgis_typmod_type(a.atttypmod),
+               postgis_typmod_srid(a.atttypmod)
+        FROM pg_attribute AS a
+        JOIN pg_class AS c ON c.oid = a.attrelid
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s
+          AND c.relname = ANY(%s)
+          AND a.attname = %s
+          AND NOT a.attisdropped
+        """,
+        (schema, list(tables), column),
+    )
+    return {
+        str(table): (str(geometry_type).upper(), int(srid))
+        for table, geometry_type, srid in cursor.fetchall()
+    }
 
 
 def _insert_references(cursor: Any) -> None:
@@ -1070,6 +1099,7 @@ def seed_demo_cursor(
     reset: bool = True,
     reset_only: bool = False,
 ) -> DemoSeedReport:
+    configure_extension_search_path(cursor)
     _ensure_schema_compatible(cursor)
     if reset:
         reset_demo_dataset(cursor)

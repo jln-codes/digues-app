@@ -9,14 +9,32 @@ from digues_app.demo.seed import (
     SYSTEMES,
     TRONCONS,
     WGS84_BBOX,
+    _read_geometry_column_typmods,
     demo_ids,
     expected_counts,
     geometry_kind_counts,
     seed_demo_cursor,
     stable_uuid,
 )
-from digues_app.target import PostgreSQLConfig
-from digues_app.target.schema import SCHEMA_DDL
+from digues_app.target import PostgreSQLConfig, configure_extension_search_path
+from digues_app.target.schema import render_schema_ddl
+
+
+class FakeGeometryTypmodCursor:
+    def __init__(self):
+        self.query = ""
+        self.params = None
+
+    def execute(self, query, params=None):
+        self.query = str(query)
+        self.params = params
+
+    def fetchall(self):
+        return [
+            ("troncons", "LineString", 3950),
+            ("bornes_reperage", "Point", 3950),
+            ("desordres", "Geometry", 3950),
+        ]
 
 
 class DemoSeedPlanTest(unittest.TestCase):
@@ -67,6 +85,23 @@ class DemoSeedPlanTest(unittest.TestCase):
                 self.assertIn(desordre.troncon_slug, troncon_slugs)
                 self.assertIn(desordre.system_slug, system_slugs)
 
+    def test_geometry_compatibility_reads_declared_postgis_typmod(self):
+        cursor = FakeGeometryTypmodCursor()
+        typmods = _read_geometry_column_typmods(
+            cursor,
+            schema="public",
+            tables=("troncons", "bornes_reperage", "desordres"),
+            column="geometry",
+        )
+
+        self.assertIn("pg_attribute", cursor.query)
+        self.assertIn("postgis_typmod_type", cursor.query)
+        self.assertIn("postgis_typmod_srid", cursor.query)
+        self.assertEqual(cursor.params[0], "public")
+        self.assertEqual(typmods["troncons"], ("LINESTRING", 3950))
+        self.assertEqual(typmods["bornes_reperage"], ("POINT", 3950))
+        self.assertEqual(typmods["desordres"], ("GEOMETRY", 3950))
+
 
 class DemoSeedPostGISTest(unittest.TestCase):
     def test_current_schema_accepts_and_validates_demo_seed(self):
@@ -83,15 +118,13 @@ class DemoSeedPostGISTest(unittest.TestCase):
         try:
             with connection:
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT "
-                        "(SELECT extversion FROM pg_extension WHERE extname = 'postgis'), "
-                        "(SELECT extversion FROM pg_extension WHERE extname = 'pgcrypto')"
-                    )
-                    postgis, pgcrypto = cursor.fetchone()
-                    if postgis is None or pgcrypto is None:
-                        raise unittest.SkipTest("Extensions PostGIS/pgcrypto absentes")
-                    for statement in SCHEMA_DDL:
+                    try:
+                        extensions = configure_extension_search_path(cursor)
+                    except Exception as exc:
+                        raise unittest.SkipTest(
+                            f"Extensions PostGIS/pgcrypto indisponibles : {exc}"
+                        )
+                    for statement in render_schema_ddl(extensions.postgis_schema):
                         cursor.execute(statement)
 
                     report = seed_demo_cursor(cursor)
