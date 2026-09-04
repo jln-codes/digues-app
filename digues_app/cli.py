@@ -124,6 +124,17 @@ def build_parser() -> argparse.ArgumentParser:
             "aucun secret n'est écrit dans le QGZ."
         ),
     )
+    seed_demo = subparsers.add_parser(
+        "seed-demo",
+        description=(
+            "Supprime puis cree le dataset synthetique public de demonstration."
+        ),
+    )
+    seed_demo.add_argument(
+        "--reset-only",
+        action="store_true",
+        help="Supprime uniquement les lignes du dataset demo deterministe.",
+    )
     diagnose = subparsers.add_parser(
         "diagnose",
         description="Génère audits/bilan.md depuis le contenu CouchDB réel.",
@@ -319,6 +330,43 @@ def run_qgis_project(args: argparse.Namespace) -> int:
     print(f"     Connexion : {result.connection} (mot de passe non enregistré)")
     print(f"     Couches : {len(result.layer_ids)}")
     print(f"     Relations : {', '.join(result.relation_ids)}")
+    return 0
+
+
+def run_seed_demo(args: argparse.Namespace) -> int:
+    from .demo import seed_demo_dataset
+
+    config = PostgreSQLConfig.from_env()
+    try:
+        report = seed_demo_dataset(
+            config,
+            reset=True,
+            reset_only=args.reset_only,
+        )
+    except Exception as exc:
+        print(f"[ERREUR] Dataset demo : {config.redact_secrets(str(exc))}")
+        return 1
+    if args.reset_only:
+        print(f"[OK] Dataset demo supprime : {report.seed}")
+        return 0
+
+    print(f"[OK] Dataset demo genere : {report.seed}")
+    print("Objets crees :")
+    for table in sorted(report.counts):
+        print(f"  {table}: {report.counts[table]}")
+    print("Geometries de desordres :")
+    for geometry_type in sorted(report.geometry_counts):
+        print(f"  {geometry_type}: {report.geometry_counts[geometry_type]}")
+    print("Longueurs par systeme :")
+    for label, length in sorted(report.system_lengths_m.items()):
+        print(f"  {label}: {length:.2f} m")
+    print("Plages mesurees :")
+    for label, values in sorted(report.ranges.items()):
+        minimum, maximum = values
+        if minimum is None or maximum is None:
+            print(f"  {label}: n/a")
+        else:
+            print(f"  {label}: {minimum:.3f} - {maximum:.3f}")
     return 0
 
 
@@ -700,6 +748,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_migrate_core(args)
     if args.command == "qgis-project":
         return run_qgis_project(args)
+    if args.command == "seed-demo":
+        return run_seed_demo(args)
     if args.command == "diagnose":
         return run_diagnose(args)
     if args.command == "anomalies":

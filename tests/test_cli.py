@@ -126,6 +126,44 @@ class CLITest(unittest.TestCase):
         self.assertIn("PyQGIS indisponible", output.getvalue())
         self.assertNotIn("secret", output.getvalue())
 
+    @patch("digues_app.demo.seed_demo_dataset")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
+    def test_seed_demo_command_reports_generated_dataset(self, target_config, seed_demo):
+        config = PostgreSQLConfig()
+        target_config.return_value = config
+        seed_demo.return_value = SimpleNamespace(
+            seed="digues-demo-v1",
+            counts={"systemes": 3, "desordres": 21},
+            geometry_counts={"POINT": 10, "LINESTRING": 8, "POLYGON": 3},
+            system_lengths_m={"SE Carbonade": 3929.3},
+            ranges={"point_libre_distance_m": (2.0, 16.0)},
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["seed-demo"])
+        self.assertEqual(result, 0)
+        seed_demo.assert_called_once_with(config, reset=True, reset_only=False)
+        text = output.getvalue()
+        self.assertIn("[OK] Dataset demo genere : digues-demo-v1", text)
+        self.assertIn("systemes: 3", text)
+        self.assertIn("POINT: 10", text)
+
+    @patch("digues_app.demo.seed_demo_dataset")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
+    def test_seed_demo_reset_only_is_explicit(self, target_config, seed_demo):
+        target_config.return_value = PostgreSQLConfig()
+        seed_demo.return_value = SimpleNamespace(seed="digues-demo-v1")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(["seed-demo", "--reset-only"])
+        self.assertEqual(result, 0)
+        seed_demo.assert_called_once_with(
+            target_config.return_value,
+            reset=True,
+            reset_only=True,
+        )
+        self.assertIn("Dataset demo supprime", output.getvalue())
+
     @patch("digues_app.cli.generate_coverage_report")
     @patch("digues_app.cli.connect_couchdb")
     def test_diagnose_command_generates_the_expected_report(
