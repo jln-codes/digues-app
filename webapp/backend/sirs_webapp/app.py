@@ -11,8 +11,11 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .ai import AiServiceError, chat_with_mistral
 from .database import WebDatabaseError, get_connection, get_write_connection
 from .models import (
+    AiChatRequest,
+    AiChatResponse,
     DesordreCreate,
     DigueCreate,
     LineEndpoints,
@@ -51,6 +54,7 @@ from .queries import (
     update_point_desordre,
     update_point_reperage,
 )
+from .schema_context import AiSchemaUnavailableError, get_ai_schema_context
 
 
 FRONTEND_DIRECTORY = Path(__file__).resolve().parents[2] / "frontend"
@@ -83,6 +87,21 @@ def create_app() -> FastAPI:
     @application.exception_handler(WebDatabaseError)
     async def database_error_handler(
         _request: Request, exc: WebDatabaseError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @application.exception_handler(AiServiceError)
+    async def ai_service_error_handler(
+        _request: Request, exc: AiServiceError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": str(exc)},
+        )
+
+    @application.exception_handler(AiSchemaUnavailableError)
+    async def ai_schema_error_handler(
+        _request: Request, exc: AiSchemaUnavailableError
     ) -> JSONResponse:
         return JSONResponse(status_code=503, content={"detail": str(exc)})
 
@@ -153,6 +172,16 @@ def create_app() -> FastAPI:
     @application.get("/api/config")
     def frontend_config() -> dict[str, bool]:
         return {"show_uuid": web_show_uuid()}
+
+    @application.post("/api/ai/chat")
+    def ai_chat(request: AiChatRequest) -> dict[str, Any]:
+        messages = [message.model_dump() for message in request.messages]
+        schema_context = get_ai_schema_context()
+        result = chat_with_mistral(messages, schema_context)
+        return AiChatResponse(
+            answer=result.answer,
+            executed_queries=[{"sql": sql} for sql in result.executed_queries],
+        ).model_dump()
 
     @application.get("/api/troncons", response_class=GeoJSONResponse)
     def troncons(connection: Any = Depends(get_connection)) -> dict[str, Any]:

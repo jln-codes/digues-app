@@ -16,6 +16,70 @@ from pydantic import (
 )
 
 
+AI_MAX_MESSAGES = 20
+AI_MAX_MESSAGE_CHARS = 8000
+AI_MAX_CONVERSATION_CHARS = 40000
+
+
+class AiChatMessage(BaseModel):
+    """Message non privilégié accepté depuis le navigateur."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=AI_MAX_MESSAGE_CHARS)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Le message est obligatoire.")
+        return normalized
+
+
+class AiChatRequest(BaseModel):
+    """Historique court dont le dernier message doit venir de l'utilisateur."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[AiChatMessage] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_and_trim_history(self) -> "AiChatRequest":
+        if self.messages[-1].role != "user":
+            raise ValueError("Le dernier message doit provenir de l’utilisateur.")
+
+        recent = self.messages[-AI_MAX_MESSAGES:]
+        retained: list[AiChatMessage] = []
+        total_chars = 0
+        for message in reversed(recent):
+            next_total = total_chars + len(message.content)
+            if next_total > AI_MAX_CONVERSATION_CHARS:
+                break
+            retained.append(message)
+            total_chars = next_total
+        self.messages = list(reversed(retained))
+        return self
+
+
+class AiExecutedQuery(BaseModel):
+    """Métadonnée d'affichage d'une consultation IA réellement réussie."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sql: str
+
+
+class AiChatResponse(BaseModel):
+    """Réponse publique sans résultat SQL ni structure interne Mistral."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    executed_queries: list[AiExecutedQuery] = Field(default_factory=list)
+
+
 class NamedObjectCreate(BaseModel):
     """Champs communs réellement persistés pour les objets patrimoniaux."""
 

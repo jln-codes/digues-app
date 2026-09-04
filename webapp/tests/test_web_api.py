@@ -1,11 +1,15 @@
+import asyncio
+from contextlib import contextmanager
 import json
 import inspect
 import os
 from pathlib import Path
 import re
+import requests
 import shutil
 import subprocess
 import unittest
+from unittest.mock import Mock, patch
 import uuid
 
 from dotenv import load_dotenv
@@ -13,7 +17,16 @@ from pydantic import ValidationError
 
 from sirs_postgre.target import PostgreSQLConfig
 from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
+from sirs_webapp.ai import (
+    AiChatResult,
+    AiServiceError,
+    MISTRAL_MODEL,
+    chat_with_mistral,
+)
 from sirs_webapp.models import (
+    AI_MAX_CONVERSATION_CHARS,
+    AI_MAX_MESSAGES,
+    AiChatRequest,
     DesordreCreate,
     DigueCreate,
     LineStringGeometryUpdate,
@@ -58,6 +71,22 @@ from sirs_webapp.queries import (
     PointDesordreUpdateError,
 )
 
+from sirs_webapp.prompts import SIRS_SYSTEM_PROMPT
+from sirs_webapp.schema_context import (
+    AI_SCHEMA_CACHE_TTL_SECONDS,
+    AI_SCHEMA_COLUMNS_SQL,
+    AI_SCHEMA_EXCLUDED_OBJECTS,
+    AI_SCHEMA_FOREIGN_KEYS_SQL,
+    AI_SCHEMA_NAMES,
+    AI_SCHEMA_OBJECTS,
+    AI_SCHEMA_PRIMARY_KEYS_SQL,
+    AiSchemaUnavailableError,
+    clear_ai_schema_context_cache,
+    format_ai_schema_context,
+    get_ai_schema_context,
+    introspect_ai_schema,
+)
+
 try:
     from sirs_webapp.app import FRONTEND_DIRECTORY, app, web_show_uuid
 except ModuleNotFoundError as exc:
@@ -98,6 +127,324 @@ class FakeConnection:
         return self.cursor_instance
 
 
+class FakeSchemaCursor:
+    def __init__(self, results):
+        self.results = iter(results)
+        self.executions = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, query, params=None):
+        self.executions.append((query, params))
+
+    def fetchall(self):
+        return next(self.results)
+
+
+class FakeSchemaConnection:
+    def __init__(self, results):
+        self.cursor_instance = FakeSchemaCursor(results)
+
+    def cursor(self):
+        return self.cursor_instance
+
+
+class AiSchemaContextTest(unittest.TestCase):
+    columns = [
+        ("public", "troncons", "TABLE", "geometry", "geometry(LineString,3950)", True),
+        ("public", "troncons", "TABLE", "digue_id", "uuid", False),
+        ("public", "troncons", "TABLE", "id", "uuid", False),
+        ("public", "digues", "TABLE", "id", "uuid", False),
+        ("public", "view_desordres_points_saisie", "VIEW", "id", "uuid", True),
+    ]
+    primary_keys = [
+        ("public", "troncons", "id"),
+        ("public", "digues", "id"),
+    ]
+    foreign_keys = [
+        (
+            "public",
+            "troncons",
+            "digue_id",
+            "public",
+            "digues",
+            "id",
+            "troncons_digues_fk",
+            1,
+        )
+    ]
+
+    def tearDown(self):
+        clear_ai_schema_context_cache()
+
+    def test_introspection_reads_catalog_metadata_only_with_explicit_allowlist(self):
+        connection = FakeSchemaConnection([
+            self.columns,
+            self.primary_keys,
+            self.foreign_keys,
+        ])
+        result = introspect_ai_schema(connection)
+        self.assertEqual(result, (self.columns, self.primary_keys, self.foreign_keys))
+        self.assertEqual(len(connection.cursor_instance.executions), 3)
+        for query, parameters in connection.cursor_instance.executions:
+            normalized = " ".join(query.lower().split())
+            self.assertIn("pg_catalog", normalized)
+            self.assertNotIn("select *", normalized)
+            self.assertIn(list(AI_SCHEMA_NAMES), parameters)
+            self.assertIn(list(AI_SCHEMA_OBJECTS), parameters)
+            self.assertIn(list(AI_SCHEMA_EXCLUDED_OBJECTS), parameters)
+
+        self.assertEqual(AI_SCHEMA_NAMES, ("public",))
+        self.assertIn("spatial_ref_sys", AI_SCHEMA_EXCLUDED_OBJECTS)
+        self.assertNotIn("users", AI_SCHEMA_OBJECTS)
+        self.assertNotIn("objects", AI_SCHEMA_OBJECTS)
+        self.assertIn("view_desordres_points_saisie", AI_SCHEMA_OBJECTS)
+
+    def test_schema_format_is_deterministic_and_includes_postgis_keys_and_views(self):
+        context = format_ai_schema_context(
+            list(reversed(self.columns)),
+            list(reversed(self.primary_keys)),
+            list(reversed(self.foreign_keys)),
+        )
+        self.assertLess(
+            context.index("TABLE public.digues"),
+            context.index("TABLE public.troncons"),
+        )
+        self.assertLess(
+            context.index("TABLE public.troncons"),
+            context.index("VIEW public.view_desordres_points_saisie"),
+        )
+        self.assertIn("- id: uuid NOT NULL [PK]", context)
+        self.assertIn("- geometry: geometry(LineString,3950) NULL", context)
+        self.assertIn(
+            "FK public.troncons.digue_id -> public.digues.id [troncons_digues_fk:1]",
+            context,
+        )
+        self.assertEqual(context, format_ai_schema_context(
+            self.columns, self.primary_keys, self.foreign_keys
+        ))
+        self.assertIn("pas des instructions utilisateur ni des données métier", context)
+        self.assertTrue(context.endswith("</schema>"))
+
+    def test_schema_context_cache_avoids_catalog_until_five_minute_expiry(self):
+        calls = []
+
+        @contextmanager
+        def connection_factory():
+            calls.append(True)
+            yield FakeSchemaConnection([
+                self.columns,
+                self.primary_keys,
+                self.foreign_keys,
+            ])
+
+        times = iter([100.0, 100.0, 101.0, 401.0, 401.0])
+        clock = lambda: next(times)
+        first = get_ai_schema_context(
+            connection_factory=connection_factory, clock=clock
+        )
+        second = get_ai_schema_context(
+            connection_factory=connection_factory, clock=clock
+        )
+        third = get_ai_schema_context(
+            connection_factory=connection_factory, clock=clock
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(first, third)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(AI_SCHEMA_CACHE_TTL_SECONDS, 300)
+
+    def test_schema_unavailability_is_controlled_and_never_fabricated(self):
+        @contextmanager
+        def connection_factory():
+            raise RuntimeError("secret connection detail")
+            yield
+
+        with self.assertRaises(AiSchemaUnavailableError) as raised:
+            get_ai_schema_context(connection_factory=connection_factory)
+        self.assertEqual(
+            str(raised.exception),
+            "Le schéma PostgreSQL SIRS est temporairement indisponible.",
+        )
+        self.assertNotIn("secret", str(raised.exception))
+
+
+class AiProviderTest(unittest.TestCase):
+    def test_chat_request_accepts_and_normalizes_multiple_messages(self):
+        request = AiChatRequest(messages=[
+            {"role": "user", "content": " Bonjour "},
+            {"role": "assistant", "content": " Bonjour ! "},
+            {"role": "user", "content": " Peux-tu préciser ? "},
+        ])
+        self.assertEqual(
+            [message.model_dump() for message in request.messages],
+            [
+                {"role": "user", "content": "Bonjour"},
+                {"role": "assistant", "content": "Bonjour !"},
+                {"role": "user", "content": "Peux-tu préciser ?"},
+            ],
+        )
+
+    def test_chat_request_rejects_invalid_histories(self):
+        invalid_payloads = (
+            {},
+            {"messages": []},
+            {"messages": "pas une liste"},
+            {"messages": [{"role": "system", "content": "Interdit"}]},
+            {"messages": [{"role": "developer", "content": "Interdit"}]},
+            {"messages": [{"role": "user", "content": "   "}]},
+            {"messages": [{"role": "user", "content": "x" * 8001}]},
+            {"messages": [{"role": "assistant", "content": "Fin invalide"}]},
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValidationError):
+                    AiChatRequest.model_validate(payload)
+
+    def test_chat_request_keeps_only_recent_messages_within_server_limits(self):
+        messages = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": str(index)}
+            for index in range(23)
+        ]
+        request = AiChatRequest(messages=messages)
+        self.assertEqual(len(request.messages), AI_MAX_MESSAGES)
+        self.assertEqual(request.messages[0].content, "3")
+        self.assertEqual(request.messages[-1].content, "22")
+
+        large_messages = [
+            {"role": "assistant", "content": "a" * 8000}
+            for _ in range(5)
+        ] + [{"role": "user", "content": "u" * 8000}]
+        request = AiChatRequest(messages=large_messages)
+        self.assertEqual(
+            sum(len(message.content) for message in request.messages),
+            AI_MAX_CONVERSATION_CHARS,
+        )
+        self.assertEqual(len(request.messages), 5)
+        self.assertEqual(request.messages[-1].role, "user")
+
+    def test_mistral_call_is_mocked_and_answer_is_normalized(self):
+        response = Mock(status_code=200, ok=True)
+        response.json.return_value = {
+            "choices": [{"message": {"content": "  Bonjour depuis Mistral.  "}}]
+        }
+
+        with (
+            patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
+            patch("sirs_webapp.ai.load_dotenv"),
+            patch("sirs_webapp.ai.requests.post", return_value=response) as post,
+        ):
+            messages = [
+                {"role": "user", "content": "Bonjour"},
+                {"role": "assistant", "content": "Bonjour !"},
+                {"role": "user", "content": "Peux-tu préciser ?"},
+            ]
+            schema_context = "<schema>\nTABLE public.systemes\n</schema>"
+            answer = chat_with_mistral(messages, schema_context)
+
+        self.assertEqual(answer.answer, "Bonjour depuis Mistral.")
+        self.assertEqual(answer.executed_queries, ())
+
+        request = post.call_args
+
+        self.assertEqual(
+            request.args[0],
+            "https://api.mistral.ai/v1/chat/completions",
+        )
+
+        payload = request.kwargs["json"]
+
+        self.assertEqual(payload["model"], MISTRAL_MODEL)
+        self.assertEqual(len(payload["messages"]), len(messages) + 1)
+
+        self.assertEqual(
+            payload["messages"][0],
+            {
+                "role": "system",
+                "content": f"{SIRS_SYSTEM_PROMPT}\n\n{schema_context}",
+            },
+        )
+        system_content = payload["messages"][0]["content"]
+        self.assertTrue(system_content.startswith(SIRS_SYSTEM_PROMPT))
+        self.assertGreater(system_content.index(schema_context), 0)
+
+        self.assertEqual(
+            payload["messages"][1:],
+            messages,
+        )
+
+        self.assertEqual(
+            request.kwargs["headers"]["Authorization"],
+            "Bearer test-key",
+        )
+
+    def test_mistral_provider_errors_are_transformed_without_response_body(self):
+        cases = (
+            (401, "Authentification du service IA refusée."),
+            (429, "quota ou la limite de débit"),
+            (503, "temporairement indisponible"),
+        )
+        for status_code, expected in cases:
+            with self.subTest(status_code=status_code):
+                response = Mock(status_code=status_code, ok=False)
+                response.text = "provider-secret-detail"
+                with (
+                    patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
+                    patch("sirs_webapp.ai.load_dotenv"),
+                    patch("sirs_webapp.ai.requests.post", return_value=response),
+                    self.assertRaises(AiServiceError) as raised,
+                ):
+                    chat_with_mistral(
+                        [{"role": "user", "content": "Bonjour"}], "schema"
+                    )
+                self.assertIn(expected, str(raised.exception))
+                self.assertNotIn(response.text, str(raised.exception))
+
+    def test_mistral_timeout_and_invalid_response_are_transformed(self):
+        with (
+            patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
+            patch("sirs_webapp.ai.load_dotenv"),
+            patch(
+                "sirs_webapp.ai.requests.post",
+                side_effect=requests.Timeout(),
+            ),
+            self.assertRaises(AiServiceError) as timeout,
+        ):
+            chat_with_mistral(
+                [{"role": "user", "content": "Bonjour"}], "schema"
+            )
+        self.assertEqual(timeout.exception.status_code, 504)
+
+        with (
+            patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
+            patch("sirs_webapp.ai.load_dotenv"),
+            patch(
+                "sirs_webapp.ai.requests.post",
+                side_effect=requests.ConnectionError(),
+            ),
+            self.assertRaisesRegex(AiServiceError, "Impossible de joindre"),
+        ):
+            chat_with_mistral(
+                [{"role": "user", "content": "Bonjour"}], "schema"
+            )
+
+        response = Mock(status_code=200, ok=True)
+        response.json.return_value = {"choices": []}
+        with (
+            patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
+            patch("sirs_webapp.ai.load_dotenv"),
+            patch("sirs_webapp.ai.requests.post", return_value=response),
+            self.assertRaisesRegex(AiServiceError, "Réponse invalide"),
+        ):
+            chat_with_mistral(
+                [{"role": "user", "content": "Bonjour"}], "schema"
+            )
+
+
 @unittest.skipIf(app is None, "FastAPI indisponible dans l’environnement de test")
 class WebApplicationTest(unittest.TestCase):
     def test_application_exposes_expected_routes(self):
@@ -109,6 +456,7 @@ class WebApplicationTest(unittest.TestCase):
                 "/api/troncons/options",
                 "/api/troncons/{troncon_id}/reperage-options",
                 "/api/config",
+                "/api/ai/chat",
                 "/api/systemes-endiguement",
                 "/api/digues",
                 "/api/desordres",
@@ -152,6 +500,13 @@ class WebApplicationTest(unittest.TestCase):
             for method in route.methods
         }
         self.assertTrue({"GET", "POST"} <= desordre_methods)
+        ai_methods = {
+            method
+            for route in app.routes
+            if route.path == "/api/ai/chat"
+            for method in route.methods
+        }
+        self.assertEqual(ai_methods, {"POST"})
 
     def test_business_routes_return_feature_collections(self):
         routes = {
@@ -166,6 +521,121 @@ class WebApplicationTest(unittest.TestCase):
                 routes[path].response_class.media_type,
                 "application/geo+json",
             )
+
+
+@unittest.skipIf(app is None, "FastAPI indisponible dans l’environnement de test")
+class AiEndpointTest(unittest.TestCase):
+    @staticmethod
+    def endpoint():
+        return next(
+            route.endpoint for route in app.routes if route.path == "/api/ai/chat"
+        )
+
+    def test_empty_message_is_rejected_without_provider_call(self):
+        with patch("sirs_webapp.app.chat_with_mistral") as chat:
+            with self.assertRaises(ValidationError):
+                AiChatRequest(messages=[{"role": "user", "content": "   "}])
+        chat.assert_not_called()
+
+    def test_missing_api_key_returns_explicit_safe_error(self):
+        with (
+            patch.dict(os.environ, {"MISTRAL_API_KEY": ""}),
+            patch("sirs_webapp.ai.load_dotenv"),
+            patch("sirs_webapp.ai.requests.post") as post,
+            patch("sirs_webapp.app.get_ai_schema_context", return_value="schema"),
+            self.assertRaises(AiServiceError) as raised,
+        ):
+            self.endpoint()(AiChatRequest(messages=[
+                {"role": "user", "content": "Bonjour"}
+            ]))
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(
+            str(raised.exception),
+            "L’assistant IA n’est pas configuré sur le serveur.",
+        )
+        post.assert_not_called()
+
+    def test_endpoint_returns_normalized_answer_and_successful_queries_only(self):
+        with (
+            patch(
+                "sirs_webapp.app.chat_with_mistral",
+                return_value=AiChatResult(
+                    answer="Réponse simulée",
+                    executed_queries=("SELECT 1", "SELECT 1"),
+                ),
+            ) as chat,
+            patch(
+                "sirs_webapp.app.get_ai_schema_context",
+                return_value="CONTEXTE SCHEMA",
+            ),
+        ):
+            response = self.endpoint()(AiChatRequest(messages=[
+                {"role": "user", "content": " Bonjour "},
+                {"role": "assistant", "content": " Bonjour ! "},
+                {"role": "user", "content": " Suite "},
+            ]))
+        self.assertEqual(response, {
+            "answer": "Réponse simulée",
+            "executed_queries": [{"sql": "SELECT 1"}, {"sql": "SELECT 1"}],
+        })
+        serialized = json.dumps(response)
+        for forbidden in ("columns", "rows", "tool_call_id", "MISTRAL_API_KEY"):
+            self.assertNotIn(forbidden, serialized)
+        chat.assert_called_once_with(
+            [
+                {"role": "user", "content": "Bonjour"},
+                {"role": "assistant", "content": "Bonjour !"},
+                {"role": "user", "content": "Suite"},
+            ],
+            "CONTEXTE SCHEMA",
+        )
+
+    def test_endpoint_returns_empty_query_list_without_tool_call(self):
+        with (
+            patch(
+                "sirs_webapp.app.chat_with_mistral",
+                return_value=AiChatResult(
+                    answer="Réponse directe", executed_queries=()
+                ),
+            ),
+            patch("sirs_webapp.app.get_ai_schema_context", return_value="schema"),
+        ):
+            response = self.endpoint()(AiChatRequest(messages=[
+                {"role": "user", "content": "Question générale"}
+            ]))
+        self.assertEqual(
+            response,
+            {"answer": "Réponse directe", "executed_queries": []},
+        )
+
+    def test_provider_error_is_returned_without_stack_trace(self):
+        with (
+            patch(
+                "sirs_webapp.app.chat_with_mistral",
+                side_effect=AiServiceError("Impossible de joindre le service IA."),
+            ),
+            patch("sirs_webapp.app.get_ai_schema_context", return_value="schema"),
+            self.assertRaises(AiServiceError) as raised,
+        ):
+            self.endpoint()(AiChatRequest(messages=[
+                {"role": "user", "content": "Bonjour"}
+            ]))
+        handler = app.exception_handlers[AiServiceError]
+        response = asyncio.run(handler(None, raised.exception))
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            json.loads(response.body),
+            {"detail": "Impossible de joindre le service IA."},
+        )
+
+    def test_schema_error_is_returned_without_database_details(self):
+        error = AiSchemaUnavailableError(
+            "Le schéma PostgreSQL SIRS est temporairement indisponible."
+        )
+        handler = app.exception_handlers[AiSchemaUnavailableError]
+        response = asyncio.run(handler(None, error))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body), {"detail": str(error)})
 
 
 class WebAssetsAndQueriesTest(unittest.TestCase):
@@ -212,6 +682,204 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         self.assertIn('fetchJson("/api/systemes-endiguement")', script)
         self.assertIn("tronconLayersById", script)
         self.assertIn("map.fitBounds(layer.getBounds(), { padding: [40, 40] })", script)
+
+    def test_frontend_has_queries_main_view_and_docked_ai_states(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+
+        for expected in (
+            'id="toggle-queries"',
+            'aria-controls="queries-view"',
+            'id="queries-view"',
+            "Outil de requêtes — fonctionnalité à venir",
+            'id="toggle-ai"',
+            'aria-controls="ai-panel"',
+            'id="ai-panel"',
+            'id="close-ai"',
+            'id="ai-conversation"',
+            'id="ai-chat-form"',
+            'id="ai-message"',
+            'id="ai-send"',
+        ):
+            self.assertIn(expected, page)
+        self.assertNotIn("Assistant IA — fonctionnalité à venir", page)
+
+        self.assertIn("function setQueriesViewOpen(open)", script)
+        self.assertIn("mapElement.hidden = open", script)
+        self.assertIn("queriesView.hidden = !open", script)
+        self.assertIn('primaryArea.classList.toggle("queries-open", open)', script)
+        self.assertIn("function setAiPanelOpen(open)", script)
+        self.assertIn("aiPanel.hidden = !open", script)
+        self.assertIn("map.invalidateSize()", script)
+        self.assertIn("display: flex", css.split(".app-workspace", 1)[1].split("}", 1)[0])
+        self.assertIn("flex: 1 1 auto", css.split(".primary-area", 1)[1].split("}", 1)[0])
+        self.assertIn("flex: 0 0 33.333%", css.split(".ai-panel {", 1)[1].split("}", 1)[0])
+        self.assertIn("overflow: hidden", css.split(".primary-area", 1)[1].split("}", 1)[0])
+
+    def test_frontend_queries_and_ai_state_transitions_are_independent(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js indisponible pour le test d’état frontend.")
+        state_source = "function refreshMapSize" + script.split(
+            "function refreshMapSize", 1
+        )[1].split("function appendAiMessage", 1)[0]
+        program = state_source + """
+const mapElement = { hidden: false };
+const queriesView = { hidden: true };
+const aiPanel = { hidden: true };
+const heritagePanel = { hidden: true };
+const mapLegend = { hidden: false };
+const primaryArea = { classList: { toggle(name, value) { this[name] = value; } } };
+const queriesToggleButton = { setAttribute(name, value) { this[name] = value; } };
+const aiToggleButton = { setAttribute(name, value) { this[name] = value; } };
+let invalidations = 0;
+const map = { invalidateSize() { invalidations += 1; } };
+const window = { requestAnimationFrame(callback) { callback(); } };
+const snapshot = () => ({
+  map: !mapElement.hidden,
+  queries: !queriesView.hidden,
+  ai: !aiPanel.hidden,
+  queriesOpen: Boolean(primaryArea.classList["queries-open"]),
+});
+const states = [snapshot()];
+setAiPanelOpen(true);
+states.push(snapshot());
+setAiPanelOpen(false);
+setQueriesViewOpen(true);
+states.push(snapshot());
+setAiPanelOpen(true);
+states.push(snapshot());
+setQueriesViewOpen(false);
+setAiPanelOpen(false);
+states.push(snapshot());
+process.stdout.write(JSON.stringify({ states, invalidations }));
+"""
+        result = json.loads(subprocess.check_output(
+            [node, "-e", program], text=True, encoding="utf-8"
+        ))
+        self.assertEqual(result["states"], [
+            {"map": True, "queries": False, "ai": False, "queriesOpen": False},
+            {"map": True, "queries": False, "ai": True, "queriesOpen": False},
+            {"map": False, "queries": True, "ai": False, "queriesOpen": True},
+            {"map": False, "queries": True, "ai": True, "queriesOpen": True},
+            {"map": True, "queries": False, "ai": False, "queriesOpen": False},
+        ])
+        self.assertEqual(result["invalidations"], 4)
+
+    def test_frontend_ai_chat_posts_text_and_renders_with_text_content(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        self.assertIn('fetchJson("/api/ai/chat"', script)
+        self.assertIn("const aiConversationHistory = []", script)
+        self.assertIn("aiConversationHistory.push({ role, content })", script)
+        self.assertIn(
+            "messages: aiConversationHistory.slice(-AI_HISTORY_MAX_MESSAGES)",
+            script,
+        )
+        self.assertIn("{ error: true, remember: false }", script)
+        self.assertIn("aiMessageInput.disabled = pending", script)
+        self.assertIn("aiSendButton.disabled = pending", script)
+        self.assertIn('event.key === "Enter"', script)
+        self.assertIn("body.textContent = content", script)
+        self.assertNotIn("body.innerHTML", script)
+        self.assertNotIn("MISTRAL_API_KEY", page)
+        self.assertNotIn("MISTRAL_API_KEY", script)
+        self.assertNotIn("localStorage", script)
+        self.assertNotIn("indexedDB", script)
+
+    def test_frontend_renders_safe_collapsible_sql_with_copy_only(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js indisponible pour le test de rendu IA.")
+
+        render_source = "async function copyTextToClipboard" + script.split(
+            "async function copyTextToClipboard", 1
+        )[1].split("function setAiRequestPending", 1)[0]
+        program = render_source + r'''
+class Element {
+  constructor(tagName) {
+    this.tagName = tagName;
+    this.children = [];
+    this.listeners = {};
+    this.classList = { add: (...names) => { this.classes = names; } };
+    this.textContent = "";
+    this.open = false;
+    this.scrollHeight = 10;
+  }
+  append(...children) { this.children.push(...children); }
+  addEventListener(name, listener) { this.listeners[name] = listener; }
+  setAttribute(name, value) { this[name] = value; }
+  remove() { this.removed = true; }
+  select() { this.selected = true; }
+}
+const document = {
+  body: new Element("body"),
+  createElement(tagName) { return new Element(tagName); },
+  execCommand(command) { return command === "copy"; },
+};
+let copiedText = null;
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: { clipboard: { async writeText(text) { copiedText = text; } } },
+});
+const window = { setTimeout(callback) { callback(); } };
+const aiConversation = new Element("conversation");
+const aiConversationEmpty = { remove() {} };
+const aiConversationHistory = [];
+
+(async () => {
+  appendAiMessage("assistant", "Sans SQL");
+  const noSqlChildren = aiConversation.children[0].children.length;
+  const unsafeSql = "SELECT '<script>alert(1)</script>'";
+  appendAiMessage("assistant", "Avec SQL", {
+    executedQueries: [{ sql: unsafeSql }],
+  });
+  appendAiMessage("assistant", "Deux SQL", {
+    executedQueries: [{ sql: "SELECT 1" }, { sql: "SELECT 1" }],
+  });
+  const details = aiConversation.children[1].children[2];
+  const query = details.children[1];
+  const code = query.children[1].children[0];
+  const button = query.children[2];
+  await button.listeners.click();
+  const multiple = aiConversation.children[2].children[2];
+  process.stdout.write(JSON.stringify({
+    noSqlChildren,
+    detailsTag: details.tagName,
+    detailsOpen: details.open,
+    summary: details.children[0].textContent,
+    code: code.textContent,
+    copiedText,
+    buttonText: button.textContent,
+    multipleQueries: multiple.children.length - 1,
+    history: aiConversationHistory,
+  }));
+})();
+'''
+        result = json.loads(subprocess.check_output([node, "-e", program], text=True))
+        self.assertEqual(result["noSqlChildren"], 2)
+        self.assertEqual(result["detailsTag"], "details")
+        self.assertFalse(result["detailsOpen"])
+        self.assertIn("SQL", result["summary"])
+        self.assertIn("1", result["summary"])
+        self.assertEqual(result["code"], "SELECT '<script>alert(1)</script>'")
+        self.assertEqual(result["copiedText"], result["code"])
+        self.assertEqual(result["buttonText"], "Copier")
+        self.assertEqual(result["multipleQueries"], 2)
+        self.assertEqual(len(result["history"]), 3)
+        self.assertTrue(all(set(item) == {"role", "content"} for item in result["history"]))
+        self.assertIn('document.createElement("details")', render_source)
+        self.assertIn("code.textContent = query.sql", render_source)
+        self.assertNotIn("innerHTML", render_source)
+        self.assertIn('document.execCommand("copy")', render_source)
+        self.assertIn('copyButton.textContent = "Copié"', render_source)
+        self.assertNotIn("Exécuter", render_source)
+        self.assertNotIn("Ouvrir dans Requêtes", render_source)
+        self.assertIn(".ai-sql-details summary", css)
 
     def test_frontend_has_generic_creation_mode_and_context_prefill(self):
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
@@ -1343,6 +2011,24 @@ class WebPostGISIntegrationTest(unittest.TestCase):
         if connection is not None:
             connection.rollback()
             connection.close()
+
+    def test_ai_introspection_matches_current_postgis_business_catalog(self):
+        columns, primary_keys, foreign_keys = introspect_ai_schema(self.connection)
+        relation_names = {(row[0], row[1], row[2]) for row in columns}
+        self.assertIn(("public", "systemes", "TABLE"), relation_names)
+        self.assertIn(("public", "view_desordres_points_saisie", "VIEW"), relation_names)
+        self.assertNotIn(("public", "spatial_ref_sys", "TABLE"), relation_names)
+        self.assertTrue(any(row[:3] == ("public", "systemes", "id") for row in primary_keys))
+        self.assertTrue(any(
+            row[:6] == (
+                "public", "troncons", "digue_id", "public", "digues", "id"
+            )
+            for row in foreign_keys
+        ))
+        geometry_types = {
+            row[4] for row in columns if row[3] == "geometry"
+        }
+        self.assertIn("geometry(LineString,3950)", geometry_types)
 
     def setUp(self):
         self.connection.execute("SAVEPOINT web_api_test")

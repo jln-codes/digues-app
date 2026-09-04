@@ -4,10 +4,23 @@ const map = L.map("map", {
 }).setView([46.8, 2.5], 6);
 const statusElement = document.querySelector("#status");
 const heritageToggleButton = document.querySelector("#toggle-heritage");
+const queriesToggleButton = document.querySelector("#toggle-queries");
+const aiToggleButton = document.querySelector("#toggle-ai");
 const createMenuButton = document.querySelector("#toggle-create-menu");
 const createMenuList = document.querySelector("#create-menu-list");
 const heritageCloseButton = document.querySelector("#close-heritage");
 const heritagePanel = document.querySelector("#heritage-panel");
+const mapElement = document.querySelector("#map");
+const primaryArea = document.querySelector("#primary-area");
+const queriesView = document.querySelector("#queries-view");
+const aiPanel = document.querySelector("#ai-panel");
+const aiCloseButton = document.querySelector("#close-ai");
+const aiConversation = document.querySelector("#ai-conversation");
+const aiConversationEmpty = document.querySelector("#ai-conversation-empty");
+const aiChatForm = document.querySelector("#ai-chat-form");
+const aiMessageInput = document.querySelector("#ai-message");
+const aiSendButton = document.querySelector("#ai-send");
+const aiChatStatus = document.querySelector("#ai-chat-status");
 const mapLegend = document.querySelector("#map-legend");
 const layerToggleInputs = document.querySelectorAll("[data-layer-toggle]");
 const heritageTree = document.querySelector("#heritage-tree");
@@ -204,6 +217,9 @@ let desordrePointLayer = null;
 let desordreLineLayer = null;
 let desordrePolygonLayer = null;
 let showUuid = false;
+let aiRequestPending = false;
+const aiConversationHistory = [];
+const AI_HISTORY_MAX_MESSAGES = 20;
 let editorState = {
   mode: "edit",
   objectType: null,
@@ -723,12 +739,193 @@ async function loadHeritageTree() {
 
 function setHeritagePanelOpen(open) {
   heritagePanel.hidden = !open;
-  mapLegend.hidden = open;
+  mapLegend.hidden = open || !queriesView.hidden;
   heritageToggleButton.setAttribute("aria-expanded", String(open));
   if (open) {
     loadHeritageTree();
   }
 }
+
+function refreshMapSize() {
+  if (!mapElement.hidden) {
+    window.requestAnimationFrame(() => map.invalidateSize());
+  }
+}
+
+function setQueriesViewOpen(open) {
+  mapElement.hidden = open;
+  queriesView.hidden = !open;
+  primaryArea.classList.toggle("queries-open", open);
+  mapLegend.hidden = open || !heritagePanel.hidden;
+  queriesToggleButton.setAttribute("aria-expanded", String(open));
+  refreshMapSize();
+}
+
+function setAiPanelOpen(open) {
+  aiPanel.hidden = !open;
+  aiToggleButton.setAttribute("aria-expanded", String(open));
+  refreshMapSize();
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (_error) {
+      // Le fallback reste utile hors contexte sécurisé ou si l'accès est refusé.
+    }
+  }
+  const temporaryInput = document.createElement("textarea");
+  temporaryInput.value = text;
+  temporaryInput.setAttribute("aria-hidden", "true");
+  temporaryInput.className = "clipboard-fallback";
+  document.body.append(temporaryInput);
+  temporaryInput.select();
+  const copied = document.execCommand("copy");
+  temporaryInput.remove();
+  if (!copied) {
+    throw new Error("Copie indisponible");
+  }
+}
+
+function appendAiExecutedQueries(message, executedQueries) {
+  const queries = Array.isArray(executedQueries)
+    ? executedQueries.filter(
+      (query) => typeof query?.sql === "string" && query.sql.trim(),
+    )
+    : [];
+  if (!queries.length) {
+    return;
+  }
+
+  const details = document.createElement("details");
+  details.className = "ai-sql-details";
+  const summary = document.createElement("summary");
+  summary.textContent = `Requêtes SQL utilisées — ${queries.length} requête${queries.length > 1 ? "s" : ""}`;
+  details.append(summary);
+
+  queries.forEach((query, index) => {
+    const item = document.createElement("section");
+    item.className = "ai-sql-query";
+    const heading = document.createElement("strong");
+    heading.textContent = `Requête ${index + 1}`;
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = query.sql;
+    pre.append(code);
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "ai-sql-copy";
+    copyButton.textContent = "Copier";
+    copyButton.setAttribute("aria-live", "polite");
+    copyButton.addEventListener("click", async () => {
+      try {
+        await copyTextToClipboard(query.sql);
+        copyButton.textContent = "Copié";
+      } catch (_error) {
+        copyButton.textContent = "Copie impossible";
+      }
+      window.setTimeout(() => {
+        copyButton.textContent = "Copier";
+      }, 1400);
+    });
+    item.append(heading, pre, copyButton);
+    details.append(item);
+  });
+  message.append(details);
+}
+
+function appendAiMessage(
+  role,
+  content,
+  { error = false, remember = true, executedQueries = [] } = {},
+) {
+  aiConversationEmpty?.remove();
+  const message = document.createElement("article");
+  message.className = `ai-message ai-message-${role}`;
+  if (error) {
+    message.classList.add("ai-message-error");
+  }
+  const author = document.createElement("strong");
+  author.textContent = role === "user" ? "Vous" : "Assistant IA";
+  const body = document.createElement("span");
+  body.textContent = content;
+  message.append(author, body);
+  if (role === "assistant") {
+    appendAiExecutedQueries(message, executedQueries);
+  }
+  aiConversation.append(message);
+  aiConversation.scrollTop = aiConversation.scrollHeight;
+  if (remember) {
+    aiConversationHistory.push({ role, content });
+  }
+}
+
+function setAiRequestPending(pending) {
+  aiRequestPending = pending;
+  aiMessageInput.disabled = pending;
+  aiSendButton.disabled = pending;
+  aiChatStatus.textContent = pending ? "Envoi en cours…" : "";
+}
+
+aiChatForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = aiMessageInput.value.trim();
+  if (!message || aiRequestPending) {
+    return;
+  }
+
+  appendAiMessage("user", message);
+  aiMessageInput.value = "";
+  setAiRequestPending(true);
+  try {
+    const response = await fetchJson("/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: aiConversationHistory.slice(-AI_HISTORY_MAX_MESSAGES),
+      }),
+    });
+    if (typeof response.answer !== "string" || !response.answer.trim()) {
+      throw new Error("Réponse invalide du service IA.");
+    }
+    appendAiMessage("assistant", response.answer.trim(), {
+      executedQueries: response.executed_queries,
+    });
+  } catch (error) {
+    console.error("Réponse de l’assistant impossible", error);
+    appendAiMessage(
+      "assistant",
+      error.message || "Impossible d’obtenir une réponse de l’assistant.",
+      { error: true, remember: false },
+    );
+  } finally {
+    setAiRequestPending(false);
+    aiMessageInput.focus();
+  }
+});
+
+aiMessageInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    if (!aiRequestPending) {
+      aiChatForm.requestSubmit();
+    }
+  }
+});
+
+queriesToggleButton.addEventListener("click", () => {
+  setQueriesViewOpen(queriesView.hidden);
+});
+
+aiToggleButton.addEventListener("click", () => {
+  setAiPanelOpen(aiPanel.hidden);
+});
+
+aiCloseButton.addEventListener("click", () => {
+  setAiPanelOpen(false);
+});
 
 heritageToggleButton.addEventListener("click", () => {
   setHeritagePanelOpen(heritagePanel.hidden);

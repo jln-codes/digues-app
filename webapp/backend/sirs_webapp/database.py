@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -44,10 +45,18 @@ def _connection(*, read_only: bool) -> Iterator[Any]:
         connection.close()
 
 
+@contextmanager
+def open_read_connection() -> Iterator[Any]:
+    """Connexion réutilisable par les services serveur en lecture seule."""
+
+    yield from _connection(read_only=True)
+
+
 def get_connection() -> Iterator[Any]:
     """Connexion des endpoints strictement en lecture seule."""
 
-    yield from _connection(read_only=True)
+    with open_read_connection() as connection:
+        yield connection
 
 
 def get_write_connection() -> Iterator[Any]:

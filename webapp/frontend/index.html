@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SIRS — carte expérimentale</title>
+    <title>SIRS PostgreSQL</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -15,7 +15,7 @@
       <header class="app-header">
         <div class="app-brand">
           <strong>SIRS PostgreSQL</strong>
-          <span>Carte expérimentale</span>
+          <span>Version expérimentale</span>
         </div>
         <nav class="main-navigation" aria-label="Navigation principale">
           <button
@@ -52,16 +52,42 @@
               </button>
             </div>
           </div>
+          <button
+            id="toggle-queries"
+            type="button"
+            class="menu-button"
+            aria-controls="queries-view"
+            aria-expanded="false"
+          >
+            Requêtes SQL
+          </button>
+          <button
+            id="toggle-ai"
+            type="button"
+            class="menu-button"
+            aria-controls="ai-panel"
+            aria-expanded="false"
+          >
+            Assistant IA
+          </button>
         </nav>
         <p id="status" role="status">Chargement des données…</p>
       </header>
-      <div id="map" aria-label="Carte des tronçons et des désordres"></div>
-      <div id="map-legend" class="legend" aria-label="Légende">
-        <label><input type="checkbox" data-layer-toggle="troncons" checked><i class="line troncon"></i>Tronçons</label>
-        <label><input type="checkbox" data-layer-toggle="Point" checked><i class="point"></i>Désordres ponctuels</label>
-        <label><input type="checkbox" data-layer-toggle="LineString" checked><i class="line desordre"></i>Désordres linéaires</label>
-        <label><input type="checkbox" data-layer-toggle="Polygon" checked><i class="polygon"></i>Désordres polygonaux</label>
-      </div>
+      <div id="app-workspace" class="app-workspace">
+        <section id="primary-area" class="primary-area" aria-label="Vue principale">
+          <div id="map" aria-label="Carte des tronçons et des désordres"></div>
+          <section id="queries-view" class="queries-view" aria-labelledby="queries-title" hidden>
+            <div>
+              <h1 id="queries-title">Requêtes</h1>
+              <p>Outil de requêtes — fonctionnalité à venir</p>
+            </div>
+          </section>
+          <div id="map-legend" class="legend" aria-label="Légende">
+            <label><input type="checkbox" data-layer-toggle="troncons" checked><i class="line troncon"></i>Tronçons</label>
+            <label><input type="checkbox" data-layer-toggle="Point" checked><i class="point"></i>Désordres ponctuels</label>
+            <label><input type="checkbox" data-layer-toggle="LineString" checked><i class="line desordre"></i>Désordres linéaires</label>
+            <label><input type="checkbox" data-layer-toggle="Polygon" checked><i class="polygon"></i>Désordres polygonaux</label>
+          </div>
       <aside id="heritage-panel" class="heritage-panel" hidden>
         <div class="heritage-title">
           <div>
@@ -301,7 +327,43 @@
             </section>
           </article>
         </section>
-      </aside>
+        </aside>
+        </section>
+        <aside id="ai-panel" class="ai-panel" aria-labelledby="ai-panel-title" hidden>
+          <div class="editor-title">
+            <div>
+              <strong id="ai-panel-title">Assistant IA</strong>
+            </div>
+            <button id="close-ai" class="icon-button" type="button" aria-label="Fermer l’assistant IA">×</button>
+          </div>
+          <div
+            id="ai-conversation"
+            class="ai-conversation"
+            role="log"
+            aria-live="polite"
+            aria-label="Conversation avec l’assistant IA"
+          >
+            <p id="ai-conversation-empty" class="ai-conversation-empty">
+              Posez une question à l’assistant.
+            </p>
+          </div>
+          <form id="ai-chat-form" class="ai-chat-form">
+            <label for="ai-message">Message</label>
+            <textarea
+              id="ai-message"
+              name="message"
+              rows="3"
+              maxlength="8000"
+              placeholder="Écrivez votre message…"
+              required
+            ></textarea>
+            <div class="ai-chat-actions">
+              <span id="ai-chat-status" role="status"></span>
+              <button id="ai-send" type="submit">Envoyer</button>
+            </div>
+          </form>
+        </aside>
+      </div>
       <div id="photo-lightbox" class="photo-lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-title" hidden>
         <button id="close-lightbox" class="lightbox-close" type="button" aria-label="Fermer la visionneuse">×</button>
         <button id="previous-photo" class="lightbox-navigation previous" type="button" aria-label="Photo précédente">‹</button>

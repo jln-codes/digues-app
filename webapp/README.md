@@ -13,8 +13,8 @@ Navigateur
 └── Leaflet.Editable
         ↓
      FastAPI
-        ↓
-PostgreSQL / PostGIS
+        ├── PostgreSQL / PostGIS
+        └── API Mistral (texte uniquement, appel côté serveur)
 ```
 
 Le frontend reste volontairement simple : pas de React, Vue, TypeScript, Node
@@ -25,6 +25,56 @@ les transformations ainsi que les règles spatiales et de repérage.
 Le navigateur ne se connecte jamais directement à PostgreSQL. Le backend
 utilise le modèle et la configuration de cible fournis par le paquet public
 `sirs-postgre`.
+
+L’assistant reçoit un contexte de schéma construit côté serveur depuis
+`pg_catalog`. L’introspection est limitée au schéma `public` et aux tables et
+vues déclarées par le modèle SIRS versionné, puis mise en cache en mémoire
+pendant cinq minutes. Seules les métadonnées de structure sont lues : aucune
+ligne métier n’est transmise à Mistral.
+
+## Moteur SQL de lecture
+
+Le module serveur `readonly_sql.py` fournit un moteur commun à l’Assistant IA et
+à la future vue Requêtes. Il n'est pas exposé par une route SQL publique. Il
+accepte une instruction unique `SELECT` ou `WITH … SELECT`, y
+compris les jointures, agrégations et fonctions PostgreSQL/PostGIS. Il refuse
+les mutations (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, etc.), les opérations de
+schéma ou de permissions (`CREATE`, `ALTER`, `DROP`, `GRANT`, `REVOKE`, etc.) et
+une liste prudente de fonctions à effet de bord connu.
+
+La validation applicative n'est qu'une première barrière : chaque requête est
+exécutée dans une transaction PostgreSQL explicitement `READ ONLY`, avec un
+`statement_timeout` local de 30 secondes. En production, la connexion de ce
+moteur doit en plus employer un rôle PostgreSQL dédié ne possédant que les
+droits de lecture nécessaires sur les objets SIRS. Le rôle actuellement utilisé
+en développement et dans les tests d'intégration possède des droits d'écriture
+et ne constitue donc pas le rôle cible. Une fonction appelée depuis un `SELECT`
+peut avoir des effets de bord ; l'analyse lexicale ne remplace ni la transaction
+en lecture seule ni les permissions du rôle.
+
+Le SQL n'est pas réécrit et aucun `LIMIT` n'est ajouté. Un curseur serveur ne
+matérialise au plus que 1 000 lignes et environ 1 Mo de JSON ; `truncated=true`
+signale que le transport a été coupé, sans fausser une agrégation calculée par
+PostgreSQL. Les valeurs non JSON sont normalisées en texte. Une géométrie brute
+reste donc sous la représentation textuelle/binaire fournie par psycopg ; une
+requête peut demander explicitement `ST_AsText` ou `ST_AsGeoJSON` lorsqu'un
+format précis est nécessaire.
+
+L’Assistant IA peut consulter les données SIRS au moyen de l’unique outil
+Mistral `query_sirs_database`. Mistral choisit automatiquement de l’appeler
+lorsqu’une réponse dépend des données courantes. Chaque lecture passe sans
+exception par `readonly_sql.py` et conserve sa validation, sa transaction
+`READ ONLY`, son timeout, ses limites de transport et les permissions du rôle
+PostgreSQL. Aucun outil d’écriture n’existe. Les échanges techniques et le SQL
+restent côté serveur, à l’exception du texte des requêtes exécutées avec succès,
+associé à la réponse pour permettre leur consultation et leur copie. Le panneau
+IA ne permet ni de les exécuter, ni de les transférer automatiquement vers la
+vue Requêtes. Une demande utilisateur peut déclencher au maximum cinq
+appels d’outil, puis un dernier appel Mistral sans outil est imposé afin de
+produire une réponse avec les résultats déjà obtenus.
+
+L’assistant peut exécuter des consultations, mais toute modification persistante
+reste une action humaine explicite.
 
 ## Fonctions disponibles
 
@@ -73,7 +123,9 @@ py -3 -m venv .venv
 Le backend charge sans écraser l'environnement le fichier optionnel
 `config.env` situé à la racine du dépôt. Il utilise les variables
 `SIRS_POSTGRE_*` du migrateur. `SIRS_WEB_SHOW_UUID=false` masque les UUID dans
-l'interface ; la valeur `true` les affiche.
+l'interface ; la valeur `true` les affiche. L’assistant texte utilise
+`MISTRAL_API_KEY`, à définir dans l’environnement du serveur ou dans le fichier
+local non versionné `config.env`. Cette clé n’est jamais envoyée au navigateur.
 
 ## Lancement local
 
