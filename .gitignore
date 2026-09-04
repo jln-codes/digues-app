@@ -1,16 +1,35 @@
+# Local configuration / secrets
 .env
+.env.*
+!.env.example
+!config.example.env
 config.env
+.dev.vars
+
+# Private / local-only project material
+private/
+audits/
+qgis/
+
+# Personal AI / agent configuration
+.agents/
+.codex/
+AGENTS.md
+
+# Python virtual environments
 .venv/
 .venv-qgis/
+
+# Python caches / test / coverage artifacts
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+htmlcov/
+
+# Build / packaging artifacts
 dist/
 build/
 *.egg-info/
-audits/
-qgis/sirs_postgre.qgz
-.codex/
-.agents/
-.dev.vars
