@@ -144,6 +144,33 @@ Sous Windows :
 Ouvrir ensuite `http://127.0.0.1:8000/`. L'option `--reload` redémarre le
 serveur lorsque le code Python est modifié.
 
+## Docker
+
+Depuis la racine du dépôt :
+
+```bash
+docker build -t sirs-postgre-web .
+```
+
+Puis démarrer le conteneur avec une base PostgreSQL/PostGIS SIRS déjà créée et
+conforme au schéma attendu :
+
+```bash
+docker run --rm \
+  -p 8000:8000 \
+  -e SIRS_POSTGRE_DSN='postgresql://...' \
+  sirs-postgre-web
+```
+
+Ouvrir ensuite `http://127.0.0.1:8000/`.
+
+Le conteneur sert la webapp FastAPI et les assets frontend. Il ne crée pas, ne
+migre pas et n'administre pas la base de données. Les endpoints métier qui
+interrogent PostgreSQL nécessitent une base PostgreSQL/PostGIS conforme ; sans
+base disponible, les pages et assets statiques restent servis mais les routes
+`/api/...` dépendantes de PostgreSQL échouent avec le comportement serveur
+existant.
+
 ## Tests privés
 
 ```bash
