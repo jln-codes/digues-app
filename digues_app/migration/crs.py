@@ -7,8 +7,8 @@ import os
 import re
 from typing import Any
 
-from sirs_postgre.source import CouchDBDatabaseInfo
-from sirs_postgre.target import PostgreSQLConfig
+from digues_app.source import CouchDBDatabaseInfo
+from digues_app.target import PostgreSQLConfig
 
 
 TARGET_SRID = 3950

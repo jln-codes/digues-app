@@ -6,7 +6,7 @@ l’interface définitive de SIRS.
 
 ## Architecture
 
-- `webapp/backend/sirs_webapp/` : API FastAPI et requêtes PostgreSQL ;
+- `webapp/backend/digues_webapp/` : API FastAPI et requêtes PostgreSQL ;
 - `webapp/frontend/` : page HTML, styles et JavaScript Leaflet ;
 - PostgreSQL/PostGIS : source de vérité, sans modification du schéma ni des
   géométries persistées.
@@ -467,7 +467,7 @@ Depuis la racine du dépôt :
 
 ```console
 python -m pip install -e . -e webapp
-python -m uvicorn --app-dir webapp/backend sirs_webapp.app:app --reload
+python -m uvicorn --app-dir webapp/backend digues_webapp.app:app --reload
 ```
 
 Ouvrir ensuite <http://127.0.0.1:8000/>. La documentation automatique de l’API
@@ -631,5 +631,5 @@ ou :
     que seul l'affichage change, jamais les sélections ni les appels API.
 
 La base cible doit avoir été créée, initialisée et alimentée par les commandes
-habituelles de `sirs-postgre`. L’accès réseau au serveur de fond OpenStreetMap et
+habituelles de `digues-app`. L’accès réseau au serveur de fond OpenStreetMap et
 au CDN Leaflet est nécessaire pour afficher la carte complète.

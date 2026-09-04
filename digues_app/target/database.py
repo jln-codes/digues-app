@@ -32,7 +32,7 @@ class PostgreSQLConfig:
     dsn: str | None = None
     host: str = "127.0.0.1"
     port: int = 5432
-    database: str = "sirs_postgre"
+    database: str = "digues_app"
     user: str = "postgres"
     password: str | None = None
     connect_timeout: int = 10
@@ -44,7 +44,7 @@ class PostgreSQLConfig:
             dsn=os.getenv("SIRS_POSTGRE_DSN") or None,
             host=os.getenv("SIRS_POSTGRE_HOST", "127.0.0.1"),
             port=int(os.getenv("SIRS_POSTGRE_PORT", "5432")),
-            database=os.getenv("SIRS_POSTGRE_DATABASE", "sirs_postgre"),
+            database=os.getenv("SIRS_POSTGRE_DATABASE", "digues_app"),
             user=os.getenv("SIRS_POSTGRE_USER", "postgres"),
             password=os.getenv("SIRS_POSTGRE_PASSWORD") or None,
             connect_timeout=int(os.getenv("SIRS_POSTGRE_CONNECT_TIMEOUT", "10")),

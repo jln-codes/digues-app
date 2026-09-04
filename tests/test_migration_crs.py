@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from sirs_postgre.migration.crs import (
+from digues_app.migration.crs import (
     CRSInfo,
     CRSResolutionError,
     crs_hint_is_consistent,
@@ -13,9 +13,9 @@ from sirs_postgre.migration.crs import (
     resolve_source_crs,
     validate_crs,
 )
-from sirs_postgre.migration.anomalies import collect_anomalies
-from sirs_postgre.migration.coverage import diagnose_documents
-from sirs_postgre.source import CouchDBDatabaseInfo
+from digues_app.migration.anomalies import collect_anomalies
+from digues_app.migration.coverage import diagnose_documents
+from digues_app.source import CouchDBDatabaseInfo
 
 
 def metadata(epsg_code=None, *, wkt=None, proj4=None, found=True):
@@ -162,7 +162,7 @@ class CRSResolutionTest(unittest.TestCase):
         self.assertIn("CRS source détecté : `EPSG:3950`", report)
         self.assertIn("Transformation nécessaire : non", report)
 
-    @patch("sirs_postgre.migration.coverage.validate_crs_with_postgis")
+    @patch("digues_app.migration.coverage.validate_crs_with_postgis")
     def test_diagnostic_registers_unresolvable_postgis_srid(self, validate):
         validate.side_effect = CRSResolutionError(
             "CRS source EPSG:999999 absent de spatial_ref_sys",

@@ -3,8 +3,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from sirs_postgre.migration.crs import CRSInfo, geometry_sql
-from sirs_postgre.target import PostgreSQLConfig
+from digues_app.migration.crs import CRSInfo, geometry_sql
+from digues_app.target import PostgreSQLConfig
 
 
 class CRSPostGISIntegrationTest(unittest.TestCase):

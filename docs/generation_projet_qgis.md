@@ -1,7 +1,7 @@
 # Génération reproductible du projet QGIS
 
-Le projet `qgis/sirs_postgre.qgz` est un artifact local : il peut être supprimé
-puis recréé à partir de `sirs_postgre/qgis_project.py`. Le code générateur est
+Le projet `qgis/digues_app.qgz` est un artifact local : il peut être supprimé
+puis recréé à partir de `digues_app/qgis_project.py`. Le code générateur est
 versionné, tandis que le QGZ est déjà exclu par `.gitignore`.
 
 ## Commande
@@ -9,10 +9,10 @@ versionné, tandis que le QGZ est déjà exclu par `.gitignore`.
 Depuis un Python qui fournit PyQGIS :
 
 ```text
-sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
+digues-app qgis-project --output qgis/digues_app.qgz
 ```
 
-La sortie est facultative et vaut `qgis/sirs_postgre.qgz` par défaut. L'option
+La sortie est facultative et vaut `qgis/digues_app.qgz` par défaut. L'option
 `--authcfg ID` référence une configuration d'authentification du profil QGIS
 local sans inscrire son secret dans le projet.
 
@@ -22,21 +22,21 @@ Après installation de QGIS 3.38 ou plus récent, ouvrir **OSGeo4W Shell**, puis
 exécuter :
 
 ```bat
-cd /d C:\Users\julien.lorion\sirs-postgre
+cd /d C:\Users\julien.lorion\digues-app
 python-qgis.bat -m pip install -e .
-python-qgis.bat -m sirs_postgre.cli qgis-project --output qgis\sirs_postgre.qgz
+python-qgis.bat -m digues_app.cli qgis-project --output qgis\digues_app.qgz
 ```
 
 Avec l'installateur autonome, le lanceur se trouve généralement dans le dossier
 `bin` de QGIS. Sans modifier le `PATH` système :
 
 ```bat
-cd /d C:\Users\julien.lorion\sirs-postgre
+cd /d C:\Users\julien.lorion\digues-app
 "C:\Program Files\QGIS 3.xx.x\bin\python-qgis.bat" -m pip install -e .
-"C:\Program Files\QGIS 3.xx.x\bin\python-qgis.bat" -m sirs_postgre.cli qgis-project --output qgis\sirs_postgre.qgz
+"C:\Program Files\QGIS 3.xx.x\bin\python-qgis.bat" -m digues_app.cli qgis-project --output qgis\digues_app.qgz
 ```
 
-Le `config.env` courant reste la seule configuration sirs-postgre : aucune
+Le `config.env` courant reste la seule configuration digues-app : aucune
 configuration PostgreSQL parallèle n'est créée.
 
 ## Linux
@@ -47,7 +47,7 @@ chemins de paquets et bibliothèques QGIS ont été configurés. En environnemen
 sans affichage :
 
 ```text
-QT_QPA_PLATFORM=offscreen python -m sirs_postgre.cli qgis-project
+QT_QPA_PLATFORM=offscreen python -m digues_app.cli qgis-project
 ```
 
 Le projet de ce lot a été généré et relu avec PyQGIS 3.44 sous Linux. Le

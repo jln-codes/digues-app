@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sirs_postgre.model_manifest import (
+from digues_app.model_manifest import (
     DEFAULT_ECORE_PATH,
     DEFAULT_LABELS_PATH,
     build_manifest,

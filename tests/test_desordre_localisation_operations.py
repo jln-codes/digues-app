@@ -4,8 +4,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from sirs_postgre.target import PostgreSQLConfig
-from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
+from digues_app.target import PostgreSQLConfig
+from digues_app.target.desordre_reperage import FUNCTION_DEFINITIONS
 
 
 class DesordreLocalisationOperationsTest(unittest.TestCase):

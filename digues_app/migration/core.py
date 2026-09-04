@@ -11,9 +11,9 @@ import re
 from typing import Any
 from uuid import UUID
 
-from sirs_postgre.source import CouchDBClient, connect_couchdb
-from sirs_postgre.target import PostgreSQLConfig
-from sirs_postgre.target.schema import EXPECTED_TABLES
+from digues_app.source import CouchDBClient, connect_couchdb
+from digues_app.target import PostgreSQLConfig
+from digues_app.target.schema import EXPECTED_TABLES
 
 from .amenagements import (
     AMENAGEMENT_SOURCE_CLASSES,

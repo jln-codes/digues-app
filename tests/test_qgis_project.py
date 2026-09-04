@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from dotenv import load_dotenv
 
-from sirs_postgre.qgis_project import (
+from digues_app.qgis_project import (
     ALL_LAYER_SPECS,
     DEFAULT_QGIS_PROJECT_PATH,
     DESORDRE_FILTERS,
@@ -40,11 +40,11 @@ from sirs_postgre.qgis_project import (
     pyqgis_available,
     qgis_connection_from_config,
 )
-from sirs_postgre.target import PostgreSQLConfig
-from sirs_postgre.target.desordre_reperage import (
+from digues_app.target import PostgreSQLConfig
+from digues_app.target.desordre_reperage import (
     TABLE_DEFINITIONS as DESORDRE_REPERAGE_TABLE_DEFINITIONS,
 )
-from sirs_postgre.target.schema import TABLE_DEFINITIONS as CORE_TABLE_DEFINITIONS
+from digues_app.target.schema import TABLE_DEFINITIONS as CORE_TABLE_DEFINITIONS
 
 
 class FakeLayer:
@@ -345,7 +345,7 @@ class RecordingClearProject:
 
 class QGISProjectSpecificationTest(unittest.TestCase):
     def test_default_output_is_a_gitignored_qgz(self):
-        self.assertEqual(DEFAULT_QGIS_PROJECT_PATH, Path("qgis/sirs_postgre.qgz"))
+        self.assertEqual(DEFAULT_QGIS_PROJECT_PATH, Path("qgis/digues_app.qgz"))
         self.assertEqual(DEFAULT_QGIS_PROJECT_PATH.suffix, ".qgz")
         self.assertEqual(MINIMUM_QGIS_VERSION_INT, 33800)
 
@@ -752,7 +752,7 @@ class QGISProjectSpecificationTest(unittest.TestCase):
         project = RecordingClearProject(events)
 
         with patch(
-            "sirs_postgre.qgis_project.gc.collect",
+            "digues_app.qgis_project.gc.collect",
             side_effect=lambda: events.append("gc"),
         ):
             _clear_qgis_project(project, groups, layers)
@@ -765,7 +765,7 @@ class QGISProjectSpecificationTest(unittest.TestCase):
         events = []
         verification = RecordingClearProject(events, readable=False)
         with patch(
-            "sirs_postgre.qgis_project.gc.collect",
+            "digues_app.qgis_project.gc.collect",
             side_effect=lambda: events.append("gc"),
         ):
             with self.assertRaisesRegex(QGISProjectError, "QGZ écrit est illisible"):
@@ -785,7 +785,7 @@ class QGISProjectIntegrationTest(unittest.TestCase):
             override=False,
         )
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "sirs_postgre.qgz"
+            output = Path(directory) / "digues_app.qgz"
             result = generate_qgis_project(
                 PostgreSQLConfig.from_env(),
                 output,

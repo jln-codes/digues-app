@@ -1,9 +1,9 @@
 import re
 import unittest
 
-from sirs_postgre.target.database import PostgreSQLConfig, initialize_schema
-from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
-from sirs_postgre.target.schema import (
+from digues_app.target.database import PostgreSQLConfig, initialize_schema
+from digues_app.target.desordre_reperage import FUNCTION_DEFINITIONS
+from digues_app.target.schema import (
     CONSTRAINT_DEFINITIONS,
     EXPECTED_TABLES,
     INDEX_DEFINITIONS,

@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from sirs_postgre.migration.core import (
+from digues_app.migration.core import (
     CORE_SOURCE_CLASSES,
     INSERT_STATEMENTS,
     CoreMigrationError,
@@ -14,8 +14,8 @@ from sirs_postgre.migration.core import (
     prepare_core_migration,
     validate_troncon_wkt,
 )
-from sirs_postgre.migration.crs import CRSInfo
-from sirs_postgre.target.schema import EXPECTED_TABLES
+from digues_app.migration.crs import CRSInfo
+from digues_app.target.schema import EXPECTED_TABLES
 
 
 IDS = {

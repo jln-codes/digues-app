@@ -15,15 +15,15 @@ import uuid
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from sirs_postgre.target import PostgreSQLConfig
-from sirs_postgre.target.desordre_reperage import FUNCTION_DEFINITIONS
-from sirs_webapp.ai import (
+from digues_app.target import PostgreSQLConfig
+from digues_app.target.desordre_reperage import FUNCTION_DEFINITIONS
+from digues_webapp.ai import (
     AiChatResult,
     AiServiceError,
     MISTRAL_MODEL,
     chat_with_mistral,
 )
-from sirs_webapp.models import (
+from digues_webapp.models import (
     AI_MAX_CONVERSATION_CHARS,
     AI_MAX_MESSAGES,
     AiChatRequest,
@@ -36,7 +36,7 @@ from sirs_webapp.models import (
     SystemeEndiguementCreate,
     TronconCreate,
 )
-from sirs_webapp.queries import (
+from digues_webapp.queries import (
     DIGUE_DETAIL_SQL,
     DESORDRE_OBSERVATIONS_SQL,
     DESORDRES_GEOJSON_SQL,
@@ -71,8 +71,8 @@ from sirs_webapp.queries import (
     PointDesordreUpdateError,
 )
 
-from sirs_webapp.prompts import SIRS_SYSTEM_PROMPT
-from sirs_webapp.schema_context import (
+from digues_webapp.prompts import SIRS_SYSTEM_PROMPT
+from digues_webapp.schema_context import (
     AI_SCHEMA_CACHE_TTL_SECONDS,
     AI_SCHEMA_COLUMNS_SQL,
     AI_SCHEMA_EXCLUDED_OBJECTS,
@@ -88,7 +88,7 @@ from sirs_webapp.schema_context import (
 )
 
 try:
-    from sirs_webapp.app import FRONTEND_DIRECTORY, app, web_show_uuid
+    from digues_webapp.app import FRONTEND_DIRECTORY, app, web_show_uuid
 except ModuleNotFoundError as exc:
     if exc.name != "fastapi":
         raise
@@ -335,8 +335,8 @@ class AiProviderTest(unittest.TestCase):
 
         with (
             patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
-            patch("sirs_webapp.ai.load_dotenv"),
-            patch("sirs_webapp.ai.requests.post", return_value=response) as post,
+            patch("digues_webapp.ai.load_dotenv"),
+            patch("digues_webapp.ai.requests.post", return_value=response) as post,
         ):
             messages = [
                 {"role": "user", "content": "Bonjour"},
@@ -394,8 +394,8 @@ class AiProviderTest(unittest.TestCase):
                 response.text = "provider-secret-detail"
                 with (
                     patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
-                    patch("sirs_webapp.ai.load_dotenv"),
-                    patch("sirs_webapp.ai.requests.post", return_value=response),
+                    patch("digues_webapp.ai.load_dotenv"),
+                    patch("digues_webapp.ai.requests.post", return_value=response),
                     self.assertRaises(AiServiceError) as raised,
                 ):
                     chat_with_mistral(
@@ -407,9 +407,9 @@ class AiProviderTest(unittest.TestCase):
     def test_mistral_timeout_and_invalid_response_are_transformed(self):
         with (
             patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
-            patch("sirs_webapp.ai.load_dotenv"),
+            patch("digues_webapp.ai.load_dotenv"),
             patch(
-                "sirs_webapp.ai.requests.post",
+                "digues_webapp.ai.requests.post",
                 side_effect=requests.Timeout(),
             ),
             self.assertRaises(AiServiceError) as timeout,
@@ -421,9 +421,9 @@ class AiProviderTest(unittest.TestCase):
 
         with (
             patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
-            patch("sirs_webapp.ai.load_dotenv"),
+            patch("digues_webapp.ai.load_dotenv"),
             patch(
-                "sirs_webapp.ai.requests.post",
+                "digues_webapp.ai.requests.post",
                 side_effect=requests.ConnectionError(),
             ),
             self.assertRaisesRegex(AiServiceError, "Impossible de joindre"),
@@ -436,8 +436,8 @@ class AiProviderTest(unittest.TestCase):
         response.json.return_value = {"choices": []}
         with (
             patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
-            patch("sirs_webapp.ai.load_dotenv"),
-            patch("sirs_webapp.ai.requests.post", return_value=response),
+            patch("digues_webapp.ai.load_dotenv"),
+            patch("digues_webapp.ai.requests.post", return_value=response),
             self.assertRaisesRegex(AiServiceError, "Réponse invalide"),
         ):
             chat_with_mistral(
@@ -532,7 +532,7 @@ class AiEndpointTest(unittest.TestCase):
         )
 
     def test_empty_message_is_rejected_without_provider_call(self):
-        with patch("sirs_webapp.app.chat_with_mistral") as chat:
+        with patch("digues_webapp.app.chat_with_mistral") as chat:
             with self.assertRaises(ValidationError):
                 AiChatRequest(messages=[{"role": "user", "content": "   "}])
         chat.assert_not_called()
@@ -540,9 +540,9 @@ class AiEndpointTest(unittest.TestCase):
     def test_missing_api_key_returns_explicit_safe_error(self):
         with (
             patch.dict(os.environ, {"MISTRAL_API_KEY": ""}),
-            patch("sirs_webapp.ai.load_dotenv"),
-            patch("sirs_webapp.ai.requests.post") as post,
-            patch("sirs_webapp.app.get_ai_schema_context", return_value="schema"),
+            patch("digues_webapp.ai.load_dotenv"),
+            patch("digues_webapp.ai.requests.post") as post,
+            patch("digues_webapp.app.get_ai_schema_context", return_value="schema"),
             self.assertRaises(AiServiceError) as raised,
         ):
             self.endpoint()(AiChatRequest(messages=[
@@ -558,14 +558,14 @@ class AiEndpointTest(unittest.TestCase):
     def test_endpoint_returns_normalized_answer_and_successful_queries_only(self):
         with (
             patch(
-                "sirs_webapp.app.chat_with_mistral",
+                "digues_webapp.app.chat_with_mistral",
                 return_value=AiChatResult(
                     answer="Réponse simulée",
                     executed_queries=("SELECT 1", "SELECT 1"),
                 ),
             ) as chat,
             patch(
-                "sirs_webapp.app.get_ai_schema_context",
+                "digues_webapp.app.get_ai_schema_context",
                 return_value="CONTEXTE SCHEMA",
             ),
         ):
@@ -593,12 +593,12 @@ class AiEndpointTest(unittest.TestCase):
     def test_endpoint_returns_empty_query_list_without_tool_call(self):
         with (
             patch(
-                "sirs_webapp.app.chat_with_mistral",
+                "digues_webapp.app.chat_with_mistral",
                 return_value=AiChatResult(
                     answer="Réponse directe", executed_queries=()
                 ),
             ),
-            patch("sirs_webapp.app.get_ai_schema_context", return_value="schema"),
+            patch("digues_webapp.app.get_ai_schema_context", return_value="schema"),
         ):
             response = self.endpoint()(AiChatRequest(messages=[
                 {"role": "user", "content": "Question générale"}
@@ -611,10 +611,10 @@ class AiEndpointTest(unittest.TestCase):
     def test_provider_error_is_returned_without_stack_trace(self):
         with (
             patch(
-                "sirs_webapp.app.chat_with_mistral",
+                "digues_webapp.app.chat_with_mistral",
                 side_effect=AiServiceError("Impossible de joindre le service IA."),
             ),
-            patch("sirs_webapp.app.get_ai_schema_context", return_value="schema"),
+            patch("digues_webapp.app.get_ai_schema_context", return_value="schema"),
             self.assertRaises(AiServiceError) as raised,
         ):
             self.endpoint()(AiChatRequest(messages=[
@@ -949,7 +949,7 @@ const aiConversationHistory = [];
         source = (
             Path(__file__).resolve().parents[1]
             / "backend"
-            / "sirs_webapp"
+            / "digues_webapp"
             / "queries.py"
         ).read_text()
         self.assertIn("with connection.transaction()", source)

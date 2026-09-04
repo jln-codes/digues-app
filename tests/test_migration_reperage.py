@@ -2,13 +2,13 @@ import unittest
 from decimal import Decimal
 from uuid import UUID
 
-from sirs_postgre.migration.crs import CRSInfo
-from sirs_postgre.migration.reperage import (
+from digues_app.migration.crs import CRSInfo
+from digues_app.migration.reperage import (
     ReperageMigrationError,
     insert_prepared_reperage,
     prepare_reperage_migration,
 )
-from sirs_postgre.migration.validation import INTEGRITY_CHECKS
+from digues_app.migration.validation import INTEGRITY_CHECKS
 
 
 TRONCON_ID = "00000000-0000-0000-0000-000000000001"

@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
-COPY sirs_postgre ./sirs_postgre
+COPY digues_app ./digues_app
 COPY webapp/pyproject.toml webapp/README.md ./webapp/
 COPY webapp/backend ./webapp/backend
 COPY webapp/frontend ./webapp/frontend
@@ -21,4 +21,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "--app-dir", "webapp/backend", "sirs_webapp.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "--app-dir", "webapp/backend", "digues_webapp.app:app", "--host", "0.0.0.0", "--port", "8000"]

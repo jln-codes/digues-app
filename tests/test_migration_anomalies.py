@@ -10,8 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import UUID
 
-from sirs_postgre.cli import main
-from sirs_postgre.migration.anomalies import (
+from digues_app.cli import main
+from digues_app.migration.anomalies import (
     ACTIONABLE_CATEGORIES,
     Anomaly,
     FAMILY_BY_CATEGORY,
@@ -25,8 +25,8 @@ from sirs_postgre.migration.anomalies import (
     write_anomalies_csv,
     write_anomalies_json,
 )
-from sirs_postgre.migration.vegetation import MANUAL_REVIEW
-from sirs_postgre.migration.source_overrides import SourceMigrationOverrides
+from digues_app.migration.vegetation import MANUAL_REVIEW
+from digues_app.migration.source_overrides import SourceMigrationOverrides
 
 
 DATABASE = "test_source"
@@ -314,8 +314,8 @@ class AnomalySerializationTest(unittest.TestCase):
                 csv_rows = list(csv.DictReader(stream))
             output = io.StringIO()
             with (
-                patch("sirs_postgre.cli.DEFAULT_JSON_PATH", json_path),
-                patch("sirs_postgre.cli.DEFAULT_CSV_PATH", csv_path),
+                patch("digues_app.cli.DEFAULT_JSON_PATH", json_path),
+                patch("digues_app.cli.DEFAULT_CSV_PATH", csv_path),
                 redirect_stdout(output),
             ):
                 self.assertEqual(main(["anomalies", "--actionable"]), 0)
@@ -833,7 +833,7 @@ class AnomalyCollectionTest(unittest.TestCase):
             amenagement_type_by_id={amenagement_id: "ZEC"}
         )
         with patch(
-            "sirs_postgre.migration.anomalies.get_source_overrides",
+            "digues_app.migration.anomalies.get_source_overrides",
             return_value=overrides,
         ):
             anomalies = self.collect(
@@ -930,8 +930,8 @@ class AnomalyCliTest(unittest.TestCase):
             ):
                 output = io.StringIO()
                 with (
-                    patch("sirs_postgre.cli.DEFAULT_JSON_PATH", json_path),
-                    patch("sirs_postgre.cli.DEFAULT_CSV_PATH", csv_path),
+                    patch("digues_app.cli.DEFAULT_JSON_PATH", json_path),
+                    patch("digues_app.cli.DEFAULT_CSV_PATH", csv_path),
                     redirect_stdout(output),
                 ):
                     self.assertEqual(main(arguments), 0)
@@ -950,8 +950,8 @@ class AnomalyCliTest(unittest.TestCase):
             write_anomalies_csv(csv_path, register)
             output = io.StringIO()
             with (
-                patch("sirs_postgre.cli.DEFAULT_JSON_PATH", json_path),
-                patch("sirs_postgre.cli.DEFAULT_CSV_PATH", csv_path),
+                patch("digues_app.cli.DEFAULT_JSON_PATH", json_path),
+                patch("digues_app.cli.DEFAULT_CSV_PATH", csv_path),
                 redirect_stdout(output),
             ):
                 self.assertEqual(main(["anomalies"]), 0)
@@ -967,8 +967,8 @@ class AnomalyCliTest(unittest.TestCase):
             json_path, csv_path, _ = self.make_category_register(directory)
             output = io.StringIO()
             with (
-                patch("sirs_postgre.cli.DEFAULT_JSON_PATH", json_path),
-                patch("sirs_postgre.cli.DEFAULT_CSV_PATH", csv_path),
+                patch("digues_app.cli.DEFAULT_JSON_PATH", json_path),
+                patch("digues_app.cli.DEFAULT_CSV_PATH", csv_path),
                 redirect_stdout(output),
             ):
                 self.assertEqual(main(["anomalies", "--actionable"]), 0)
@@ -988,14 +988,14 @@ class AnomalyCliTest(unittest.TestCase):
         ):
             self.assertNotIn(category, text)
 
-    @patch("sirs_postgre.cli.connect_couchdb")
+    @patch("digues_app.cli.connect_couchdb")
     def test_resolve_only_updates_the_local_register(self, connect_source):
         with tempfile.TemporaryDirectory() as directory:
             json_path, csv_path, anomalies = self.make_register(directory)
             output = io.StringIO()
             with (
-                patch("sirs_postgre.cli.DEFAULT_JSON_PATH", json_path),
-                patch("sirs_postgre.cli.DEFAULT_CSV_PATH", csv_path),
+                patch("digues_app.cli.DEFAULT_JSON_PATH", json_path),
+                patch("digues_app.cli.DEFAULT_CSV_PATH", csv_path),
                 redirect_stdout(output),
             ):
                 result = main(

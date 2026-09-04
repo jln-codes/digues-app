@@ -9,7 +9,7 @@ from threading import Lock
 from time import monotonic
 from typing import Any
 
-from sirs_postgre.target.schema import EXPECTED_TABLES, VIEW_DEFINITIONS
+from digues_app.target.schema import EXPECTED_TABLES, VIEW_DEFINITIONS
 
 from .database import open_read_connection
 

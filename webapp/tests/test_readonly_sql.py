@@ -9,9 +9,9 @@ import uuid
 
 from dotenv import load_dotenv
 
-from sirs_postgre.target import PostgreSQLConfig
-from sirs_webapp.database import open_read_connection
-from sirs_webapp.readonly_sql import (
+from digues_app.target import PostgreSQLConfig
+from digues_webapp.database import open_read_connection
+from digues_webapp.readonly_sql import (
     READONLY_SQL_STATEMENT_TIMEOUT_MS,
     ReadonlySqlExecutionError,
     ReadonlySqlValidationError,
@@ -222,7 +222,7 @@ class ReadonlySqlEngineTest(unittest.TestCase):
         limited_connection = FakeReadonlyConnection(
             ["id"], [(1,), (2,), (3,)]
         )
-        with patch("sirs_webapp.readonly_sql.READONLY_SQL_MAX_ROWS", 2):
+        with patch("digues_webapp.readonly_sql.READONLY_SQL_MAX_ROWS", 2):
             limited = execute_readonly_query(
                 "SELECT id FROM t",
                 connection_factory=factory_for(limited_connection),
@@ -232,7 +232,7 @@ class ReadonlySqlEngineTest(unittest.TestCase):
 
     def test_serialized_size_limit_truncates_before_oversized_row(self):
         connection = FakeReadonlyConnection(["text"], [("a" * 30,), ("b",)])
-        with patch("sirs_webapp.readonly_sql.READONLY_SQL_MAX_RESULT_BYTES", 20):
+        with patch("digues_webapp.readonly_sql.READONLY_SQL_MAX_RESULT_BYTES", 20):
             result = execute_readonly_query(
                 "SELECT text FROM t", connection_factory=factory_for(connection)
             )
@@ -298,7 +298,7 @@ class ReadonlySqlPostGISIntegrationTest(unittest.TestCase):
     def test_postgresql_read_only_barrier_rejects_mutation_after_validation(self):
         with (
             patch(
-                "sirs_webapp.readonly_sql.validate_readonly_sql",
+                "digues_webapp.readonly_sql.validate_readonly_sql",
                 return_value="UPDATE public.systemes SET valid = valid",
             ),
             self.assertRaises(ReadonlySqlExecutionError) as raised,
@@ -319,7 +319,7 @@ class ReadonlySqlPostGISIntegrationTest(unittest.TestCase):
 
     def test_postgresql_statement_timeout_is_local_to_execution(self):
         with (
-            patch("sirs_webapp.readonly_sql.READONLY_SQL_STATEMENT_TIMEOUT_MS", 10),
+            patch("digues_webapp.readonly_sql.READONLY_SQL_STATEMENT_TIMEOUT_MS", 10),
             self.assertRaises(ReadonlySqlExecutionError) as raised,
         ):
             execute_readonly_query("SELECT pg_sleep(0.1)")

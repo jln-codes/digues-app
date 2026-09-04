@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID
 
-from sirs_postgre.migration.source_overrides import (
+from digues_app.migration.source_overrides import (
     SOURCE_OVERRIDES_PATH_ENV,
     SourceOverridesConfigurationError,
     get_source_overrides,

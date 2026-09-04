@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sirs_postgre.migration.coverage import diagnose_documents, rule_for
+from digues_app.migration.coverage import diagnose_documents, rule_for
 
 
 class CoverageDiagnosticTest(unittest.TestCase):

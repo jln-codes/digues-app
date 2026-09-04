@@ -2,8 +2,8 @@ import unittest
 from pathlib import Path
 from uuid import UUID
 
-from sirs_postgre.migration.source_overrides import SourceMigrationOverrides
-from sirs_postgre.migration.vegetation import (
+from digues_app.migration.source_overrides import SourceMigrationOverrides
+from digues_app.migration.vegetation import (
     DEGENERATE_LINE_TO_POINT,
     KEEP_GEOMETRY,
     KEEP_NULL,
@@ -172,7 +172,7 @@ class VegetationGeometryTest(unittest.TestCase):
         self.assertIsNone(prepared.vegetation[0].geometry_wkt)
 
     def test_make_valid_is_never_used_by_the_migrator(self):
-        module = Path("sirs_postgre/migration/vegetation.py").read_text()
+        module = Path("digues_app/migration/vegetation.py").read_text()
         self.assertNotIn("ST_MakeValid(", module)
 
 

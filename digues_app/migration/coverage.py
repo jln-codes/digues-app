@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sirs_postgre.source import CouchDBClient
-from sirs_postgre.source import CouchDBDatabaseInfo
-from sirs_postgre.model_manifest import DEFAULT_MANIFEST_PATH, PROJECT_ROOT
+from digues_app.source import CouchDBClient
+from digues_app.source import CouchDBDatabaseInfo
+from digues_app.model_manifest import DEFAULT_MANIFEST_PATH, PROJECT_ROOT
 
 from .anomalies import (
     AnomalyRegisterResult,

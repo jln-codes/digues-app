@@ -3,14 +3,14 @@ import os
 import unittest
 from unittest.mock import Mock, call, patch
 
-from sirs_webapp.ai import (
+from digues_webapp.ai import (
     MISTRAL_MAX_TOOL_CALLS,
     SIRS_SQL_TOOL,
     SIRS_SQL_TOOL_NAME,
     AiServiceError,
     chat_with_mistral,
 )
-from sirs_webapp.readonly_sql import (
+from digues_webapp.readonly_sql import (
     ReadonlySqlValidationError,
     execute_readonly_query,
 )
@@ -34,8 +34,8 @@ class MistralSqlToolTest(unittest.TestCase):
     def chat(self, responses):
         return (
             patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
-            patch("sirs_webapp.ai.load_dotenv"),
-            patch("sirs_webapp.ai.requests.post", side_effect=responses),
+            patch("digues_webapp.ai.load_dotenv"),
+            patch("digues_webapp.ai.requests.post", side_effect=responses),
         )
 
     def test_direct_answer_does_not_execute_sql(self):
@@ -48,7 +48,7 @@ class MistralSqlToolTest(unittest.TestCase):
             environment,
             dotenv,
             post as mocked_post,
-            patch("sirs_webapp.ai.execute_readonly_query") as execute,
+            patch("digues_webapp.ai.execute_readonly_query") as execute,
         ):
             answer = chat_with_mistral(
                 [{"role": "user", "content": "Qu’est-ce qu’une digue ?"}],
@@ -87,7 +87,7 @@ class MistralSqlToolTest(unittest.TestCase):
             dotenv,
             post as mocked_post,
             patch(
-                "sirs_webapp.ai.execute_readonly_query", return_value=result
+                "digues_webapp.ai.execute_readonly_query", return_value=result
             ) as execute,
         ):
             answer = chat_with_mistral(
@@ -130,7 +130,7 @@ class MistralSqlToolTest(unittest.TestCase):
             environment,
             dotenv,
             post as mocked_post,
-            patch("sirs_webapp.ai.execute_readonly_query", side_effect=results) as execute,
+            patch("digues_webapp.ai.execute_readonly_query", side_effect=results) as execute,
         ):
             answer = chat_with_mistral(
                 [{"role": "user", "content": "Compte et détaille."}], "schema"
@@ -170,7 +170,7 @@ class MistralSqlToolTest(unittest.TestCase):
             dotenv,
             post as mocked_post,
             patch(
-                "sirs_webapp.ai.execute_readonly_query",
+                "digues_webapp.ai.execute_readonly_query",
                 side_effect=ReadonlySqlValidationError("UPDATE interdit"),
             ) as execute,
         ):
@@ -199,7 +199,7 @@ class MistralSqlToolTest(unittest.TestCase):
             environment,
             dotenv,
             post as mocked_post,
-            patch("sirs_webapp.ai.execute_readonly_query") as execute,
+            patch("digues_webapp.ai.execute_readonly_query") as execute,
         ):
             answer = chat_with_mistral(
                 [{"role": "user", "content": "Test"}], "schema"
@@ -226,7 +226,7 @@ class MistralSqlToolTest(unittest.TestCase):
                     environment,
                     dotenv,
                     post as mocked_post,
-                    patch("sirs_webapp.ai.execute_readonly_query") as execute,
+                    patch("digues_webapp.ai.execute_readonly_query") as execute,
                 ):
                     answer = chat_with_mistral(
                         [{"role": "user", "content": "Test"}], "schema"
@@ -254,7 +254,7 @@ class MistralSqlToolTest(unittest.TestCase):
             dotenv,
             post as mocked_post,
             patch(
-                "sirs_webapp.ai.execute_readonly_query",
+                "digues_webapp.ai.execute_readonly_query",
                 side_effect=[
                     {"columns": ["one"], "rows": [[1]], "truncated": False},
                     {"columns": ["two"], "rows": [[2]], "truncated": False},
@@ -284,7 +284,7 @@ class MistralSqlToolTest(unittest.TestCase):
             dotenv,
             post as mocked_post,
             patch(
-                "sirs_webapp.ai.execute_readonly_query",
+                "digues_webapp.ai.execute_readonly_query",
                 return_value={"columns": ["one"], "rows": [[1]], "truncated": False},
             ) as execute,
         ):
@@ -331,8 +331,8 @@ class MistralSqlToolPostGISIntegrationTest(unittest.TestCase):
         ]
         with (
             patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"}),
-            patch("sirs_webapp.ai.load_dotenv"),
-            patch("sirs_webapp.ai.requests.post", side_effect=responses) as post,
+            patch("digues_webapp.ai.load_dotenv"),
+            patch("digues_webapp.ai.requests.post", side_effect=responses) as post,
         ):
             answer = chat_with_mistral(
                 [{"role": "user", "content": "Combien de systèmes ?"}], "schema"

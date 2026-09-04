@@ -1,4 +1,4 @@
-"""Génération reproductible du projet QGIS pilote de sirs-postgre.
+"""Génération reproductible du projet QGIS pilote de digues-app.
 
 Ce module reste importable sans QGIS. Tous les imports ``qgis.*`` sont confinés
 à :func:`_load_pyqgis`, appelée uniquement par la commande de génération.
@@ -16,7 +16,7 @@ from typing import Any, Iterator
 from .target import PostgreSQLConfig
 
 
-DEFAULT_QGIS_PROJECT_PATH = Path("qgis/sirs_postgre.qgz")
+DEFAULT_QGIS_PROJECT_PATH = Path("qgis/digues_app.qgz")
 TARGET_SRID = 3950
 MINIMUM_QGIS_VERSION_INT = 33800
 

@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from sirs_postgre.source.couchdb import CouchDBClient, CouchDBConfig, connect_couchdb
+from digues_app.source.couchdb import CouchDBClient, CouchDBConfig, connect_couchdb
 
 
 class FakeResponse:

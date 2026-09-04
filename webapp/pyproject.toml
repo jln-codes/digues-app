@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sirs-webapp"
+name = "digues-webapp"
 version = "0.1.0"
-description = "Application web privée pour SIRS PostgreSQL"
+description = "Application web pour digues.app"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,10 +14,10 @@ dependencies = [
     "pydantic>=2,<3",
     "python-dotenv>=1.0,<2",
     "requests>=2.31,<3",
-    "sirs-postgre>=0.1,<0.2",
+    "digues-app>=0.1,<0.2",
     "uvicorn>=0.34,<1",
 ]
 
 [tool.setuptools.packages.find]
 where = ["backend"]
-include = ["sirs_webapp*"]
+include = ["digues_webapp*"]

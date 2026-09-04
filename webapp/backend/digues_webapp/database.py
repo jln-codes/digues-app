@@ -9,7 +9,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from sirs_postgre.target import PostgreSQLConfig
+from digues_app.target import PostgreSQLConfig
 
 
 CONFIG_ENV_PATH = Path(__file__).resolve().parents[3] / "config.env"

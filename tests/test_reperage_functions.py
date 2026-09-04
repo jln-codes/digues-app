@@ -5,13 +5,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from sirs_postgre.target import PostgreSQLConfig
-from sirs_postgre.target.reperage import (
+from digues_app.target import PostgreSQLConfig
+from digues_app.target.reperage import (
     FUNCTION_DEFINITIONS,
     REPERAGE_FUNCTION_DDL,
     STATUS_CONTRACT,
 )
-from sirs_postgre.target.schema import SCHEMA_DDL
+from digues_app.target.schema import SCHEMA_DDL
 
 
 class ReperageFunctionSchemaTest(unittest.TestCase):

@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from sirs_postgre.target.database import (
+from digues_app.target.database import (
     PostgreSQLConfig,
     PostgreSQLConfigurationError,
     check_connection,
@@ -64,7 +64,7 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
                 with self.assertRaises(PostgreSQLConfigurationError):
                     validate_recreatable_database_name(database)
         self.assertEqual(
-            validate_recreatable_database_name("sirs_postgre"), "sirs_postgre"
+            validate_recreatable_database_name("digues_app"), "digues_app"
         )
 
     def test_recreate_rejects_configured_admin_database(self):
@@ -77,7 +77,7 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
         config = PostgreSQLConfig(
             host="db.test",
             port=5544,
-            database="sirs_postgre",
+            database="digues_app",
             user="operator",
             password="secret",
             admin_database="maintenance",
@@ -92,7 +92,7 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
 
     def test_admin_connection_overrides_database_from_dsn(self):
         config = PostgreSQLConfig(
-            dsn="postgresql://operator:secret@db.test/sirs_postgre",
+            dsn="postgresql://operator:secret@db.test/digues_app",
             admin_database="postgres",
         )
         kwargs = config.admin_connect_kwargs()
@@ -103,7 +103,7 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
     def test_environment_configuration_has_no_password_default(self):
         with patch.dict(os.environ, {}, clear=True):
             config = PostgreSQLConfig.from_env()
-        self.assertEqual(config.database, "sirs_postgre")
+        self.assertEqual(config.database, "digues_app")
         self.assertIsNone(config.password)
 
     def test_dsn_is_prioritary_and_not_exposed_in_safe_location(self):
@@ -122,7 +122,7 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
         self.assertIs(PostgreSQLConfig(password="secret").password_configured, True)
         self.assertIs(
             PostgreSQLConfig(
-                dsn="postgresql://operator@db.test/sirs_postgre"
+                dsn="postgresql://operator@db.test/digues_app"
             ).password_configured,
             False,
         )

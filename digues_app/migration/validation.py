@@ -8,11 +8,11 @@ from decimal import Decimal
 from typing import Any, Mapping
 from uuid import UUID
 
-from sirs_postgre.migration.reperage import PreparedReperageMigration
-from sirs_postgre.migration.desordre_reperage import (
+from digues_app.migration.reperage import PreparedReperageMigration
+from digues_app.migration.desordre_reperage import (
     PreparedDesordreReperageMigration,
 )
-from sirs_postgre.target.schema import EXPECTED_TABLES
+from digues_app.target.schema import EXPECTED_TABLES
 
 
 class MigrationValidationError(RuntimeError):

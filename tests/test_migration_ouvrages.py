@@ -2,7 +2,7 @@ import copy
 import unittest
 from uuid import UUID
 
-from sirs_postgre.migration.ouvrages import (
+from digues_app.migration.ouvrages import (
     DEFERRED_SOURCE_COUNTS,
     EXPECTED_BUSINESS_COUNTS,
     OUVRAGE_SOURCE_CLASSES,

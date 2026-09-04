@@ -8,17 +8,17 @@ from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from sirs_postgre.cli import SOURCE_CLASSES, main
-from sirs_postgre.migration import TargetNotEmptyError
-from sirs_postgre.source import CouchDBConfig, CouchDBDatabaseInfo, CouchDBSourceStatus
-from sirs_postgre.target import (
+from digues_app.cli import SOURCE_CLASSES, main
+from digues_app.migration import TargetNotEmptyError
+from digues_app.source import CouchDBConfig, CouchDBDatabaseInfo, CouchDBSourceStatus
+from digues_app.target import (
     PostgreSQLConfig,
     PostgreSQLRecreateStatus,
     PostgreSQLSchemaStatus,
     PostgreSQLStatus,
 )
-from sirs_postgre.target.schema import EXPECTED_TABLES
-from sirs_postgre.qgis_project import QGISProjectResult
+from digues_app.target.schema import EXPECTED_TABLES
+from digues_app.qgis_project import QGISProjectResult
 
 
 class FakeSourceClient:
@@ -51,20 +51,20 @@ class FakeSourceClient:
 
 
 class CLITest(unittest.TestCase):
-    @patch("sirs_postgre.qgis_project.generate_qgis_project")
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.qgis_project.generate_qgis_project")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
     def test_qgis_project_command_uses_default_output(
         self, target_config, generate_project
     ):
         config = PostgreSQLConfig()
         target_config.return_value = config
-        output = Path("qgis/sirs_postgre.qgz").resolve()
+        output = Path("qgis/digues_app.qgz").resolve()
         generate_project.return_value = QGISProjectResult(
             output=output,
             layer_ids=("layer",),
             relation_ids=("relation",),
             groups=("SIRS",),
-            connection="postgres@127.0.0.1:5432/sirs_postgre",
+            connection="postgres@127.0.0.1:5432/digues_app",
         )
         captured = io.StringIO()
         with redirect_stdout(captured):
@@ -72,13 +72,13 @@ class CLITest(unittest.TestCase):
         self.assertEqual(result, 0)
         generate_project.assert_called_once_with(
             config,
-            Path("qgis/sirs_postgre.qgz"),
+            Path("qgis/digues_app.qgz"),
             authcfg=None,
         )
         self.assertIn("mot de passe non enregistré", captured.getvalue())
 
-    @patch("sirs_postgre.qgis_project.generate_qgis_project")
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.qgis_project.generate_qgis_project")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
     def test_qgis_project_accepts_output_and_authcfg(
         self, target_config, generate_project
     ):
@@ -90,7 +90,7 @@ class CLITest(unittest.TestCase):
             layer_ids=(),
             relation_ids=(),
             groups=(),
-            connection="postgres@127.0.0.1:5432/sirs_postgre",
+            connection="postgres@127.0.0.1:5432/digues_app",
         )
         captured = io.StringIO()
         with redirect_stdout(captured):
@@ -111,10 +111,10 @@ class CLITest(unittest.TestCase):
         )
 
     @patch(
-        "sirs_postgre.qgis_project.generate_qgis_project",
+        "digues_app.qgis_project.generate_qgis_project",
         side_effect=RuntimeError("PyQGIS indisponible"),
     )
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
     def test_qgis_project_failure_is_explicit_and_redacted(
         self, target_config, _generate_project
     ):
@@ -126,8 +126,8 @@ class CLITest(unittest.TestCase):
         self.assertIn("PyQGIS indisponible", output.getvalue())
         self.assertNotIn("secret", output.getvalue())
 
-    @patch("sirs_postgre.cli.generate_coverage_report")
-    @patch("sirs_postgre.cli.connect_couchdb")
+    @patch("digues_app.cli.generate_coverage_report")
+    @patch("digues_app.cli.connect_couchdb")
     def test_diagnose_command_generates_the_expected_report(
         self, connect_source, generate_report
     ):
@@ -159,7 +159,7 @@ class CLITest(unittest.TestCase):
         self.assertIn("audits/anomalies.csv", output.getvalue())
 
     @patch(
-        "sirs_postgre.cli.migrate_core",
+        "digues_app.cli.migrate_core",
         side_effect=TargetNotEmptyError("cible non vide"),
     )
     def test_migrate_core_non_empty_target_prints_recovery_commands(self, _migrate):
@@ -169,13 +169,13 @@ class CLITest(unittest.TestCase):
         self.assertEqual(result, 1)
         text = output.getvalue()
         self.assertIn("La base cible contient déjà des données", text)
-        self.assertIn("sirs-postgre recreate", text)
-        self.assertIn("sirs-postgre init-schema", text)
-        self.assertIn("sirs-postgre migrate-core", text)
+        self.assertIn("digues-app recreate", text)
+        self.assertIn("digues-app init-schema", text)
+        self.assertIn("digues-app migrate-core", text)
 
-    @patch("sirs_postgre.cli.generate_coverage_report")
-    @patch("sirs_postgre.cli.connect_couchdb")
-    @patch("sirs_postgre.cli.migrate_core")
+    @patch("digues_app.cli.generate_coverage_report")
+    @patch("digues_app.cli.connect_couchdb")
+    @patch("digues_app.cli.migrate_core")
     def test_successful_migrate_core_generates_all_three_diagnostics(
         self, migrate, connect_source, generate_report
     ):
@@ -249,7 +249,7 @@ class CLITest(unittest.TestCase):
         self.assertIn("audits/anomalies.csv", text)
 
     @patch(
-        "sirs_postgre.cli.migrate_core",
+        "digues_app.cli.migrate_core",
         side_effect=RuntimeError("arrêt après lecture des options"),
     )
     def test_migrate_core_accepts_reprojection_options(self, migrate):
@@ -274,8 +274,8 @@ class CLITest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(SystemExit):
                 main(["migrate-core", "--on-troncon-tolerance", value])
 
-    @patch("sirs_postgre.cli.initialize_postgresql_schema")
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.cli.initialize_postgresql_schema")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
     def test_init_schema_reports_tables_without_migrating_data(
         self, target_config, initialize_schema
     ):
@@ -296,15 +296,15 @@ class CLITest(unittest.TestCase):
         self.assertIn("[OK] pgcrypto disponible : 1.3", text)
         self.assertIn("[OK] Table présente : photos", text)
 
-    @patch("sirs_postgre.cli.recreate_postgresql")
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.cli.recreate_postgresql")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
     def test_recreate_reports_success_without_real_database_changes(
         self, target_config, recreate_target
     ):
         config = object()
         target_config.return_value = config
         recreate_target.return_value = PostgreSQLRecreateStatus(
-            database="sirs_postgre",
+            database="digues_app",
             terminated_connections=2,
             postgis_version="3.4.2",
             pgcrypto_version="1.3",
@@ -316,13 +316,13 @@ class CLITest(unittest.TestCase):
         recreate_target.assert_called_once_with(config)
         text = output.getvalue()
         self.assertIn("[OK] Connexions fermées : 2", text)
-        self.assertIn("[OK] Base supprimée : sirs_postgre", text)
-        self.assertIn("[OK] Base créée : sirs_postgre", text)
+        self.assertIn("[OK] Base supprimée : digues_app", text)
+        self.assertIn("[OK] Base créée : digues_app", text)
         self.assertIn("[OK] PostGIS activée : 3.4.2", text)
         self.assertIn("[OK] pgcrypto activée : 1.3", text)
         self.assertIn("[OK] Base cible prête", text)
 
-    @patch("sirs_postgre.cli.run_check", return_value=0)
+    @patch("digues_app.cli.run_check", return_value=0)
     def test_config_env_is_loaded_without_overriding_shell_environment(self, _run_check):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.env"
@@ -332,7 +332,7 @@ class CLITest(unittest.TestCase):
                 encoding="utf-8",
             )
             with (
-                patch("sirs_postgre.cli.CONFIG_ENV_PATH", config_path),
+                patch("digues_app.cli.CONFIG_ENV_PATH", config_path),
                 patch.dict(
                     os.environ,
                     {"SIRS_TEST_PRIORITY": "shell-value"},
@@ -346,23 +346,23 @@ class CLITest(unittest.TestCase):
                 self.assertEqual(os.environ["SIRS_TEST_PRIORITY"], "shell-value")
                 os.environ.pop("SIRS_TEST_FROM_CONFIG", None)
 
-    @patch("sirs_postgre.cli.run_check", return_value=0)
+    @patch("digues_app.cli.run_check", return_value=0)
     def test_missing_config_env_is_optional(self, _run_check):
         with tempfile.TemporaryDirectory() as directory:
             missing_path = Path(directory) / "missing-config.env"
-            with patch("sirs_postgre.cli.CONFIG_ENV_PATH", missing_path):
+            with patch("digues_app.cli.CONFIG_ENV_PATH", missing_path):
                 self.assertEqual(main(["check", "--target-only"]), 0)
 
-    @patch("sirs_postgre.cli.check_postgresql")
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
-    @patch("sirs_postgre.cli.connect_couchdb")
+    @patch("digues_app.cli.check_postgresql")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.cli.connect_couchdb")
     def test_check_reports_both_connections_and_source_counts(
         self, connect_source, target_config, check_target
     ):
         connect_source.return_value = FakeSourceClient()
         target_config.return_value = PostgreSQLConfig()
         check_target.return_value = PostgreSQLStatus(
-            "sirs_postgre",
+            "digues_app",
             "postgres",
             "17.2",
             "3.5.2",
@@ -395,9 +395,9 @@ class CLITest(unittest.TestCase):
             text,
         )
 
-    @patch("sirs_postgre.cli.check_postgresql")
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
-    @patch("sirs_postgre.cli.connect_couchdb")
+    @patch("digues_app.cli.check_postgresql")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.cli.connect_couchdb")
     def test_check_reports_configured_authentication_without_exposing_passwords(
         self, connect_source, target_config, check_target
     ):
@@ -406,7 +406,7 @@ class CLITest(unittest.TestCase):
         )
         target_config.return_value = PostgreSQLConfig(password="postgres-secret")
         check_target.return_value = PostgreSQLStatus(
-            "sirs_postgre", "postgres", "16.15", "3.4.2"
+            "digues_app", "postgres", "16.15", "3.4.2"
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -418,7 +418,7 @@ class CLITest(unittest.TestCase):
         self.assertNotIn("couch-secret", text)
         self.assertNotIn("postgres-secret", text)
 
-    @patch("sirs_postgre.cli.connect_couchdb")
+    @patch("digues_app.cli.connect_couchdb")
     def test_check_couchdb_failure_mentions_missing_credentials(self, connect_source):
         connect_source.return_value = FakeSourceClient(
             check_error=RuntimeError("indisponible")
@@ -429,8 +429,8 @@ class CLITest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("authentification CouchDB non configurée", output.getvalue())
 
-    @patch("sirs_postgre.cli.check_postgresql", side_effect=RuntimeError("refusée"))
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.cli.check_postgresql", side_effect=RuntimeError("refusée"))
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
     def test_check_postgresql_failure_mentions_missing_password(
         self, target_config, _check_target
     ):
@@ -441,7 +441,7 @@ class CLITest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("aucun mot de passe PostgreSQL fourni", output.getvalue())
 
-    @patch("sirs_postgre.cli.connect_couchdb")
+    @patch("digues_app.cli.connect_couchdb")
     def test_check_couchdb_error_never_displays_password(self, connect_source):
         connect_source.return_value = FakeSourceClient(
             username="reader",
@@ -455,10 +455,10 @@ class CLITest(unittest.TestCase):
         self.assertNotIn("couch-secret", output.getvalue())
 
     @patch(
-        "sirs_postgre.cli.check_postgresql",
+        "digues_app.cli.check_postgresql",
         side_effect=RuntimeError("échec avec postgres-secret"),
     )
-    @patch("sirs_postgre.cli.PostgreSQLConfig.from_env")
+    @patch("digues_app.cli.PostgreSQLConfig.from_env")
     def test_check_postgresql_error_never_displays_password(
         self, target_config, _check_target
     ):
@@ -469,7 +469,7 @@ class CLITest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertNotIn("postgres-secret", output.getvalue())
 
-    @patch("sirs_postgre.cli.connect_couchdb", side_effect=RuntimeError("indisponible"))
+    @patch("digues_app.cli.connect_couchdb", side_effect=RuntimeError("indisponible"))
     def test_check_returns_failure_for_unreachable_source(self, _connect_source):
         output = io.StringIO()
         with redirect_stdout(output):

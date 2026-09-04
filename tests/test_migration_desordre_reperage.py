@@ -7,9 +7,9 @@ from uuid import UUID, uuid4
 
 from dotenv import load_dotenv
 
-from sirs_postgre.target import PostgreSQLConfig
+from digues_app.target import PostgreSQLConfig
 
-from sirs_postgre.migration.desordre_reperage import (
+from digues_app.migration.desordre_reperage import (
     ENGINE_VALIDATION_BATCH_SIZE,
     DesordreLocalisationReperageRow,
     PreparedDesordreReperageMigration,
@@ -19,8 +19,8 @@ from sirs_postgre.migration.desordre_reperage import (
     insert_prepared_desordre_reperage,
     prepare_desordre_reperage_migration,
 )
-from sirs_postgre.migration.anomalies import collect_anomalies
-from sirs_postgre.migration.reperage import (
+from digues_app.migration.anomalies import collect_anomalies
+from digues_app.migration.reperage import (
     BorneReperageRow,
     LinkSystemeReperageBorneRow,
     PreparedReperageMigration,

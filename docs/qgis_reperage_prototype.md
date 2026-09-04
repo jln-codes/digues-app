@@ -1,7 +1,7 @@
 # Prototype QGIS/QField — repérage des désordres
 
-Le formulaire est produit automatiquement par `sirs-postgre qgis-project` à
-partir de `sirs_postgre/qgis_project.py`. Il utilise le Drag-and-Drop Designer,
+Le formulaire est produit automatiquement par `digues-app qgis-project` à
+partir de `digues_app/qgis_project.py`. Il utilise le Drag-and-Drop Designer,
 les relations natives et les widgets standards, sans fichier `.ui`, initialiseur
 Python ni plugin client obligatoire.
 

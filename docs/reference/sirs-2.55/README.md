@@ -12,7 +12,7 @@ Le corpus CouchDB observé ne constitue pas un inventaire exhaustif du modèle. 
 
 Chaîne documentaire mise en œuvre:
 
-`sirs.ecore` + `labels/*.properties` -> `sirs-postgre generate-model-manifest` -> `sirs_model_manifest.json` -> registre de couverture du migrateur -> corpus CouchDB observé -> rapport de couverture / anomalies
+`sirs.ecore` + `labels/*.properties` -> `digues-app generate-model-manifest` -> `sirs_model_manifest.json` -> registre de couverture du migrateur -> corpus CouchDB observé -> rapport de couverture / anomalies
 
 ## Provenance
 
@@ -39,7 +39,7 @@ Chaîne documentaire mise en œuvre:
 Cette copie constitue la référence locale pour l'inventaire structurel du modèle historique. La chaîne de travail est la suivante:
 
 1. `sirs.ecore` et `labels/*.properties`
-2. extracteur déterministe `sirs-postgre generate-model-manifest`
+2. extracteur déterministe `digues-app generate-model-manifest`
 3. manifeste généré `sirs_model_manifest.json`
 4. registre de couverture du migrateur
 5. corpus CouchDB observé

@@ -64,7 +64,7 @@ def _non_negative_float(value: str) -> float:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="sirs-postgre",
+        prog="digues-app",
         description="Prépare la migration autonome de SIRS vers PostgreSQL/PostGIS.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -114,8 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     qgis_project.add_argument(
         "--output",
         type=Path,
-        default=Path("qgis/sirs_postgre.qgz"),
-        help="Fichier QGZ à générer (défaut : qgis/sirs_postgre.qgz).",
+        default=Path("qgis/digues_app.qgz"),
+        help="Fichier QGZ à générer (défaut : qgis/digues_app.qgz).",
     )
     qgis_project.add_argument(
         "--authcfg",
@@ -330,9 +330,9 @@ def run_migrate_core(args: argparse.Namespace) -> int:
         )
     except TargetNotEmptyError:
         print("[ERREUR] La base cible contient déjà des données. Utiliser :")
-        print("sirs-postgre recreate")
-        print("sirs-postgre init-schema")
-        print("sirs-postgre migrate-core")
+        print("digues-app recreate")
+        print("digues-app init-schema")
+        print("digues-app migrate-core")
         return 1
     except Exception as exc:
         print(f"[ERREUR] Migration du noyau : {exc}")

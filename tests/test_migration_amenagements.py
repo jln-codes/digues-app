@@ -1,14 +1,14 @@
 import unittest
 from uuid import UUID
 
-from sirs_postgre.migration.amenagements import (
+from digues_app.migration.amenagements import (
     TARGET_REFERENCES,
     AmenagementsMigrationError,
     attach_associated_ouvrages,
     prepare_amenagements_migration,
 )
-from sirs_postgre.migration.ouvrages import prepare_ouvrages_migration
-from sirs_postgre.migration.source_overrides import SourceMigrationOverrides
+from digues_app.migration.ouvrages import prepare_ouvrages_migration
+from digues_app.migration.source_overrides import SourceMigrationOverrides
 
 
 AMENAGEMENT_ID = "00000000-0000-0000-0000-000000000010"

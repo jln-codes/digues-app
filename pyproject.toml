@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sirs-postgre"
+name = "digues-app"
 version = "0.1.0"
 description = "Prototype autonome de migration de SIRS Digues vers PostgreSQL/PostGIS"
 readme = "README.md"
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sirs-postgre = "sirs_postgre.cli:main"
+digues-app = "digues_app.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["sirs_postgre*"]
+include = ["digues_app*"]

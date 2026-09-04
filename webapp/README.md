@@ -1,8 +1,8 @@
-# sirs-webapp
+# Digues App — application web
 
-Application web métier privée associée au migrateur et au modèle PostgreSQL
-publics `sirs-postgre`. Elle permet de consulter et modifier les données SIRS
-depuis un navigateur, avec FastAPI, Leaflet et PostgreSQL/PostGIS.
+Interface web métier de `digues-app` permettant de consulter et modifier les
+données issues de SIRS Digues dans PostgreSQL/PostGIS depuis un navigateur,
+avec FastAPI et Leaflet.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ les transformations ainsi que les règles spatiales et de repérage.
 
 Le navigateur ne se connecte jamais directement à PostgreSQL. Le backend
 utilise le modèle et la configuration de cible fournis par le paquet public
-`sirs-postgre`.
+`digues-app`.
 
 L’assistant reçoit un contexte de schéma construit côté serveur depuis
 `pg_catalog`. L’introspection est limitée au schéma `public` et aux tables et
@@ -103,7 +103,7 @@ dans `docs/interface_web_experimentale.md`.
 
 ## Installation
 
-Installer d'abord le migrateur public puis le sous-projet web depuis la racine
+Installer d'abord le projet principal puis le sous-projet web depuis la racine
 du dépôt :
 
 ```bash
@@ -132,13 +132,13 @@ local non versionné `config.env`. Cette clé n’est jamais envoyée au navigat
 Depuis la racine du dépôt :
 
 ```bash
-.venv/bin/python -m uvicorn --app-dir webapp/backend sirs_webapp.app:app --reload
+.venv/bin/python -m uvicorn --app-dir webapp/backend digues_webapp.app:app --reload
 ```
 
 Sous Windows :
 
 ```cmd
-.venv\Scripts\python.exe -m uvicorn --app-dir webapp\backend sirs_webapp.app:app --reload
+.venv\Scripts\python.exe -m uvicorn --app-dir webapp\backend digues_webapp.app:app --reload
 ```
 
 Ouvrir ensuite `http://127.0.0.1:8000/`. L'option `--reload` redémarre le
@@ -149,7 +149,7 @@ serveur lorsque le code Python est modifié.
 Depuis la racine du dépôt :
 
 ```bash
-docker build -t sirs-postgre-web .
+docker build -t digues-app-web .
 ```
 
 Puis démarrer le conteneur avec une base PostgreSQL/PostGIS SIRS déjà créée et
@@ -159,7 +159,7 @@ conforme au schéma attendu :
 docker run --rm \
   -p 8000:8000 \
   -e SIRS_POSTGRE_DSN='postgresql://...' \
-  sirs-postgre-web
+  digues-app-web
 ```
 
 Ouvrir ensuite `http://127.0.0.1:8000/`.

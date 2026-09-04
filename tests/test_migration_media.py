@@ -1,7 +1,7 @@
 import unittest
 from uuid import UUID
 
-from sirs_postgre.migration.media import (
+from digues_app.migration.media import (
     OWNER_FIELDS,
     ObservationRow,
     OwnerBinding,

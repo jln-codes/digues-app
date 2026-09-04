@@ -5,12 +5,12 @@ import unittest
 from pathlib import Path
 from uuid import UUID
 
-from sirs_postgre.migration.anomalies import (
+from digues_app.migration.anomalies import (
     collect_anomalies,
     write_anomalies_csv,
     write_anomalies_json,
 )
-from sirs_postgre.migration.coverage import (
+from digues_app.migration.coverage import (
     build_field_inventory,
     load_model_manifest,
     rule_for,

@@ -4,8 +4,8 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
-from sirs_postgre.migration.core import INSERT_STATEMENTS
-from sirs_postgre.target import PostgreSQLConfig
+from digues_app.migration.core import INSERT_STATEMENTS
+from digues_app.target import PostgreSQLConfig
 
 
 class DesordreGeometryPostGISIntegrationTest(unittest.TestCase):

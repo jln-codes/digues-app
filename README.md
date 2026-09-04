@@ -1,8 +1,8 @@
-# sirs-postgre
+# digues-app
 
 ## Présentation
 
-sirs-postgre est un projet Python consacré à la transition de **SIRS Digues V2**
+digues-app est un projet Python consacré à la transition de **SIRS Digues V2**
 depuis CouchDB vers PostgreSQL/PostGIS.
 
 Le dépôt public contient un **migrateur CouchDB → PostgreSQL/PostGIS** chargé de
@@ -87,7 +87,7 @@ sudo apt install python3 python3-pip python3-venv
 Créer ensuite l'environnement virtuel depuis la racine du projet :
 
 ```bash
-cd sirs-postgre
+cd digues-app
 
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
@@ -266,15 +266,15 @@ modèle relationnel, mais ils doivent être explicites et traçables.
 ## Cycle courant de migration
 
 ```bash
-cd ~/Projects/sirs-postgre
+cd ~/Projects/digues-app
 
-sirs-postgre check
-sirs-postgre recreate
-sirs-postgre init-schema
-sirs-postgre migrate-core
-sirs-postgre check --target-only
-sirs-postgre diagnose
-sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
+digues-app check
+digues-app recreate
+digues-app init-schema
+digues-app migrate-core
+digues-app check --target-only
+digues-app diagnose
+digues-app qgis-project --output qgis/digues_app.qgz
 ```
 
 Pendant le développement, la base cible est considérée comme recréable. Le
@@ -330,7 +330,7 @@ Le champ objet historique `crsName` sert uniquement de contrôle de cohérence.
 ## `check`
 
 ```bash
-sirs-postgre check
+digues-app check
 ```
 
 Cette commande diagnostique les connexions CouchDB et PostgreSQL, les versions
@@ -341,10 +341,10 @@ Elle ne modifie aucune base.
 Options :
 
 ```bash
-sirs-postgre check --source-only
-sirs-postgre check --target-only
-sirs-postgre check --profile secure
-sirs-postgre check --source-database autre_base
+digues-app check --source-only
+digues-app check --target-only
+digues-app check --profile secure
+digues-app check --source-database autre_base
 ```
 
 ---
@@ -352,7 +352,7 @@ sirs-postgre check --source-database autre_base
 ## `recreate`
 
 ```bash
-sirs-postgre recreate
+digues-app recreate
 ```
 
 > **Attention — opération destructive :** cette commande exécute un
@@ -376,7 +376,7 @@ d'administration et les noms dangereux sont refusés.
 ## `init-schema`
 
 ```bash
-sirs-postgre init-schema
+digues-app init-schema
 ```
 
 Cette commande crée transactionnellement le schéma PostgreSQL courant dans
@@ -390,7 +390,7 @@ pas CouchDB.
 ## `migrate-core`
 
 ```bash
-sirs-postgre migrate-core
+digues-app migrate-core
 ```
 
 La reconstruction sur le tronçon des désordres linéaires est activée par
@@ -398,8 +398,8 @@ défaut, avec une tolérance métrique de `0.0001` m (0,1 mm). Elle peut être
 désactivée ou réglée explicitement :
 
 ```bash
-sirs-postgre migrate-core --no-reproject-on-troncon
-sirs-postgre migrate-core --on-troncon-tolerance 0.001
+digues-app migrate-core --no-reproject-on-troncon
+digues-app migrate-core --on-troncon-tolerance 0.001
 ```
 
 La tolérance doit être un nombre positif ou nul et s'exprime en mètres dans le
@@ -441,7 +441,7 @@ recreate
 ## `generate-model-manifest`
 
 ```bash
-sirs-postgre generate-model-manifest
+digues-app generate-model-manifest
 ```
 
 Cette commande régénère le manifeste structurel du modèle historique SIRS
@@ -474,7 +474,7 @@ dans `docs/reference/sirs-2.55/README.md`.
 ## `diagnose`
 
 ```bash
-sirs-postgre diagnose
+digues-app diagnose
 ```
 
 Cette commande analyse les documents CouchDB et génère :
@@ -574,18 +574,18 @@ IGNORED
 Consultation :
 
 ```bash
-sirs-postgre anomalies
-sirs-postgre anomalies --open
-sirs-postgre anomalies --actionable
-sirs-postgre anomalies --category INVALID_GEOMETRY
-sirs-postgre anomalies --source-document-id <id-couchdb-exact>
-sirs-postgre anomalies --source-object-id <id-sous-objet-exact>
+digues-app anomalies
+digues-app anomalies --open
+digues-app anomalies --actionable
+digues-app anomalies --category INVALID_GEOMETRY
+digues-app anomalies --source-document-id <id-couchdb-exact>
+digues-app anomalies --source-object-id <id-sous-objet-exact>
 ```
 
 Enregistrement d'une décision :
 
 ```bash
-sirs-postgre anomalies resolve <anomaly_id> \
+digues-app anomalies resolve <anomaly_id> \
   --status RESOLVED_IN_COUCHDB \
   --comment "Géométrie corrigée et validée dans la source"
 ```
@@ -790,7 +790,7 @@ doit donc pas être traité comme une description exhaustive du schéma.
 
 La référence structurelle locale du modèle historique est le snapshot SIRS 2.55
 versionné sous `docs/reference/sirs-2.55/`, dont le manifeste est régénérable
-avec `sirs-postgre generate-model-manifest`.
+avec `digues-app generate-model-manifest`.
 
 Par conséquent :
 
@@ -803,7 +803,7 @@ contenu d'une base source particulière
 Toute autre base doit commencer par :
 
 ```bash
-sirs-postgre diagnose
+digues-app diagnose
 ```
 
 puis par l'analyse des classes et champs non couverts.
@@ -824,7 +824,7 @@ Restent notamment à traiter ou généraliser :
 - plusieurs relations autour des prestations ;
 - le repérage des autres objets `Positionable`.
 
-La liste exhaustive et actualisée est produite par `sirs-postgre diagnose` dans :
+La liste exhaustive et actualisée est produite par `digues-app diagnose` dans :
 
 ```text
 audits/bilan.md
@@ -838,7 +838,7 @@ analyser par rapport au modèle historique SIRS.
 # Génération du projet QGIS
 
 ```bash
-sirs-postgre qgis-project --output qgis/sirs_postgre.qgz
+digues-app qgis-project --output qgis/digues_app.qgz
 ```
 
 Cette commande génère entièrement le projet QGZ depuis le code et la
@@ -866,7 +866,7 @@ Une configuration QGIS locale peut être référencée avec :
 Le fichier généré :
 
 ```text
-qgis/sirs_postgre.qgz
+qgis/digues_app.qgz
 ```
 
 est un artifact local ignoré par Git.
@@ -909,7 +909,7 @@ disponible.
 # Structure du code
 
 ```text
-sirs_postgre/
+digues_app/
 ├── cli.py
 ├── model_manifest.py
 ├── qgis_project.py
@@ -941,7 +941,7 @@ docs/
         └── labels/
 
 qgis/
-├── sirs_postgre.qgz
+├── digues_app.qgz
 └── styles/
 
 tests/
