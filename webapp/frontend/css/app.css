@@ -1611,3 +1611,27 @@ textarea:focus-visible {
   scrollbar-color: #aebbc5 #edf0f2;
 }
 
+/* Espacement intérieur des bandeaux bleus */
+.heritage-title,
+.editor-title {
+  padding: 0.6rem 0.75rem;
+}
+
+.heritage-title strong,
+.editor-title strong {
+  line-height: 1.2;
+}
+
+.heritage-title span,
+.editor-title span {
+  line-height: 1.25;
+  margin-top: 0.15rem;
+}
+
+/* Croix légèrement décollée des bords */
+.heritage-title .icon-button,
+.editor-title .icon-button {
+  line-height: 1;
+  margin: -0.1rem -0.15rem 0 0;
+}
+

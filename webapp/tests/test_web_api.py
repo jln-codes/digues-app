@@ -790,7 +790,7 @@ let territoireImportPending = false;
 let confirmations = [];
 const window = { confirm(message) { confirmations.push(message); return window.nextConfirm; } };
 const calls = [];
-async function fetchJson(url, options) {
+let fetchJson = async function(url, options) {
   calls.push({ url, options });
   return {
     type: "FeatureCollection",
@@ -800,48 +800,82 @@ async function fetchJson(url, options) {
       properties: { libelle: options.headers["X-Filename"] },
     }],
   };
-}
+};
 async function fetchGeoJSON() {
   return { type: "FeatureCollection", features: [] };
 }
 
 (async () => {
-  renderTerritoireModal();
+  openTerritoireModal();
   const emptyState = territoireCurrentState.textContent;
   const emptyButton = submitTerritoireButton.textContent;
+  const openBeforeSuccess = territoireModal.hidden;
 
   territoireLibelleInput.value = "Nouveau territoire";
   territoireFileInput.files = [{ name: "contour.zip" }];
   territoireLayerInput.value = "";
   await submitTerritoireImport();
   const initial = calls.at(-1);
+  const closedAfterSuccess = territoireModal.hidden;
+  const resetAfterSuccess = territoireForm.wasReset === true;
 
   setTerritoireAdministratifState({
     type: "FeatureCollection",
     features: [{ properties: { libelle: "Territoire existant" } }],
   });
-  renderTerritoireModal();
+  openTerritoireModal();
   const existingState = territoireCurrentState.textContent;
   const existingLibelle = territoireLibelleInput.value;
   const existingButton = submitTerritoireButton.textContent;
+  const openBeforeError = territoireModal.hidden;
 
   territoireFileInput.files = [{ name: "contour.gpkg" }];
   territoireLayerInput.value = "limite";
   window.nextConfirm = false;
   await submitTerritoireImport();
   const callsAfterCancel = calls.length;
+  const stillOpenAfterCancel = territoireModal.hidden;
 
+  fetchJson = async function() {
+    throw new Error("Polygon invalide");
+  };
   window.nextConfirm = true;
+  await submitTerritoireImport().catch((error) => {
+    territoireMessage.textContent = error.message;
+    territoireMessage.classList.add("error");
+  });
+  const openAfterError = territoireModal.hidden;
+  const errorMessage = territoireMessage.textContent;
+
+  fetchJson = async function(url, options) {
+    calls.push({ url, options });
+    return {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        geometry: { type: "Polygon", coordinates: [] },
+        properties: { libelle: options.headers["X-Filename"] },
+      }],
+    };
+  };
   await submitTerritoireImport();
   const replacement = calls.at(-1);
+  const closedAfterReplacement = territoireModal.hidden;
 
   process.stdout.write(JSON.stringify({
     emptyState,
     emptyButton,
+    openBeforeSuccess,
+    closedAfterSuccess,
+    resetAfterSuccess,
     existingState,
     existingLibelle,
     existingButton,
+    openBeforeError,
     callsAfterCancel,
+    stillOpenAfterCancel,
+    openAfterError,
+    errorMessage,
     callCount: calls.length,
     confirmations: confirmations.length,
     initialUrl: initial.url,
@@ -850,22 +884,30 @@ async function fetchGeoJSON() {
     replacementUrl: replacement.url,
     replacementFilename: replacement.options.headers["X-Filename"],
     replacementContentType: replacement.options.headers["Content-Type"],
+    closedAfterReplacement,
   }));
 })();
 '''
         result = json.loads(subprocess.check_output([node, "-e", program], text=True))
         self.assertEqual(result["emptyState"], "Aucun territoire configuré")
         self.assertEqual(result["emptyButton"], "Importer")
+        self.assertFalse(result["openBeforeSuccess"])
+        self.assertTrue(result["closedAfterSuccess"])
+        self.assertTrue(result["resetAfterSuccess"])
         self.assertEqual(result["existingState"], "Territoire actuel : Territoire existant")
         self.assertEqual(result["existingLibelle"], "Territoire existant")
         self.assertEqual(result["existingButton"], "Remplacer")
+        self.assertFalse(result["openBeforeError"])
         self.assertIn("replace=false", result["initialUrl"])
         self.assertNotIn("layer=", result["initialUrl"])
         self.assertEqual(result["initialFilename"], "contour.zip")
         self.assertEqual(result["initialContentType"], "application/zip")
         self.assertEqual(result["callsAfterCancel"], 1)
+        self.assertFalse(result["stillOpenAfterCancel"])
+        self.assertFalse(result["openAfterError"])
+        self.assertEqual(result["errorMessage"], "Polygon invalide")
         self.assertEqual(result["callCount"], 2)
-        self.assertEqual(result["confirmations"], 2)
+        self.assertEqual(result["confirmations"], 3)
         self.assertIn("replace=true", result["replacementUrl"])
         self.assertIn("layer=limite", result["replacementUrl"])
         self.assertEqual(result["replacementFilename"], "contour.gpkg")
@@ -873,6 +915,7 @@ async function fetchGeoJSON() {
             result["replacementContentType"],
             "application/geopackage+sqlite3",
         )
+        self.assertTrue(result["closedAfterReplacement"])
 
     def test_frontend_territory_errors_display_backend_detail(self):
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")

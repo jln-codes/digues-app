@@ -512,11 +512,9 @@ async function submitTerritoireImport() {
     );
     setTerritoireAdministratifState(collection);
     territoireFileInput.value = "";
-    renderTerritoireModal({ keepMessage: true });
-    territoireMessage.textContent = replacing
-      ? "Territoire remplacé."
-      : "Territoire importé.";
-    territoireMessage.classList.remove("error");
+    setTerritoireImportPending(false);
+    closeTerritoireModal();
+    return collection;
   } finally {
     setTerritoireImportPending(false);
   }
