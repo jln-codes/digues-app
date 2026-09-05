@@ -8,6 +8,8 @@ const queriesToggleButton = document.querySelector("#toggle-queries");
 const aiToggleButton = document.querySelector("#toggle-ai");
 const createMenuButton = document.querySelector("#toggle-create-menu");
 const createMenuList = document.querySelector("#create-menu-list");
+const toolsMenuButton = document.querySelector("#toggle-tools-menu");
+const toolsMenuList = document.querySelector("#tools-menu-list");
 const heritageCloseButton = document.querySelector("#close-heritage");
 const heritagePanel = document.querySelector("#heritage-panel");
 const mapElement = document.querySelector("#map");
@@ -145,6 +147,16 @@ const lightboxCaption = document.querySelector("#lightbox-caption");
 const closeLightboxButton = document.querySelector("#close-lightbox");
 const previousPhotoButton = document.querySelector("#previous-photo");
 const nextPhotoButton = document.querySelector("#next-photo");
+const territoireModal = document.querySelector("#territoire-modal");
+const territoireForm = document.querySelector("#territoire-form");
+const closeTerritoireModalButton = document.querySelector("#close-territoire-modal");
+const cancelTerritoireModalButton = document.querySelector("#cancel-territoire-modal");
+const territoireCurrentState = document.querySelector("#territoire-current-state");
+const territoireLibelleInput = document.querySelector("#territoire-libelle");
+const territoireFileInput = document.querySelector("#territoire-file");
+const territoireLayerInput = document.querySelector("#territoire-layer");
+const territoireMessage = document.querySelector("#territoire-message");
+const submitTerritoireButton = document.querySelector("#submit-territoire");
 const disorderFields = {
   id: desordreCreateId,
   designation: desordreCreateDesignation,
@@ -218,6 +230,8 @@ let desordreLineLayer = null;
 let desordrePolygonLayer = null;
 let showUuid = false;
 let aiRequestPending = false;
+let territoireAdministratifGeoJSON = { type: "FeatureCollection", features: [] };
+let territoireImportPending = false;
 const aiConversationHistory = [];
 const AI_HISTORY_MAX_MESSAGES = 20;
 let editorState = {
@@ -377,6 +391,135 @@ async function fetchGeoJSON(url) {
     throw new Error(`${url} : réponse GeoJSON invalide`);
   }
   return data;
+}
+
+function setTerritoireAdministratifState(collection) {
+  if (collection.type !== "FeatureCollection" || !Array.isArray(collection.features)) {
+    throw new Error("Réponse GeoJSON du territoire invalide");
+  }
+  if (collection.features.length > 1) {
+    throw new Error("Réponse GeoJSON du territoire ambiguë");
+  }
+  territoireAdministratifGeoJSON = {
+    type: "FeatureCollection",
+    features: collection.features.slice(0, 1),
+  };
+}
+
+function currentTerritoireFeature() {
+  return territoireAdministratifGeoJSON.features[0] || null;
+}
+
+async function loadTerritoireAdministratif() {
+  const collection = await fetchGeoJSON("/api/territoire-administratif");
+  setTerritoireAdministratifState(collection);
+}
+
+function setToolsMenuOpen(open) {
+  toolsMenuList.hidden = !open;
+  toolsMenuButton.setAttribute("aria-expanded", String(open));
+}
+
+function renderTerritoireModal({ keepMessage = false } = {}) {
+  const feature = currentTerritoireFeature();
+  territoireCurrentState.textContent = feature
+    ? `Territoire actuel : ${text(feature.properties?.libelle, "Sans libellé")}`
+    : "Aucun territoire configuré";
+  territoireLibelleInput.value = feature
+    ? inputText(feature.properties?.libelle)
+    : territoireLibelleInput.value;
+  submitTerritoireButton.textContent = feature ? "Remplacer" : "Importer";
+  if (!keepMessage) {
+    territoireMessage.textContent = "";
+    territoireMessage.classList.remove("error");
+  }
+}
+
+function openTerritoireModal() {
+  renderTerritoireModal();
+  territoireModal.hidden = false;
+  territoireLibelleInput.focus();
+}
+
+function closeTerritoireModal() {
+  if (territoireImportPending) {
+    return;
+  }
+  territoireModal.hidden = true;
+  territoireForm.reset();
+  territoireMessage.textContent = "";
+  territoireMessage.classList.remove("error");
+}
+
+function territoireContentType(file) {
+  const name = file?.name || "";
+  const suffix = name.toLowerCase().split(".").pop();
+  if (suffix === "zip") return "application/zip";
+  if (suffix === "gpkg") return "application/geopackage+sqlite3";
+  throw new Error("Sélectionnez un fichier .gpkg ou .zip.");
+}
+
+function setTerritoireImportPending(pending) {
+  territoireImportPending = pending;
+  territoireLibelleInput.disabled = pending;
+  territoireFileInput.disabled = pending;
+  territoireLayerInput.disabled = pending;
+  submitTerritoireButton.disabled = pending;
+  cancelTerritoireModalButton.disabled = pending;
+  closeTerritoireModalButton.disabled = pending;
+}
+
+async function submitTerritoireImport() {
+  const libelle = territoireLibelleInput.value.trim();
+  const file = territoireFileInput.files[0];
+  if (!libelle) {
+    throw new Error("Le libellé est obligatoire.");
+  }
+  if (!file) {
+    throw new Error("Sélectionnez un fichier GeoPackage ou Shapefile ZIP.");
+  }
+  const contentType = territoireContentType(file);
+  const replacing = Boolean(currentTerritoireFeature());
+  if (replacing && !window.confirm(
+    "Remplacer le territoire administratif actuel ? L'ancien contour ne sera pas conservé."
+  )) {
+    return;
+  }
+
+  const parameters = new URLSearchParams({
+    libelle,
+    replace: replacing ? "true" : "false",
+  });
+  const layer = territoireLayerInput.value.trim();
+  if (layer) {
+    parameters.set("layer", layer);
+  }
+
+  setTerritoireImportPending(true);
+  territoireMessage.textContent = replacing ? "Remplacement en cours…" : "Import en cours…";
+  territoireMessage.classList.remove("error");
+  try {
+    const collection = await fetchJson(
+      `/api/territoire-administratif/import?${parameters.toString()}`,
+      {
+        method: "POST",
+        headers: {
+          "X-Filename": file.name,
+          "Content-Type": contentType,
+        },
+        body: file,
+      },
+    );
+    setTerritoireAdministratifState(collection);
+    territoireFileInput.value = "";
+    renderTerritoireModal({ keepMessage: true });
+    territoireMessage.textContent = replacing
+      ? "Territoire remplacé."
+      : "Territoire importé.";
+    territoireMessage.classList.remove("error");
+  } finally {
+    setTerritoireImportPending(false);
+  }
 }
 
 function appendDefinition(list, label, value) {
@@ -1588,6 +1731,7 @@ function addCreatedTronconToMap(feature) {
 }
 
 createMenuButton.addEventListener("click", () => {
+  setToolsMenuOpen(false);
   setCreateMenuOpen(createMenuList.hidden);
 });
 
@@ -1600,9 +1744,49 @@ createMenuList.addEventListener("click", (event) => {
   openHeritageCreation(button.dataset.createType);
 });
 
+toolsMenuButton.addEventListener("click", () => {
+  setCreateMenuOpen(false);
+  setToolsMenuOpen(toolsMenuList.hidden);
+});
+
+toolsMenuList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-tool-action]");
+  if (!button) {
+    return;
+  }
+  setToolsMenuOpen(false);
+  if (button.dataset.toolAction === "territoire-administratif") {
+    openTerritoireModal();
+  }
+});
+
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".create-menu")) {
     setCreateMenuOpen(false);
+  }
+  if (!event.target.closest(".tools-menu")) {
+    setToolsMenuOpen(false);
+  }
+});
+
+territoireForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (territoireImportPending) {
+    return;
+  }
+  submitTerritoireImport().catch((error) => {
+    console.error("Import du territoire administratif impossible", error);
+    territoireMessage.textContent = error.message;
+    territoireMessage.classList.add("error");
+    setTerritoireImportPending(false);
+  });
+});
+
+closeTerritoireModalButton.addEventListener("click", closeTerritoireModal);
+cancelTerritoireModalButton.addEventListener("click", closeTerritoireModal);
+territoireModal.addEventListener("click", (event) => {
+  if (event.target === territoireModal) {
+    closeTerritoireModal();
   }
 });
 
@@ -2199,6 +2383,12 @@ document.addEventListener("keydown", (event) => {
     navigatePhoto(-1);
   } else if (event.key === "ArrowRight") {
     navigatePhoto(1);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !territoireModal.hidden) {
+    closeTerritoireModal();
   }
 });
 
@@ -3261,10 +3451,12 @@ closeEditorButton.addEventListener("click", () => {
 async function loadMapData() {
   try {
     await loadFrontendConfig();
-    const [troncons, desordres] = await Promise.all([
+    const [troncons, desordres, territoire] = await Promise.all([
       fetchGeoJSON("/api/troncons"),
       fetchGeoJSON("/api/desordres"),
+      fetchGeoJSON("/api/territoire-administratif"),
     ]);
+    setTerritoireAdministratifState(territoire);
 
     tronconsGeoJsonLayer = L.geoJSON(troncons, {
       style: { color: "#39735a", opacity: 0.85, weight: 4 },

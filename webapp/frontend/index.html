@@ -61,6 +61,22 @@
           >
             Requêtes SQL
           </button>
+          <div class="tools-menu">
+            <button
+              id="toggle-tools-menu"
+              type="button"
+              class="menu-button"
+              aria-controls="tools-menu-list"
+              aria-expanded="false"
+            >
+              Outils ▾
+            </button>
+            <div id="tools-menu-list" class="tools-menu-list" role="menu" hidden>
+              <button type="button" role="menuitem" data-tool-action="territoire-administratif">
+                Territoire administratif…
+              </button>
+            </div>
+          </div>
           <button
             id="toggle-ai"
             type="button"
@@ -378,6 +394,43 @@
           </figcaption>
         </figure>
         <button id="next-photo" class="lightbox-navigation next" type="button" aria-label="Photo suivante">›</button>
+      </div>
+      <div
+        id="territoire-modal"
+        class="territoire-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="territoire-modal-title"
+        hidden
+      >
+        <form id="territoire-form" class="territoire-dialog">
+          <div class="editor-title">
+            <div>
+              <strong id="territoire-modal-title">Territoire administratif</strong>
+            </div>
+            <button id="close-territoire-modal" class="icon-button" type="button" aria-label="Fermer">×</button>
+          </div>
+          <p id="territoire-current-state" class="field-help" role="status">
+            Aucun territoire configuré
+          </p>
+          <label>
+            Libellé
+            <input id="territoire-libelle" name="libelle" type="text" required>
+          </label>
+          <label>
+            Fichier
+            <input id="territoire-file" name="file" type="file" accept=".gpkg,.zip" required>
+          </label>
+          <label>
+            Couche GeoPackage <span class="optional-label">optionnel</span>
+            <input id="territoire-layer" name="layer" type="text">
+          </label>
+          <p id="territoire-message" class="editor-message" role="alert"></p>
+          <div class="editor-actions">
+            <button id="cancel-territoire-modal" type="button" class="secondary">Annuler</button>
+            <button id="submit-territoire" type="submit">Importer</button>
+          </div>
+        </form>
       </div>
     </main>
     <script

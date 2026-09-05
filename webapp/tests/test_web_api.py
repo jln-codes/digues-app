@@ -716,6 +716,174 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         self.assertIn("flex: 0 0 33.333%", css.split(".ai-panel {", 1)[1].split("}", 1)[0])
         self.assertIn("overflow: hidden", css.split(".primary-area", 1)[1].split("}", 1)[0])
 
+    def test_frontend_has_tools_menu_and_territory_modal(self):
+        page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        css = (FRONTEND_DIRECTORY / "css" / "app.css").read_text(encoding="utf-8")
+        for expected in (
+            'id="toggle-tools-menu"',
+            'aria-controls="tools-menu-list"',
+            'id="tools-menu-list"',
+            'data-tool-action="territoire-administratif"',
+            "Territoire administratif…",
+            'id="territoire-modal"',
+            'aria-labelledby="territoire-modal-title"',
+            'id="territoire-current-state"',
+            'id="territoire-libelle"',
+            'id="territoire-file" name="file" type="file" accept=".gpkg,.zip"',
+            'id="territoire-layer"',
+            'id="submit-territoire"',
+        ):
+            self.assertIn(expected, page)
+        self.assertIn('fetchGeoJSON("/api/territoire-administratif")', script)
+        self.assertIn("let territoireAdministratifGeoJSON", script)
+        self.assertIn("function setToolsMenuOpen(open)", script)
+        self.assertIn("function openTerritoireModal()", script)
+        self.assertIn("function submitTerritoireImport()", script)
+        self.assertIn(".tools-menu-list", css)
+        self.assertIn(".territoire-modal", css)
+        self.assertIn(".territoire-dialog", css)
+
+    def test_frontend_territory_modal_state_and_upload_contract(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js indisponible pour le test territoire frontend.")
+        territory_source = (
+            "function setTerritoireAdministratifState"
+            + script.split("function setTerritoireAdministratifState", 1)[1]
+              .split("function appendDefinition", 1)[0]
+        )
+        program = territory_source + r'''
+function text(value, fallback = "—") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value);
+}
+function inputText(value) {
+  return value === null || value === undefined ? "" : String(value);
+}
+function element() {
+  return {
+    hidden: false,
+    disabled: false,
+    textContent: "",
+    value: "",
+    files: [],
+    classList: { add(name) { this[name] = true; }, remove(name) { this[name] = false; } },
+    focus() { this.focused = true; },
+    reset() { this.wasReset = true; },
+  };
+}
+const territoireCurrentState = element();
+const territoireLibelleInput = element();
+const territoireFileInput = element();
+const territoireLayerInput = element();
+const territoireMessage = element();
+const submitTerritoireButton = element();
+const territoireModal = element();
+territoireModal.hidden = true;
+const territoireForm = element();
+const cancelTerritoireModalButton = element();
+const closeTerritoireModalButton = element();
+let territoireAdministratifGeoJSON = { type: "FeatureCollection", features: [] };
+let territoireImportPending = false;
+let confirmations = [];
+const window = { confirm(message) { confirmations.push(message); return window.nextConfirm; } };
+const calls = [];
+async function fetchJson(url, options) {
+  calls.push({ url, options });
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [] },
+      properties: { libelle: options.headers["X-Filename"] },
+    }],
+  };
+}
+async function fetchGeoJSON() {
+  return { type: "FeatureCollection", features: [] };
+}
+
+(async () => {
+  renderTerritoireModal();
+  const emptyState = territoireCurrentState.textContent;
+  const emptyButton = submitTerritoireButton.textContent;
+
+  territoireLibelleInput.value = "Nouveau territoire";
+  territoireFileInput.files = [{ name: "contour.zip" }];
+  territoireLayerInput.value = "";
+  await submitTerritoireImport();
+  const initial = calls.at(-1);
+
+  setTerritoireAdministratifState({
+    type: "FeatureCollection",
+    features: [{ properties: { libelle: "Territoire existant" } }],
+  });
+  renderTerritoireModal();
+  const existingState = territoireCurrentState.textContent;
+  const existingLibelle = territoireLibelleInput.value;
+  const existingButton = submitTerritoireButton.textContent;
+
+  territoireFileInput.files = [{ name: "contour.gpkg" }];
+  territoireLayerInput.value = "limite";
+  window.nextConfirm = false;
+  await submitTerritoireImport();
+  const callsAfterCancel = calls.length;
+
+  window.nextConfirm = true;
+  await submitTerritoireImport();
+  const replacement = calls.at(-1);
+
+  process.stdout.write(JSON.stringify({
+    emptyState,
+    emptyButton,
+    existingState,
+    existingLibelle,
+    existingButton,
+    callsAfterCancel,
+    callCount: calls.length,
+    confirmations: confirmations.length,
+    initialUrl: initial.url,
+    initialFilename: initial.options.headers["X-Filename"],
+    initialContentType: initial.options.headers["Content-Type"],
+    replacementUrl: replacement.url,
+    replacementFilename: replacement.options.headers["X-Filename"],
+    replacementContentType: replacement.options.headers["Content-Type"],
+  }));
+})();
+'''
+        result = json.loads(subprocess.check_output([node, "-e", program], text=True))
+        self.assertEqual(result["emptyState"], "Aucun territoire configuré")
+        self.assertEqual(result["emptyButton"], "Importer")
+        self.assertEqual(result["existingState"], "Territoire actuel : Territoire existant")
+        self.assertEqual(result["existingLibelle"], "Territoire existant")
+        self.assertEqual(result["existingButton"], "Remplacer")
+        self.assertIn("replace=false", result["initialUrl"])
+        self.assertNotIn("layer=", result["initialUrl"])
+        self.assertEqual(result["initialFilename"], "contour.zip")
+        self.assertEqual(result["initialContentType"], "application/zip")
+        self.assertEqual(result["callsAfterCancel"], 1)
+        self.assertEqual(result["callCount"], 2)
+        self.assertEqual(result["confirmations"], 2)
+        self.assertIn("replace=true", result["replacementUrl"])
+        self.assertIn("layer=limite", result["replacementUrl"])
+        self.assertEqual(result["replacementFilename"], "contour.gpkg")
+        self.assertEqual(
+            result["replacementContentType"],
+            "application/geopackage+sqlite3",
+        )
+
+    def test_frontend_territory_errors_display_backend_detail(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        territory_listener = script.split(
+            'territoireForm.addEventListener("submit"', 1
+        )[1].split("closeTerritoireModalButton", 1)[0]
+        self.assertIn("submitTerritoireImport().catch", territory_listener)
+        self.assertIn("territoireMessage.textContent = error.message", territory_listener)
+        self.assertIn('territoireMessage.classList.add("error")', territory_listener)
+        self.assertIn("detail = errorDetail(await response.json(), detail)", script)
+
     def test_frontend_queries_and_ai_state_transitions_are_independent(self):
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
         node = shutil.which("node")
