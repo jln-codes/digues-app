@@ -580,6 +580,19 @@ TABLE_DEFINITIONS = {
                 REFERENCES public.observations (id)
         )
     """,
+    "territoires_administratifs": """
+        CREATE TABLE IF NOT EXISTS public.territoires_administratifs (
+            id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+            libelle TEXT NOT NULL,
+            geometry geometry(Polygon, 3950) NOT NULL,
+            CONSTRAINT territoires_administratifs_geometry_check
+                CHECK (
+                    GeometryType(geometry) = 'POLYGON'
+                    AND ST_IsValid(geometry)
+                    AND NOT ST_IsEmpty(geometry)
+                )
+        )
+    """,
     **DESORDRE_REPERAGE_TABLE_DEFINITIONS,
 }
 

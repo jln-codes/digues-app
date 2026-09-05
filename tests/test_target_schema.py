@@ -100,6 +100,7 @@ class TargetSchemaTest(unittest.TestCase):
                 "reseaux_techniques",
                 "observations",
                 "photos",
+                "territoires_administratifs",
                 "desordre_localisations_reperage",
             ),
         )
@@ -636,6 +637,24 @@ class TargetSchemaTest(unittest.TestCase):
         self.assertIn("geometrytype(geometry) in ('point', 'linestring', 'polygon')", vegetation)
         self.assertNotIn("troncon_id", vegetation)
         self.assertNotIn("troncon_id", normalized(TABLE_DEFINITIONS["cheminements"]))
+
+    def test_territoire_administratif_is_a_singleton_polygon_configuration(self):
+        territory = normalized(TABLE_DEFINITIONS["territoires_administratifs"])
+        self.assertIn("id integer primary key default 1", territory)
+        self.assertIn("check (id = 1)", territory)
+        self.assertIn("libelle text not null", territory)
+        self.assertIn("geometry geometry(polygon, 3950) not null", territory)
+        self.assertIn(
+            "constraint territoires_administratifs_geometry_check",
+            territory,
+        )
+        self.assertIn("geometrytype(geometry) = 'polygon'", territory)
+        self.assertIn("st_isvalid(geometry)", territory)
+        self.assertIn("not st_isempty(geometry)", territory)
+        self.assertNotIn("valid boolean", territory)
+        self.assertNotIn("date_debut", territory)
+        self.assertNotIn("date_fin", territory)
+        self.assertNotIn("source_filename", territory)
 
     def test_old_franchissement_target_vocabulary_is_absent(self):
         self.assertNotIn("ouvrages_franchissement", TABLE_DEFINITIONS)
