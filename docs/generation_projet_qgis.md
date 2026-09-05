@@ -58,7 +58,7 @@ générateur détruit explicitement projets, couches et relations avant
 
 Le générateur reprend `host`, `port`, `database` et `user` depuis
 `PostgreSQLConfig`, y compris lorsque ces valeurs proviennent de
-`SIRS_POSTGRE_DSN`. Le mot de passe sert temporairement à libpq via la variable
+`DATABASE_URL`. Le mot de passe sert temporairement à libpq via la variable
 de processus `PGPASSWORD`, puis l'environnement antérieur est restauré. La
 source enregistrée dans le QGZ contient un mot de passe vide.
 

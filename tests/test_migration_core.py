@@ -155,6 +155,12 @@ class FakeMigrationCursor:
     def fetchone(self):
         return (next(self.counts),)
 
+    def fetchall(self):
+        return [
+            ("postgis", "3.3.7", "public"),
+            ("pgcrypto", "1.3", "public"),
+        ]
+
     def executemany(self, query, rows):
         if self.fail_on_insert:
             raise RuntimeError("échec synthétique")

@@ -408,7 +408,7 @@ def qgis_connection_from_config(
             values = conninfo_to_dict(config.dsn)
         except Exception as exc:
             raise QGISProjectError(
-                "Impossible de convertir SIRS_POSTGRE_DSN en connexion QGIS"
+                "Impossible de convertir DATABASE_URL en connexion QGIS"
             ) from exc
         host = str(values.get("host") or host)
         port = int(values.get("port") or port)

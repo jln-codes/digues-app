@@ -33,3 +33,12 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+node_modules/
+
+# Déploiement Cloudflare local
+wrangler.jsonc
+cloudflare/
+worker-configuration.d.ts
+package.json
+package-lock.json

@@ -112,11 +112,11 @@ class PostgreSQLInfrastructureTest(unittest.TestCase):
     def test_dsn_is_prioritary_and_not_exposed_in_safe_location(self):
         with patch.dict(
             os.environ,
-            {"SIRS_POSTGRE_DSN": "postgresql://user:secret@db.test/sirs"},
+            {"DATABASE_URL": "postgresql://user:secret@db.test/sirs"},
             clear=True,
         ):
             config = PostgreSQLConfig.from_env()
-        self.assertEqual(config.safe_location, "DSN fourni par SIRS_POSTGRE_DSN")
+        self.assertEqual(config.safe_location, "DSN fourni par DATABASE_URL")
         self.assertNotIn("secret", config.safe_location)
         self.assertIs(config.password_configured, True)
 

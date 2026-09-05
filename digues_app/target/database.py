@@ -41,7 +41,7 @@ class PostgreSQLConfig:
     @classmethod
     def from_env(cls) -> "PostgreSQLConfig":
         config = cls(
-            dsn=os.getenv("SIRS_POSTGRE_DSN") or None,
+            dsn=os.getenv("DATABASE_URL") or None,
             host=os.getenv("SIRS_POSTGRE_HOST", "127.0.0.1"),
             port=int(os.getenv("SIRS_POSTGRE_PORT", "5432")),
             database=os.getenv("SIRS_POSTGRE_DATABASE", "digues_app"),
@@ -108,7 +108,7 @@ class PostgreSQLConfig:
             return str(conninfo_to_dict(self.dsn).get("dbname") or self.database)
         except Exception as exc:
             raise PostgreSQLConfigurationError(
-                "Impossible de déterminer la base cible depuis SIRS_POSTGRE_DSN"
+                "Impossible de déterminer la base cible depuis DATABASE_URL"
             ) from exc
 
     @property
@@ -147,7 +147,7 @@ class PostgreSQLConfig:
     @property
     def safe_location(self) -> str:
         if self.dsn:
-            return "DSN fourni par SIRS_POSTGRE_DSN"
+            return "DSN fourni par DATABASE_URL"
         return f"{self.host}:{self.port}/{self.database}"
 
 
