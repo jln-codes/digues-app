@@ -40,5 +40,3 @@ node_modules/
 wrangler.jsonc
 cloudflare/
 worker-configuration.d.ts
-package.json
-package-lock.json
