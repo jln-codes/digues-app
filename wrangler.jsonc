@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+
+  "name": "digues-app",
+  "main": "cloudflare/index.ts",
+  "compatibility_date": "2026-09-05",
+  "workers_dev": true,
+
+  "secrets": {
+    "required": [
+      "DATABASE_URL",
+      "MISTRAL_API_KEY",
+      "METEOFRANCE_API_KEY"
+    ]
+  },
+
+  "containers": [
+    {
+      "class_name": "DiguesAppContainer",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DIGUES_APP",
+        "class_name": "DiguesAppContainer"
+      }
+    ]
+  },
+
+  "exports": {
+    "DiguesAppContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

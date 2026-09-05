@@ -37,6 +37,5 @@ build/
 node_modules/
 
 # Déploiement Cloudflare local
-wrangler.jsonc
 cloudflare/
 worker-configuration.d.ts
