@@ -982,3 +982,11 @@ Les développements prévus concernent notamment :
 
 Chaque nouvelle brique doit être confrontée au modèle CouchDB historique avant
 de modifier le modèle PostgreSQL cible.
+
+---
+
+## Licence
+
+Ce projet est distribué sous licence Apache License 2.0.
+
+Voir le fichier [`LICENSE`](LICENSE) et, le cas échéant, [`NOTICE`](NOTICE).
