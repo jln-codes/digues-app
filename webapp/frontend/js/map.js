@@ -1065,6 +1065,169 @@ async function copyTextToClipboard(text) {
   }
 }
 
+function safeAiLinkHref(href) {
+  if (typeof href !== "string") {
+    return null;
+  }
+  try {
+    const url = new URL(href.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function appendAiInlineTokens(parent, tokens) {
+  (tokens || []).forEach((token) => {
+    if (token.type === "text") {
+      if (Array.isArray(token.tokens)) {
+        appendAiInlineTokens(parent, token.tokens);
+      } else {
+        parent.append(document.createTextNode(token.text || ""));
+      }
+      return;
+    }
+
+    const inlineTags = {
+      strong: "strong",
+      em: "em",
+      codespan: "code",
+      del: "del",
+    };
+    if (inlineTags[token.type]) {
+      const element = document.createElement(inlineTags[token.type]);
+      if (token.type === "codespan") {
+        element.textContent = token.text || "";
+      } else {
+        appendAiInlineTokens(element, token.tokens);
+      }
+      parent.append(element);
+      return;
+    }
+
+    if (token.type === "link") {
+      const href = safeAiLinkHref(token.href);
+      const element = document.createElement(href ? "a" : "span");
+      appendAiInlineTokens(element, token.tokens);
+      if (href) {
+        element.href = href;
+        element.target = "_blank";
+        element.rel = "noopener noreferrer";
+      }
+      parent.append(element);
+      return;
+    }
+
+    if (token.type === "br") {
+      parent.append(document.createElement("br"));
+      return;
+    }
+
+    if (Array.isArray(token.tokens)) {
+      appendAiInlineTokens(parent, token.tokens);
+      return;
+    }
+    parent.append(document.createTextNode(token.text || token.raw || ""));
+  });
+}
+
+function createAiCopyButton(content, className) {
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = `ai-copy-button ${className}`;
+  copyButton.textContent = "Copier";
+  copyButton.setAttribute("aria-live", "polite");
+  copyButton.addEventListener("click", async () => {
+    try {
+      await copyTextToClipboard(content);
+      copyButton.textContent = "Copié";
+    } catch (_error) {
+      copyButton.textContent = "Copie impossible";
+    }
+    window.setTimeout(() => {
+      copyButton.textContent = "Copier";
+    }, 1400);
+  });
+  return copyButton;
+}
+
+function appendAiMarkdownBlocks(parent, tokens) {
+  (tokens || []).forEach((token) => {
+    if (token.type === "space") {
+      return;
+    }
+    if (token.type === "heading") {
+      const heading = document.createElement(`h${Math.min(token.depth || 1, 4)}`);
+      appendAiInlineTokens(heading, token.tokens);
+      parent.append(heading);
+      return;
+    }
+    if (["paragraph", "text"].includes(token.type)) {
+      const paragraph = document.createElement("p");
+      appendAiInlineTokens(paragraph, token.tokens || [token]);
+      parent.append(paragraph);
+      return;
+    }
+    if (token.type === "list") {
+      const list = document.createElement(token.ordered ? "ol" : "ul");
+      token.items.forEach((item) => {
+        const listItem = document.createElement("li");
+        appendAiMarkdownBlocks(listItem, item.tokens);
+        list.append(listItem);
+      });
+      parent.append(list);
+      return;
+    }
+    if (token.type === "blockquote") {
+      const quote = document.createElement("blockquote");
+      appendAiMarkdownBlocks(quote, token.tokens);
+      parent.append(quote);
+      return;
+    }
+    if (token.type === "code") {
+      const wrapper = document.createElement("section");
+      wrapper.className = "ai-code-block";
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = token.text || "";
+      const language = (token.lang || "").trim().split(/\s+/, 1)[0];
+      if (/^[a-z0-9_-]{1,32}$/i.test(language)) {
+        code.dataset.language = language.toLowerCase();
+      }
+      pre.append(code);
+      wrapper.append(pre, createAiCopyButton(code.textContent, "ai-code-copy"));
+      parent.append(wrapper);
+      return;
+    }
+    if (token.type === "hr") {
+      parent.append(document.createElement("hr"));
+      return;
+    }
+
+    const fallback = document.createElement("p");
+    fallback.textContent = token.raw || token.text || "";
+    parent.append(fallback);
+  });
+}
+
+function renderAiMarkdown(content) {
+  const body = document.createElement("div");
+  body.className = "ai-message-body ai-markdown";
+  if (!globalThis.marked?.lexer) {
+    body.textContent = content;
+    return body;
+  }
+  try {
+    appendAiMarkdownBlocks(body, globalThis.marked.lexer(content, {
+      gfm: true,
+      breaks: false,
+    }));
+  } catch (_error) {
+    body.textContent = content;
+  }
+  return body;
+}
+
 function appendAiExecutedQueries(message, executedQueries) {
   const queries = Array.isArray(executedQueries)
     ? executedQueries.filter(
@@ -1090,22 +1253,7 @@ function appendAiExecutedQueries(message, executedQueries) {
     const code = document.createElement("code");
     code.textContent = query.sql;
     pre.append(code);
-    const copyButton = document.createElement("button");
-    copyButton.type = "button";
-    copyButton.className = "ai-sql-copy";
-    copyButton.textContent = "Copier";
-    copyButton.setAttribute("aria-live", "polite");
-    copyButton.addEventListener("click", async () => {
-      try {
-        await copyTextToClipboard(query.sql);
-        copyButton.textContent = "Copié";
-      } catch (_error) {
-        copyButton.textContent = "Copie impossible";
-      }
-      window.setTimeout(() => {
-        copyButton.textContent = "Copier";
-      }, 1400);
-    });
+    const copyButton = createAiCopyButton(query.sql, "ai-sql-copy");
     item.append(heading, pre, copyButton);
     details.append(item);
   });
@@ -1125,8 +1273,13 @@ function appendAiMessage(
   }
   const author = document.createElement("strong");
   author.textContent = role === "user" ? "Vous" : "Assistant IA";
-  const body = document.createElement("span");
-  body.textContent = content;
+  const body = role === "assistant"
+    ? renderAiMarkdown(content)
+    : document.createElement("span");
+  if (role === "user") {
+    body.className = "ai-message-body";
+    body.textContent = content;
+  }
   message.append(author, body);
   if (role === "assistant") {
     appendAiExecutedQueries(message, executedQueries);

@@ -1267,12 +1267,172 @@ process.stdout.write(JSON.stringify({ states, invalidations }));
         self.assertIn("aiMessageInput.disabled = pending", script)
         self.assertIn("aiSendButton.disabled = pending", script)
         self.assertIn('event.key === "Enter"', script)
+        self.assertIn('src="/static/vendor/marked/marked.umd.js"', page)
+        self.assertIn("function renderAiMarkdown(content)", script)
+        self.assertIn('role === "assistant"', script)
+        self.assertIn('role === "user"', script)
         self.assertIn("body.textContent = content", script)
         self.assertNotIn("body.innerHTML", script)
         self.assertNotIn("MISTRAL_API_KEY", page)
         self.assertNotIn("MISTRAL_API_KEY", script)
         self.assertNotIn("localStorage", script)
         self.assertNotIn("indexedDB", script)
+
+    def test_frontend_renders_assistant_markdown_with_safe_dom(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js indisponible pour le test Markdown IA.")
+
+        render_source = "async function copyTextToClipboard" + script.split(
+            "async function copyTextToClipboard", 1
+        )[1].split("function setAiRequestPending", 1)[0]
+        program = render_source + r'''
+class TextNode {
+  constructor(value) {
+    this.nodeType = 3;
+    this.value = String(value);
+  }
+  get textContent() { return this.value; }
+  set textContent(value) { this.value = String(value); }
+}
+class Element {
+  constructor(tagName) {
+    this.tagName = tagName;
+    this.children = [];
+    this.listeners = {};
+    this.attributes = {};
+    this.dataset = {};
+    this.className = "";
+    this.classList = { add: (...names) => { this.className += ` ${names.join(" ")}`; } };
+    this._text = "";
+    this.open = false;
+    this.scrollHeight = 10;
+  }
+  append(...children) { this.children.push(...children); }
+  addEventListener(name, listener) { this.listeners[name] = listener; }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  remove() { this.removed = true; }
+  select() { this.selected = true; }
+  get textContent() {
+    return this._text + this.children.map((child) => child.textContent).join("");
+  }
+  set textContent(value) {
+    this._text = String(value);
+    this.children = [];
+  }
+}
+function findAll(root, tagName) {
+  const matches = [];
+  (root.children || []).forEach((child) => {
+    if (child.tagName === tagName) matches.push(child);
+    matches.push(...findAll(child, tagName));
+  });
+  return matches;
+}
+const document = {
+  body: new Element("body"),
+  createElement(tagName) { return new Element(tagName); },
+  createTextNode(value) { return new TextNode(value); },
+  execCommand(command) { return command === "copy"; },
+};
+globalThis.marked = require("./webapp/frontend/vendor/marked/marked.umd.js");
+let copiedText = null;
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: { clipboard: { async writeText(text) { copiedText = text; } } },
+});
+const window = { setTimeout(callback) { callback(); } };
+const aiConversation = new Element("conversation");
+const aiConversationEmpty = { remove() {} };
+const aiConversationHistory = [];
+
+(async () => {
+  const markdown = [
+    "**SIRS**",
+    "",
+    "### Mon rôle",
+    "",
+    "- point 1",
+    "- point 2",
+    "",
+    "La table `troncons` et *son contenu*.",
+    "",
+    "```sql",
+    "SELECT '<tag>';",
+    "```",
+    "",
+    "> citation",
+    "",
+    "[Documentation](https://example.test/guide)",
+  ].join("\n");
+  const body = renderAiMarkdown(markdown);
+  const codeBlocks = findAll(body, "pre");
+  const code = findAll(codeBlocks[0], "code")[0];
+  const copyButton = findAll(body, "button")[0];
+  await copyButton.listeners.click();
+
+  const unsafe = renderAiMarkdown([
+    "<script>alert(1)</script>",
+    "",
+    "<img src=x onerror=alert(1)>",
+    "",
+    "[test](javascript:alert(1))",
+  ].join("\n"));
+
+  appendAiMessage("user", "**pas de Markdown** <img src=x onerror=alert(1)>");
+  const userBody = aiConversation.children[0].children[1];
+  const safeLink = findAll(body, "a")[0];
+  process.stdout.write(JSON.stringify({
+    strong: findAll(body, "strong").map((item) => item.textContent),
+    headings: findAll(body, "h3").map((item) => item.textContent),
+    listItems: findAll(body, "li").map((item) => item.textContent),
+    inlineCode: findAll(body, "code").map((item) => item.textContent),
+    paragraphs: findAll(body, "p").map((item) => item.textContent),
+    quoteCount: findAll(body, "blockquote").length,
+    codeBlockCount: codeBlocks.length,
+    codeText: code.textContent,
+    codeLanguage: code.dataset.language,
+    copiedText,
+    copyButtonText: copyButton.textContent,
+    safeLink: { href: safeLink.href, target: safeLink.target, rel: safeLink.rel },
+    unsafeTags: findAll(unsafe, "script").length + findAll(unsafe, "img").length,
+    unsafeLinks: findAll(unsafe, "a").length,
+    unsafeText: unsafe.textContent,
+    userTag: userBody.tagName,
+    userText: userBody.textContent,
+    userMarkupTags: findAll(userBody, "strong").length + findAll(userBody, "img").length,
+  }));
+})();
+'''
+        result = json.loads(subprocess.check_output([node, "-e", program], text=True))
+        self.assertEqual(result["strong"], ["SIRS"])
+        self.assertEqual(result["headings"], ["Mon rôle"])
+        self.assertEqual(result["listItems"], ["point 1", "point 2"])
+        self.assertIn("troncons", result["inlineCode"])
+        self.assertEqual(result["codeBlockCount"], 1)
+        self.assertEqual(result["codeText"], "SELECT '<tag>';" )
+        self.assertEqual(result["codeLanguage"], "sql")
+        self.assertEqual(result["copiedText"], result["codeText"])
+        self.assertEqual(result["copyButtonText"], "Copier")
+        self.assertEqual(result["quoteCount"], 1)
+        self.assertEqual(result["safeLink"], {
+            "href": "https://example.test/guide",
+            "target": "_blank",
+            "rel": "noopener noreferrer",
+        })
+        self.assertEqual(result["unsafeTags"], 0)
+        self.assertEqual(result["unsafeLinks"], 0)
+        self.assertIn("<script>alert(1)</script>", result["unsafeText"])
+        self.assertIn("<img src=x onerror=alert(1)>", result["unsafeText"])
+        self.assertEqual(result["userTag"], "span")
+        self.assertEqual(
+            result["userText"],
+            "**pas de Markdown** <img src=x onerror=alert(1)>",
+        )
+        self.assertEqual(result["userMarkupTags"], 0)
+        self.assertNotIn("innerHTML", render_source)
+        self.assertNotIn("Exécuter", render_source)
 
     def test_frontend_renders_safe_collapsible_sql_with_copy_only(self):
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")

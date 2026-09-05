@@ -89,6 +89,8 @@ L'assistant peut ensuite consulter les données SIRS via l'outil serveur `query_
 
 Toute modification persistante reste une action humaine explicite.
 
+Les réponses de l'assistant prennent en charge un sous-ensemble Markdown rendu par liste blanche, sans injection de HTML arbitraire. Les blocs de code peuvent être copiés, mais ils ne peuvent être ni exécutés ni transférés automatiquement vers la vue Requêtes. Une requête de mutation éventuellement proposée dans un bloc reste du texte sous la responsabilité de l'utilisateur.
+
 ## Moteur SQL de lecture
 
 Le module serveur `readonly_sql.py` fournit un moteur commun à l'assistant IA et à la future vue Requêtes.

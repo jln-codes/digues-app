@@ -102,19 +102,23 @@ main {
   max-width: 90%;
   overflow-wrap: anywhere;
   padding: 0.65rem 0.8rem;
-  white-space: pre-wrap;
 }
 
-.ai-message strong {
+.ai-message > strong {
   display: block;
   font-size: 0.75rem;
   margin-bottom: 0.2rem;
+}
+
+.ai-message-body {
+  min-width: 0;
 }
 
 .ai-message-user {
   align-self: flex-end;
   background: #276448;
   color: #fff;
+  white-space: pre-wrap;
 }
 
 .ai-message-assistant {
@@ -125,6 +129,98 @@ main {
 .ai-message-error {
   border: 1px solid #d79b9b;
   color: #8b1d1d;
+}
+
+.ai-markdown > :first-child,
+.ai-markdown li > :first-child,
+.ai-markdown blockquote > :first-child {
+  margin-top: 0;
+}
+
+.ai-markdown > :last-child,
+.ai-markdown li > :last-child,
+.ai-markdown blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.ai-markdown p,
+.ai-markdown ul,
+.ai-markdown ol,
+.ai-markdown blockquote,
+.ai-markdown pre,
+.ai-markdown h1,
+.ai-markdown h2,
+.ai-markdown h3,
+.ai-markdown h4 {
+  margin: 0.45rem 0;
+}
+
+.ai-markdown ul,
+.ai-markdown ol {
+  padding-left: 1.35rem;
+}
+
+.ai-markdown li + li {
+  margin-top: 0.2rem;
+}
+
+.ai-markdown h1,
+.ai-markdown h2,
+.ai-markdown h3,
+.ai-markdown h4 {
+  color: #29483a;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.ai-markdown code {
+  background: #dce7e1;
+  border-radius: 0.2rem;
+  font-size: 0.82em;
+  padding: 0.08rem 0.25rem;
+}
+
+.ai-code-block {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.5rem 0;
+  min-width: 0;
+}
+
+.ai-code-block pre {
+  background: #18251f;
+  border-radius: 0.35rem;
+  color: #eef6f1;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.65rem;
+  white-space: pre;
+}
+
+.ai-code-block pre code {
+  background: transparent;
+  border-radius: 0;
+  color: inherit;
+  font-size: 0.72rem;
+  padding: 0;
+}
+
+.ai-markdown a {
+  color: #17609a;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.ai-markdown blockquote {
+  border-left: 3px solid #91aa9d;
+  color: #466055;
+  padding-left: 0.65rem;
+}
+
+.ai-markdown hr {
+  border: 0;
+  border-top: 1px solid #cbd5cf;
+  margin: 0.65rem 0;
 }
 
 .ai-sql-details {
@@ -164,7 +260,7 @@ main {
   white-space: pre;
 }
 
-.ai-sql-copy {
+.ai-copy-button {
   background: #fff;
   border: 1px solid #9caf9f;
   border-radius: 0.3rem;
@@ -1634,4 +1730,3 @@ textarea:focus-visible {
   line-height: 1;
   margin: -0.1rem -0.15rem 0 0;
 }
-
