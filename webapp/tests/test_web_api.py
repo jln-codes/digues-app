@@ -736,6 +736,10 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         ):
             self.assertIn(expected, page)
         self.assertIn('fetchGeoJSON("/api/territoire-administratif")', script)
+        self.assertIn('mapElement.style.visibility = "hidden"', script)
+        self.assertIn("maxBoundsViscosity: 1", script)
+        self.assertIn("applyTerritoireCartography(historicalViewportBounds)", script)
+        self.assertNotIn("map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 })", script)
         self.assertIn("let territoireAdministratifGeoJSON", script)
         self.assertIn("function setToolsMenuOpen(open)", script)
         self.assertIn("function openTerritoireModal()", script)
@@ -743,6 +747,235 @@ class WebAssetsAndQueriesTest(unittest.TestCase):
         self.assertIn(".tools-menu-list", css)
         self.assertIn(".territoire-modal", css)
         self.assertIn(".territoire-dialog", css)
+
+    def test_frontend_territory_cartography_prefers_territory_and_constrains_navigation(self):
+        script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js indisponible pour le test territoire frontend.")
+        territory_source = (
+            "function territoryBoundsFromFeature"
+            + script.split("function territoryBoundsFromFeature", 1)[1]
+              .split("function setToolsMenuOpen", 1)[0]
+        )
+        program = territory_source + r'''
+function makeBounds(label, zoom) {
+  return {
+    label,
+    zoom,
+    isValid() { return true; },
+    pad(ratio) {
+      return makeBounds(`${label}.pad(${ratio})`, zoom);
+    },
+  };
+}
+const TERRITORY_VIEW_PADDING_RATIO = 0.08;
+const TERRITORY_VIEW_MAX_ZOOM = 17;
+const TERRITORY_MASK_PANE = "territory-mask";
+const TERRITORY_OUTLINE_PANE = "territory-outline";
+let territoireAdministratifGeoJSON = { type: "FeatureCollection", features: [] };
+let territoireContourLayer = null;
+let territoireMaskLayer = null;
+let mapViewportReady = false;
+let historicalViewportBounds = null;
+const mapElement = { style: { visibility: "hidden" } };
+const createdLayers = [];
+const removals = [];
+const fitBoundsCalls = [];
+const setMaxBoundsCalls = [];
+const setMinZoomCalls = [];
+const viewportCalls = [];
+const invalidateSizeCalls = [];
+const map = {
+  zoom: null,
+  panes: {},
+  removeLayer(layer) {
+    removals.push(layer);
+  },
+  fitBounds(bounds, options) {
+    viewportCalls.push("fitBounds");
+    fitBoundsCalls.push({ label: bounds.label, options });
+    this.zoom = bounds.zoom;
+  },
+  setMaxBounds(bounds) {
+    viewportCalls.push("setMaxBounds");
+    setMaxBoundsCalls.push(bounds.label);
+    this.maxBounds = bounds;
+  },
+  setMinZoom(zoom) {
+    viewportCalls.push("setMinZoom");
+    setMinZoomCalls.push(zoom);
+    this.minZoom = zoom;
+  },
+  getZoom() {
+    return this.zoom;
+  },
+  invalidateSize(options) {
+    viewportCalls.push("invalidateSize");
+    invalidateSizeCalls.push({ options, visibility: mapElement.style.visibility });
+    this.invalidations = (this.invalidations || 0) + 1;
+  },
+  createPane(name) {
+    this.panes[name] = { style: {} };
+  },
+  getPane(name) {
+    return this.panes[name];
+  },
+};
+const L = {
+  geoJSON(feature, options = {}) {
+    const layer = {
+      feature,
+      options,
+      getBounds() {
+        return feature.bounds;
+      },
+      addTo(target) {
+        this.addedTo = target;
+        createdLayers.push(this);
+        return this;
+      },
+    };
+    return layer;
+  },
+};
+function currentTerritoireFeature() {
+  return territoireAdministratifGeoJSON.features[0] || null;
+}
+
+map.createPane(TERRITORY_MASK_PANE);
+map.getPane(TERRITORY_MASK_PANE).style.zIndex = "350";
+map.getPane(TERRITORY_MASK_PANE).style.pointerEvents = "none";
+map.createPane(TERRITORY_OUTLINE_PANE);
+map.getPane(TERRITORY_OUTLINE_PANE).style.zIndex = "360";
+map.getPane(TERRITORY_OUTLINE_PANE).style.pointerEvents = "none";
+
+const territoryA = {
+  type: "Feature",
+  geometry: {
+    type: "Polygon",
+    coordinates: [
+      [[2, 48], [3, 48], [3, 49], [2, 49], [2, 48]],
+      [[2.2, 48.2], [2.4, 48.2], [2.4, 48.4], [2.2, 48.4], [2.2, 48.2]],
+    ],
+  },
+  bounds: makeBounds("territoryA", 12),
+};
+const territoryB = {
+  type: "Feature",
+  geometry: {
+    type: "Polygon",
+    coordinates: [
+      [[4, 44], [5, 44], [5, 45], [4, 45], [4, 44]],
+    ],
+  },
+  bounds: makeBounds("territoryB", 11),
+};
+const fallbackBounds = makeBounds("fallback", 8);
+
+territoireAdministratifGeoJSON = {
+  type: "FeatureCollection",
+  features: [territoryA],
+};
+const firstBounds = applyTerritoireCartography(fallbackBounds);
+const afterFirst = {
+  firstBounds: firstBounds.label,
+  fitBounds: fitBoundsCalls[0].label,
+  setMaxBounds: setMaxBoundsCalls[0],
+  minZoom: setMinZoomCalls[0],
+  zoom: map.zoom,
+  visibility: mapElement.style.visibility,
+  maskPane: createdLayers[0].options.pane,
+  contourPane: createdLayers[1].options.pane,
+  maskInteractive: createdLayers[0].options.interactive,
+  contourInteractive: createdLayers[1].options.interactive,
+  maskGeometryType: createdLayers[0].feature.geometry.type,
+  maskGeometryCount: createdLayers[0].feature.geometry.coordinates.length,
+  invalidations: map.invalidations,
+  fitBoundsOptions: fitBoundsCalls[0].options,
+  viewportCalls: viewportCalls.slice(0, 4),
+  invalidateSizeCall: invalidateSizeCalls[0],
+};
+
+territoireAdministratifGeoJSON = {
+  type: "FeatureCollection",
+  features: [territoryB],
+};
+const secondBounds = applyTerritoireCartography(fallbackBounds);
+const afterSecond = {
+  secondBounds: secondBounds.label,
+  fitBounds: fitBoundsCalls[1].label,
+  setMaxBounds: setMaxBoundsCalls[1],
+  minZoom: setMinZoomCalls[1],
+  zoom: map.zoom,
+  removals: removals.length,
+  contourLabel: territoireContourLayer.feature.bounds.label,
+  maskLabel: territoireMaskLayer.feature.geometry.type,
+};
+
+territoireAdministratifGeoJSON = {
+  type: "FeatureCollection",
+  features: [],
+};
+const thirdBounds = applyTerritoireCartography(fallbackBounds);
+const afterThird = {
+  thirdBounds: thirdBounds.label,
+  fitBounds: fitBoundsCalls[2].label,
+  setMaxBounds: setMaxBoundsCalls[2],
+  minZoom: setMinZoomCalls[2],
+  zoom: map.zoom,
+  createdLayers: createdLayers.length,
+  removals: removals.length,
+  currentVisibility: mapElement.style.visibility,
+};
+
+process.stdout.write(JSON.stringify({ afterFirst, afterSecond, afterThird }));
+'''
+        result = json.loads(subprocess.check_output([node, "-e", program], text=True))
+        self.assertEqual(result["afterFirst"]["firstBounds"], "territoryA")
+        self.assertEqual(result["afterFirst"]["fitBounds"], "territoryA.pad(0.08)")
+        self.assertEqual(result["afterFirst"]["setMaxBounds"], "territoryA.pad(0.08)")
+        self.assertEqual(result["afterFirst"]["minZoom"], 12)
+        self.assertEqual(result["afterFirst"]["zoom"], 12)
+        self.assertEqual(result["afterFirst"]["visibility"], "")
+        self.assertEqual(result["afterFirst"]["maskPane"], "territory-mask")
+        self.assertEqual(result["afterFirst"]["contourPane"], "territory-outline")
+        self.assertFalse(result["afterFirst"]["maskInteractive"])
+        self.assertFalse(result["afterFirst"]["contourInteractive"])
+        self.assertEqual(result["afterFirst"]["maskGeometryType"], "MultiPolygon")
+        self.assertEqual(result["afterFirst"]["maskGeometryCount"], 2)
+        self.assertGreaterEqual(result["afterFirst"]["invalidations"], 1)
+        self.assertEqual(
+            result["afterFirst"]["fitBoundsOptions"],
+            {"maxZoom": 17, "animate": False},
+        )
+        self.assertEqual(
+            result["afterFirst"]["viewportCalls"],
+            ["fitBounds", "setMaxBounds", "setMinZoom", "invalidateSize"],
+        )
+        self.assertEqual(
+            result["afterFirst"]["invalidateSizeCall"],
+            {
+                "options": {"pan": False, "animate": False},
+                "visibility": "hidden",
+            },
+        )
+        self.assertEqual(result["afterSecond"]["secondBounds"], "territoryB")
+        self.assertEqual(result["afterSecond"]["fitBounds"], "territoryB.pad(0.08)")
+        self.assertEqual(result["afterSecond"]["setMaxBounds"], "territoryB.pad(0.08)")
+        self.assertEqual(result["afterSecond"]["minZoom"], 11)
+        self.assertEqual(result["afterSecond"]["zoom"], 11)
+        self.assertEqual(result["afterSecond"]["removals"], 2)
+        self.assertEqual(result["afterSecond"]["contourLabel"], "territoryB")
+        self.assertEqual(result["afterSecond"]["maskLabel"], "MultiPolygon")
+        self.assertEqual(result["afterThird"]["thirdBounds"], "fallback")
+        self.assertEqual(result["afterThird"]["fitBounds"], "fallback.pad(0.08)")
+        self.assertEqual(result["afterThird"]["setMaxBounds"], "fallback.pad(0.08)")
+        self.assertEqual(result["afterThird"]["minZoom"], 8)
+        self.assertEqual(result["afterThird"]["zoom"], 8)
+        self.assertEqual(result["afterThird"]["createdLayers"], 4)
+        self.assertEqual(result["afterThird"]["removals"], 4)
+        self.assertEqual(result["afterThird"]["currentVisibility"], "")
 
     def test_frontend_territory_modal_state_and_upload_contract(self):
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
@@ -785,8 +1018,44 @@ territoireModal.hidden = true;
 const territoireForm = element();
 const cancelTerritoireModalButton = element();
 const closeTerritoireModalButton = element();
+const TERRITORY_VIEW_PADDING_RATIO = 0.08;
+const TERRITORY_VIEW_MAX_ZOOM = 17;
+const TERRITORY_MASK_PANE = "territory-mask";
+const TERRITORY_OUTLINE_PANE = "territory-outline";
 let territoireAdministratifGeoJSON = { type: "FeatureCollection", features: [] };
 let territoireImportPending = false;
+let territoireContourLayer = null;
+let territoireMaskLayer = null;
+let historicalViewportBounds = null;
+let mapViewportReady = false;
+const mapElement = { style: { visibility: "hidden" } };
+const map = {
+  zoom: 0,
+  removeLayer() {},
+  fitBounds(bounds) { this.zoom = bounds?.zoom || 0; },
+  setMaxBounds() {},
+  setMinZoom() {},
+  getZoom() { return this.zoom; },
+  invalidateSize() {},
+};
+const L = {
+  geoJSON(feature, options = {}) {
+    return {
+      feature,
+      options,
+      getBounds() {
+        return feature.bounds || {
+          label: "invalid",
+          isValid() { return false; },
+          pad() { return this; },
+        };
+      },
+      addTo() {
+        return this;
+      },
+    };
+  },
+};
 let confirmations = [];
 const window = { confirm(message) { confirmations.push(message); return window.nextConfirm; } };
 const calls = [];
@@ -797,6 +1066,12 @@ let fetchJson = async function(url, options) {
     features: [{
       type: "Feature",
       geometry: { type: "Polygon", coordinates: [] },
+      bounds: {
+        label: "uploaded",
+        zoom: 9,
+        isValid() { return true; },
+        pad(ratio) { return { label: `uploaded.pad(${ratio})`, zoom: 9, isValid: this.isValid, pad: this.pad }; },
+      },
       properties: { libelle: options.headers["X-Filename"] },
     }],
   };
@@ -1095,7 +1370,7 @@ const aiConversationHistory = [];
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
         script = (FRONTEND_DIRECTORY / "js" / "map.js").read_text(encoding="utf-8")
         for expected in (
-            '+ Nouvel objet ▾',
+            'Créer un objet ▾',
             'data-create-type="systeme"',
             'data-create-type="digue"',
             'data-create-type="troncon"',

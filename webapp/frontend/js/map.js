@@ -1,7 +1,18 @@
+const TERRITORY_MASK_PANE = "territory-mask";
+const TERRITORY_OUTLINE_PANE = "territory-outline";
+const mapElement = document.querySelector("#map");
+mapElement.style.visibility = "hidden";
 const map = L.map("map", {
   zoomControl: false,
   editable: true,
+  maxBoundsViscosity: 1,
 }).setView([46.8, 2.5], 6);
+map.createPane(TERRITORY_MASK_PANE);
+map.getPane(TERRITORY_MASK_PANE).style.zIndex = "350";
+map.getPane(TERRITORY_MASK_PANE).style.pointerEvents = "none";
+map.createPane(TERRITORY_OUTLINE_PANE);
+map.getPane(TERRITORY_OUTLINE_PANE).style.zIndex = "360";
+map.getPane(TERRITORY_OUTLINE_PANE).style.pointerEvents = "none";
 const statusElement = document.querySelector("#status");
 const heritageToggleButton = document.querySelector("#toggle-heritage");
 const queriesToggleButton = document.querySelector("#toggle-queries");
@@ -12,7 +23,6 @@ const toolsMenuButton = document.querySelector("#toggle-tools-menu");
 const toolsMenuList = document.querySelector("#tools-menu-list");
 const heritageCloseButton = document.querySelector("#close-heritage");
 const heritagePanel = document.querySelector("#heritage-panel");
-const mapElement = document.querySelector("#map");
 const primaryArea = document.querySelector("#primary-area");
 const queriesView = document.querySelector("#queries-view");
 const aiPanel = document.querySelector("#ai-panel");
@@ -147,6 +157,8 @@ const lightboxCaption = document.querySelector("#lightbox-caption");
 const closeLightboxButton = document.querySelector("#close-lightbox");
 const previousPhotoButton = document.querySelector("#previous-photo");
 const nextPhotoButton = document.querySelector("#next-photo");
+const TERRITORY_VIEW_PADDING_RATIO = 0.08;
+const TERRITORY_VIEW_MAX_ZOOM = 17;
 const territoireModal = document.querySelector("#territoire-modal");
 const territoireForm = document.querySelector("#territoire-form");
 const closeTerritoireModalButton = document.querySelector("#close-territoire-modal");
@@ -228,10 +240,14 @@ let desordresGeoJsonLayer = null;
 let desordrePointLayer = null;
 let desordreLineLayer = null;
 let desordrePolygonLayer = null;
+let territoireContourLayer = null;
+let territoireMaskLayer = null;
 let showUuid = false;
 let aiRequestPending = false;
 let territoireAdministratifGeoJSON = { type: "FeatureCollection", features: [] };
 let territoireImportPending = false;
+let mapViewportReady = false;
+let historicalViewportBounds = null;
 const aiConversationHistory = [];
 const AI_HISTORY_MAX_MESSAGES = 20;
 let editorState = {
@@ -415,6 +431,124 @@ async function loadTerritoireAdministratif() {
   setTerritoireAdministratifState(collection);
 }
 
+function territoryBoundsFromFeature(feature) {
+  if (!feature) {
+    return null;
+  }
+  const layer = L.geoJSON(feature);
+  const bounds = layer.getBounds();
+  return bounds.isValid() ? bounds : null;
+}
+
+function territoryMaskGeoJSON(feature) {
+  const coordinates = feature?.geometry?.coordinates;
+  const outerRing = coordinates?.[0];
+  if (!Array.isArray(outerRing) || outerRing.length < 4) {
+    return null;
+  }
+  const worldRing = [
+    [-180, -90],
+    [180, -90],
+    [180, 90],
+    [-180, 90],
+    [-180, -90],
+  ];
+  const polygons = [
+    [worldRing, outerRing],
+  ];
+  coordinates.slice(1).forEach((hole) => {
+    if (Array.isArray(hole) && hole.length >= 4) {
+      polygons.push([hole]);
+    }
+  });
+  return {
+    type: "Feature",
+    geometry: {
+      type: "MultiPolygon",
+      coordinates: polygons,
+    },
+    properties: {},
+  };
+}
+
+function clearTerritoireLayers() {
+  if (territoireMaskLayer) {
+    map.removeLayer(territoireMaskLayer);
+    territoireMaskLayer = null;
+  }
+  if (territoireContourLayer) {
+    map.removeLayer(territoireContourLayer);
+    territoireContourLayer = null;
+  }
+}
+
+function renderTerritoireLayers() {
+  clearTerritoireLayers();
+  const feature = currentTerritoireFeature();
+  if (!feature) {
+    return null;
+  }
+
+  const maskFeature = territoryMaskGeoJSON(feature);
+  if (maskFeature) {
+    territoireMaskLayer = L.geoJSON(maskFeature, {
+      interactive: false,
+      pane: TERRITORY_MASK_PANE,
+      style: {
+        color: "#c6cfd6",
+        fillColor: "#eff3f6",
+        fillOpacity: 1,
+        opacity: 0,
+        stroke: false,
+      },
+    }).addTo(map);
+  }
+
+  territoireContourLayer = L.geoJSON(feature, {
+    interactive: false,
+    pane: TERRITORY_OUTLINE_PANE,
+    style: {
+      color: "#385f80",
+      fillColor: "#ffffff",
+      fillOpacity: 0.04,
+      opacity: 0.95,
+      weight: 2,
+    },
+  }).addTo(map);
+
+  return territoireContourLayer.getBounds();
+}
+
+function applyViewportBounds(bounds) {
+  if (!bounds?.isValid()) {
+    return false;
+  }
+  const paddedBounds = bounds.pad(TERRITORY_VIEW_PADDING_RATIO);
+  map.fitBounds(paddedBounds, {
+    maxZoom: TERRITORY_VIEW_MAX_ZOOM,
+    animate: false,
+  });
+  map.setMaxBounds(paddedBounds);
+  map.setMinZoom(map.getZoom());
+  return true;
+}
+
+function revealMapAfterInitialViewport() {
+  map.invalidateSize({ pan: false, animate: false });
+  mapElement.style.visibility = "";
+  mapViewportReady = true;
+}
+
+function applyTerritoireCartography(bounds) {
+  const territoryBounds = renderTerritoireLayers();
+  const referenceBounds = territoryBounds || bounds;
+  if (referenceBounds?.isValid()) {
+    applyViewportBounds(referenceBounds);
+  }
+  revealMapAfterInitialViewport();
+  return referenceBounds;
+}
+
 function setToolsMenuOpen(open) {
   toolsMenuList.hidden = !open;
   toolsMenuButton.setAttribute("aria-expanded", String(open));
@@ -511,6 +645,7 @@ async function submitTerritoireImport() {
       },
     );
     setTerritoireAdministratifState(collection);
+    applyTerritoireCartography(historicalViewportBounds);
     territoireFileInput.value = "";
     setTerritoireImportPending(false);
     closeTerritoireModal();
@@ -3492,10 +3627,8 @@ async function loadMapData() {
       tronconsGeoJsonLayer,
       desordresGeoJsonLayer,
     ]);
-    const bounds = allData.getBounds();
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
-    }
+    historicalViewportBounds = allData.getBounds();
+    applyTerritoireCartography(historicalViewportBounds);
 
     statusElement.textContent =
       `${troncons.features.length} tronçon(s), `
@@ -3504,6 +3637,7 @@ async function loadMapData() {
     console.error("Chargement cartographique impossible", error);
     statusElement.textContent = `Chargement impossible : ${error.message}`;
     statusElement.classList.add("error");
+    revealMapAfterInitialViewport();
   }
 }
 
