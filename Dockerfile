@@ -8,7 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY digues_app ./digues_app
-COPY webapp/pyproject.toml webapp/README.md ./webapp/
+COPY webapp/pyproject.toml ./webapp/
 COPY webapp/backend ./webapp/backend
 COPY webapp/frontend ./webapp/frontend
 
