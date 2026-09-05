@@ -6,14 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-COPY digues_app ./digues_app
 COPY webapp/pyproject.toml ./webapp/
 COPY webapp/backend ./webapp/backend
 COPY webapp/frontend ./webapp/frontend
 
 RUN python -m pip install --upgrade pip \
-    && python -m pip install . \
     && python -m pip install ./webapp \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 

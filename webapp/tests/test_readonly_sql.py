@@ -9,8 +9,12 @@ import uuid
 
 from dotenv import load_dotenv
 
-from digues_app.target import PostgreSQLConfig
-from digues_webapp.database import open_read_connection
+from digues_webapp.database import (
+    PostgreSQLConfig,
+    configure_extension_search_path,
+    extension_search_path,
+    open_read_connection,
+)
 from digues_webapp.readonly_sql import (
     READONLY_SQL_STATEMENT_TIMEOUT_MS,
     ReadonlySqlExecutionError,
@@ -96,6 +100,82 @@ def factory_for(connection):
         yield connection
 
     return factory
+
+
+class FakeExtensionCursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.queries = []
+
+    def execute(self, query, params=None):
+        self.queries.append((query, params))
+
+    def fetchall(self):
+        return list(self.rows)
+
+
+class WebDatabaseConfigurationTest(unittest.TestCase):
+    def test_database_url_takes_priority_over_legacy_variables(self):
+        environment = {
+            "DATABASE_URL": "postgresql://dsn-user:secret@example.invalid/dsn_db",
+            "SIRS_POSTGRE_HOST": "legacy-host",
+            "SIRS_POSTGRE_PORT": "15432",
+            "SIRS_POSTGRE_DATABASE": "legacy_db",
+            "SIRS_POSTGRE_USER": "legacy_user",
+            "SIRS_POSTGRE_PASSWORD": "legacy_secret",
+            "SIRS_POSTGRE_CONNECT_TIMEOUT": "7",
+        }
+        with patch.dict("os.environ", environment, clear=True):
+            config = PostgreSQLConfig.from_env()
+
+        self.assertEqual(config.connect_kwargs()["conninfo"], environment["DATABASE_URL"])
+        self.assertEqual(config.connect_kwargs()["connect_timeout"], 7)
+        self.assertEqual(config.safe_location, "DSN fourni par DATABASE_URL")
+
+    def test_legacy_postgresql_variables_are_preserved_without_database_url(self):
+        environment = {
+            "SIRS_POSTGRE_HOST": "db.internal",
+            "SIRS_POSTGRE_PORT": "15432",
+            "SIRS_POSTGRE_DATABASE": "sirs",
+            "SIRS_POSTGRE_USER": "webapp",
+            "SIRS_POSTGRE_PASSWORD": "secret",
+            "SIRS_POSTGRE_CONNECT_TIMEOUT": "12",
+        }
+        with patch.dict("os.environ", environment, clear=True):
+            kwargs = PostgreSQLConfig.from_env().connect_kwargs(autocommit=False)
+
+        self.assertEqual(kwargs["host"], "db.internal")
+        self.assertEqual(kwargs["port"], 15432)
+        self.assertEqual(kwargs["dbname"], "sirs")
+        self.assertEqual(kwargs["user"], "webapp")
+        self.assertEqual(kwargs["password"], "secret")
+        self.assertEqual(kwargs["connect_timeout"], 12)
+        self.assertFalse(kwargs["autocommit"])
+
+    def test_extension_search_path_quotes_dynamic_extension_schemas(self):
+        self.assertEqual(
+            extension_search_path("extensions", 'postgis"custom'),
+            'pg_catalog, public, "extensions", "postgis""custom"',
+        )
+
+    def test_configure_extension_search_path_reads_pg_catalog_and_namespace(self):
+        cursor = FakeExtensionCursor([
+            ("postgis", "3.5.0", "extensions"),
+            ("pgcrypto", "1.3", "crypto"),
+        ])
+        status = configure_extension_search_path(cursor)
+
+        self.assertEqual(status.postgis_schema, "extensions")
+        self.assertEqual(status.pgcrypto_schema, "crypto")
+        self.assertIn("FROM pg_extension AS e", cursor.queries[0][0])
+        self.assertIn("JOIN pg_namespace AS n", cursor.queries[0][0])
+        self.assertEqual(
+            cursor.queries[1],
+            (
+                "SELECT set_config('search_path', %s, false)",
+                ('pg_catalog, public, "extensions", "crypto"',),
+            ),
+        )
 
 
 class ReadonlySqlValidationTest(unittest.TestCase):

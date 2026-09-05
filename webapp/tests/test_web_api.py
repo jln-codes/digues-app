@@ -15,14 +15,13 @@ import uuid
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from digues_app.target import PostgreSQLConfig
-from digues_app.target.desordre_reperage import FUNCTION_DEFINITIONS
 from digues_webapp.ai import (
     AiChatResult,
     AiServiceError,
     MISTRAL_MODEL,
     chat_with_mistral,
 )
+from digues_webapp.database import PostgreSQLConfig
 from digues_webapp.models import (
     AI_MAX_CONVERSATION_CHARS,
     AI_MAX_MESSAGES,
@@ -1030,13 +1029,12 @@ const aiConversationHistory = [];
         self.assertIn("fin_longitude_4326", normalized)
 
     def test_line_authorities_use_distinct_postgis_operations(self):
-        import inspect
-
         endpoint_source = inspect.getsource(update_line_desordre_endpoints).lower()
-        reperage_source = FUNCTION_DEFINITIONS["appliquer_desordre_reperage"].lower()
+        reperage_source = inspect.getsource(update_point_reperage).lower()
         self.assertIn("st_setpoint", endpoint_source)
         self.assertNotIn("st_linesubstring", endpoint_source)
-        self.assertIn("st_linesubstring", reperage_source)
+        self.assertIn("desordre_localisations_reperage", reperage_source)
+        self.assertNotIn("st_setpoint", reperage_source)
 
     def test_frontend_modes_legend_and_uuid_configuration_are_centralized(self):
         page = (FRONTEND_DIRECTORY / "index.html").read_text(encoding="utf-8")
@@ -1810,11 +1808,15 @@ class WebPostGISIntegrationTest(unittest.TestCase):
             with cls.connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT to_regclass('public.troncons'), "
-                    "to_regclass('public.desordres')"
+                    "to_regclass('public.desordres'), "
+                    "to_regprocedure('public.appliquer_desordre_reperage()')"
                 )
-                if cursor.fetchone() != ("troncons", "desordres"):
+                if cursor.fetchone() != (
+                    "troncons",
+                    "desordres",
+                    "appliquer_desordre_reperage",
+                ):
                     raise unittest.SkipTest("Schéma cible absent")
-                cursor.execute(FUNCTION_DEFINITIONS["appliquer_desordre_reperage"])
                 cls.desordre_id = uuid.uuid4()
                 cls.observation_new_id = uuid.uuid4()
                 cls.observation_old_id = uuid.uuid4()

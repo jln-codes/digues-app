@@ -9,14 +9,53 @@ from threading import Lock
 from time import monotonic
 from typing import Any
 
-from digues_app.target.schema import EXPECTED_TABLES, VIEW_DEFINITIONS
-
 from .database import open_read_connection
 
 
 LOGGER = logging.getLogger(__name__)
 AI_SCHEMA_NAMES = ("public",)
-AI_SCHEMA_OBJECTS = tuple(sorted((*EXPECTED_TABLES, *VIEW_DEFINITIONS)))
+AI_SCHEMA_OBJECTS = tuple(sorted((
+    "amenagements_hydrauliques",
+    "bornes_reperage",
+    "cheminements",
+    "desordre_localisations_reperage",
+    "desordres",
+    "digues",
+    "equipements_mesure",
+    "link_amenagements_troncons",
+    "link_cheminements_desordres",
+    "link_cheminements_troncons",
+    "link_desordres_troncons",
+    "link_parcelles_gestion_troncons",
+    "link_systemes_reperage_bornes",
+    "link_troncons_bornes",
+    "mobilier",
+    "observations",
+    "parcelles_gestion_vegetation",
+    "photos",
+    "plans_gestion_vegetation",
+    "ref_categories_desordre",
+    "ref_classes_diametre_vegetation",
+    "ref_classes_hauteur_vegetation",
+    "ref_etats_sanitaires_vegetation",
+    "ref_natures_vegetation",
+    "ref_types_amenagement_hydraulique",
+    "ref_types_cheminement",
+    "ref_types_desordre",
+    "ref_types_equipement_mesure",
+    "ref_types_mobilier",
+    "ref_types_ouvrage_hydraulique",
+    "ref_types_reseau_technique",
+    "ref_urgences",
+    "reseaux_techniques",
+    "systemes",
+    "systemes_reperage",
+    "troncons",
+    "vegetation",
+    "view_desordre_localisations_reperage",
+    "view_desordres_points_saisie",
+    "view_systemes_reperage_bornes",
+)))
 AI_SCHEMA_EXCLUDED_OBJECTS = ("spatial_ref_sys",)
 AI_SCHEMA_CACHE_TTL_SECONDS = 300
 
