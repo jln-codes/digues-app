@@ -154,6 +154,12 @@ Le projet nécessite au minimum :
 - PostGIS ;
 - l'extension PostgreSQL `pgcrypto`.
 
+L'import web d'un territoire administratif depuis GeoPackage ou Shapefile ZIP
+nécessite aussi GDAL/OGR et ses bindings Python `osgeo`. En Docker, l'image les
+installe explicitement à partir des paquets système GDAL et de bindings Python
+alignés sur `gdal-config --version`. En développement local, installer GDAL côté
+système puis les bindings Python correspondant exactement à la version native.
+
 Pour la génération du projet QGIS uniquement :
 
 - QGIS ;
@@ -358,6 +364,10 @@ http://127.0.0.1:8000/
 ```
 
 Le conteneur sert la webapp FastAPI et les assets frontend.
+
+Il embarque GDAL/OGR pour l'import serveur des contours administratifs
+GeoPackage et Shapefile ZIP. Les bindings Python GDAL sont installés avec la
+même version que la bibliothèque native fournie par l'image.
 
 Il ne crée pas, ne migre pas et n'administre pas automatiquement la base de données.
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -55,6 +55,18 @@ from .queries import (
     update_point_reperage,
 )
 from .schema_context import AiSchemaUnavailableError, get_ai_schema_context
+from .territoire import (
+    TerritoireConflictError,
+    TerritoirePersistenceError,
+    fetch_territoire_administratif,
+    replace_territoire_administratif,
+)
+from .territoire_import import (
+    MAX_TERRITORY_UPLOAD_BYTES,
+    TerritoireImportConfigurationError,
+    TerritoireImportError,
+    import_territoire_geometry,
+)
 
 
 FRONTEND_DIRECTORY = Path(__file__).resolve().parents[2] / "frontend"
@@ -62,6 +74,21 @@ FRONTEND_DIRECTORY = Path(__file__).resolve().parents[2] / "frontend"
 
 class GeoJSONResponse(JSONResponse):
     media_type = "application/geo+json"
+
+
+async def read_limited_body(request: Request, *, limit: int) -> bytes:
+    """Lit un corps HTTP brut sans dépasser la limite mémoire applicative."""
+
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise TerritoireImportError(
+                "Le fichier importé dépasse la taille maximale."
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def web_show_uuid() -> bool:
@@ -165,6 +192,33 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    @application.exception_handler(TerritoireImportError)
+    async def territoire_import_error_handler(
+        _request: Request, exc: TerritoireImportError
+    ) -> JSONResponse:
+        content: dict[str, Any] = {"detail": str(exc)}
+        if exc.available_layers:
+            content["layers"] = exc.available_layers
+        return JSONResponse(status_code=400, content=content)
+
+    @application.exception_handler(TerritoireImportConfigurationError)
+    async def territoire_import_configuration_error_handler(
+        _request: Request, exc: TerritoireImportConfigurationError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @application.exception_handler(TerritoirePersistenceError)
+    async def territoire_persistence_error_handler(
+        _request: Request, exc: TerritoirePersistenceError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @application.exception_handler(TerritoireConflictError)
+    async def territoire_conflict_error_handler(
+        _request: Request, exc: TerritoireConflictError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
     @application.get("/", include_in_schema=False)
     def index() -> FileResponse:
         return FileResponse(FRONTEND_DIRECTORY / "index.html")
@@ -172,6 +226,44 @@ def create_app() -> FastAPI:
     @application.get("/api/config")
     def frontend_config() -> dict[str, bool]:
         return {"show_uuid": web_show_uuid()}
+
+    @application.get(
+        "/api/territoire-administratif",
+        response_class=GeoJSONResponse,
+    )
+    def territoire_administratif(
+        connection: Any = Depends(get_connection),
+    ) -> dict[str, Any]:
+        return fetch_territoire_administratif(connection)
+
+    @application.post(
+        "/api/territoire-administratif/import",
+        response_class=GeoJSONResponse,
+    )
+    async def import_territoire_administratif(
+        request: Request,
+        libelle: str = Query(...),
+        replace: bool = Query(False),
+        layer: str | None = Query(None),
+        x_filename: str | None = Header(default=None, alias="X-Filename"),
+        connection: Any = Depends(get_write_connection),
+    ) -> dict[str, Any]:
+        payload = await read_limited_body(
+            request,
+            limit=MAX_TERRITORY_UPLOAD_BYTES,
+        )
+        imported = import_territoire_geometry(
+            payload,
+            filename=x_filename or "",
+            content_type=request.headers.get("content-type", ""),
+            layer_name=layer,
+        )
+        return replace_territoire_administratif(
+            connection,
+            libelle=libelle,
+            wkb=imported.wkb,
+            replace=replace,
+        )
 
     @application.post("/api/ai/chat")
     def ai_chat(request: AiChatRequest) -> dict[str, Any]:

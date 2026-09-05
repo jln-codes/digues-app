@@ -10,8 +10,17 @@ COPY webapp/pyproject.toml ./webapp/
 COPY webapp/backend ./webapp/backend
 COPY webapp/frontend ./webapp/frontend
 
-RUN python -m pip install --upgrade pip \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        gdal-bin \
+        libgdal-dev \
+    && python -m pip install --upgrade pip \
+    && GDAL_VERSION="$(gdal-config --version)" \
+    && python -m pip install "GDAL==${GDAL_VERSION}" \
     && python -m pip install ./webapp \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 
 USER appuser
